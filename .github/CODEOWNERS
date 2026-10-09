@@ -1,0 +1,6 @@
+# Инфраструктура — ревью DevOps-пары
+/.github/      @sleepyhead-dev @OddS-Programming
+/Dockerfile    @sleepyhead-dev @OddS-Programming
+# Контракт API — ревью фронтенда
+/openapi.yaml  @rinna32 @sky1768205
+/API.md        @rinna32 @sky1768205

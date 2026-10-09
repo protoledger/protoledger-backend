@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Формат заголовка PR
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s' "$TITLE" | grep -qE '^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9._/-]+\))?!?: .+' \
+            || { echo "Заголовок PR: <тип>(<скоуп>): <описание по-русски>"; exit 1; }
+          printf '%s' "$TITLE" | grep -qP '\p{Cyrillic}' || { echo "Описание в заголовке PR — по-русски"; exit 1; }
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Форматирование
+        run: cargo fmt --all --check
+      - name: Линтер
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Тесты
+        run: cargo test --all-features --locked
+
+  api-doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: openapi.yaml ↔ API.md
+        run: bash scripts/check-api-doc.sh
+
+  ci:
+    if: always()
+    needs: [pr-title, rust, api-doc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Итог
+        run: |
+          for r in "${{ needs.pr-title.result }}" "${{ needs.rust.result }}" "${{ needs.api-doc.result }}"; do
+            case "$r" in success|skipped) ;; *) echo "есть упавшие проверки: $r"; exit 1 ;; esac
+          done

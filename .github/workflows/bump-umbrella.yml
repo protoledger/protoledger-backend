@@ -1,0 +1,53 @@
+name: bump-umbrella
+
+# После зелёного CI на main двигает указатель сабмодуля в umbrella.
+# Нужны: секрет UMBRELLA_DEPLOY_KEY (deploy key umbrella с записью),
+# переменные UMBRELLA_REPO (org/name) и SUBMODULE_PATH (backend|frontend).
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-umbrella
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Обновить сабмодуль
+        env:
+          KEY: ${{ secrets.UMBRELLA_DEPLOY_KEY }}
+          UMBRELLA: ${{ vars.UMBRELLA_REPO }}
+          SUBMODULE_PATH: ${{ vars.SUBMODULE_PATH }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          SELF: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Устаревший прогон не должен откатить указатель: двигаем, только если SHA — текущий main.
+          head="$(git ls-remote "https://github.com/${SELF}.git" refs/heads/main | cut -f1)"
+          if [ "$head" != "$SHA" ]; then echo "main ушёл вперёд ($head), пропускаю $SHA"; exit 0; fi
+          install -m 600 /dev/null "$HOME/key"
+          printf '%s\n' "$KEY" > "$HOME/key"
+          export GIT_SSH_COMMAND="ssh -i $HOME/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone -q --depth 1 "git@github.com:${UMBRELLA}.git" umbrella
+          cd umbrella
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3 4 5; do
+            git update-index --cacheinfo "160000,${SHA},${SUBMODULE_PATH}"
+            if git diff --cached --quiet; then echo "уже актуально"; exit 0; fi
+            git commit -q -m "chore(${SUBMODULE_PATH}): обновить до ${SHA::7}"
+            if git push -q origin HEAD:main; then exit 0; fi
+            git fetch -q --depth 1 origin main
+            git reset -q --hard origin/main
+            sleep $((i * 2))
+          done
+          echo "не удалось обновить umbrella" >&2
+          exit 1
