@@ -47,7 +47,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 |---|---|---|---|
 | GET | `/api/health` | Проверка, что движок запущен | `200 {status, version}` |
 | GET | `/api/project` | Текущий проект | `200 Project`, `409 no-project` |
-| POST | `/api/project` | Создать (`mode: create`) или открыть (`mode: open`) проект | `200 Project` |
+| POST | `/api/project` | Создать (`mode: create`) или открыть (`mode: open`) проект; относительный `path` — от каталога проектов (`--workspace`) | `200 Project` |
 | GET | `/api/sources` | Записи проекта | `200` страница `Source` |
 | POST | `/api/sources` | Импорт записи: JSON `{path}` или `multipart` с полем `file` | `202 {jobId}` |
 | GET | `/api/sources/{sha256}/diagnostics` | Что не разобрано в записи и почему | `200 SourceDiagnostics` |
@@ -140,4 +140,5 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 
 | Дата | Изменение | Ломающее | PR |
 |---|---|---|---|
+| 2026-10-10 | Уточнено: `path` проекта и `..`, коды 400/409/422 при открытии (поведение, не схема) | — | — |
 | 2026-10-10 | Контракт v0.1.0: проект, источники, соединения, байты потока, кадры, задачи | — | — |

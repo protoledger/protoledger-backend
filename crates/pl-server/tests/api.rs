@@ -135,3 +135,102 @@ async fn delete_cancels_running_job() {
     let again = call(&state, Method::DELETE, &format!("/api/jobs/{id}")).await;
     assert_eq!(again.status(), StatusCode::CONFLICT);
 }
+
+async fn post_json(
+    state: &AppState,
+    path: &str,
+    content_type: &str,
+    body: &str,
+) -> axum::response::Response {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(body.to_owned()))
+        .unwrap();
+    pl_server::router(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+}
+
+fn workspace_state(name: &str) -> (AppState, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("pl-server-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    (AppState::new(dir.clone()), dir)
+}
+
+#[tokio::test]
+async fn project_lifecycle() {
+    let (state, dir) = workspace_state("lifecycle");
+    let before = call(&state, Method::GET, "/api/project").await;
+    assert_eq!(before.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json(before).await["type"],
+        "urn:protoledger:problem:no-project"
+    );
+
+    let created = post_json(
+        &state,
+        "/api/project",
+        "application/json",
+        r#"{"path":"demo.protoledger","mode":"create"}"#,
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let body = json(created).await;
+    assert_eq!(body["name"], "demo");
+    assert_eq!(body["settings"]["overlapPolicy"], "first");
+    assert_eq!(body["sourceCount"], 0);
+
+    let current = call(&state, Method::GET, "/api/project").await;
+    assert_eq!(json(current).await["name"], "demo");
+
+    let reopened = post_json(
+        &state,
+        "/api/project",
+        "application/json",
+        r#"{"path":"demo.protoledger","mode":"open"}"#,
+    )
+    .await;
+    assert_eq!(reopened.status(), StatusCode::OK);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn project_errors_are_problem_details() {
+    let (state, dir) = workspace_state("errors");
+    let cases = [
+        (
+            "application/json",
+            r#"{"path":"x","mode":"nope"}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        ("application/json", "не json", StatusCode::BAD_REQUEST),
+        (
+            "text/plain",
+            r#"{"path":"x","mode":"open"}"#,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ),
+        (
+            "application/json",
+            r#"{"path":"../x","mode":"open"}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "application/json",
+            r#"{"path":"missing","mode":"open"}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+    ];
+    for (content_type, body, expected) in cases {
+        let response = post_json(&state, "/api/project", content_type, body).await;
+        assert_eq!(response.status(), expected, "{body}");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

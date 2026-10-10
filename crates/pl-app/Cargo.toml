@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 pl-core = { path = "../pl-core" }
+pl-project = { version = "0.1.0", path = "../pl-project" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["rt", "sync", "macros"] }

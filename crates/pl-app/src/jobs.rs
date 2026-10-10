@@ -215,6 +215,14 @@ impl JobRegistry {
         Ok(id)
     }
 
+    /// Есть ли незавершённые задачи (проект нельзя закрыть, пока они идут).
+    pub fn has_active(&self) -> bool {
+        self.lock()
+            .jobs
+            .values()
+            .any(|e| !e.tx.borrow().state.is_terminal())
+    }
+
     pub fn get(&self, id: &str) -> Option<Job> {
         self.lock().jobs.get(id).map(|e| e.tx.borrow().clone())
     }

@@ -4,6 +4,8 @@
 pub mod dev;
 mod error;
 mod jobs;
+mod json;
+mod project;
 mod spa;
 
 use std::net::SocketAddr;
@@ -11,18 +13,36 @@ use std::path::PathBuf;
 
 use axum::routing::get;
 use axum::{Json, Router};
-use pl_app::JobRegistry;
+use pl_app::{JobRegistry, Session};
 use pl_core::ProblemKind;
 use serde::Serialize;
 
 pub use error::ApiError;
 
 /// Общее состояние сервера.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AppState {
     pub jobs: JobRegistry,
+    pub session: Session,
     #[cfg(feature = "dev-tools")]
     pub dev: Option<dev::DevConfig>,
+}
+
+impl AppState {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self {
+            jobs: JobRegistry::default(),
+            session: Session::new(workspace),
+            #[cfg(feature = "dev-tools")]
+            dev: None,
+        }
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new(PathBuf::from("."))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +74,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .merge(jobs::routes())
+        .merge(project::routes())
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());
@@ -78,7 +99,7 @@ pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
         router(AppState {
             #[cfg(feature = "dev-tools")]
             dev: config.dev.clone(),
-            ..AppState::default()
+            ..AppState::new(config.workspace.clone())
         }),
     )
     .with_graceful_shutdown(async {
