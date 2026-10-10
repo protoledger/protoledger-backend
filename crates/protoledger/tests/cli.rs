@@ -519,3 +519,46 @@ fn a_copied_project_verifies_and_reports_the_same() {
         "отчёт не зависит от места"
     );
 }
+
+#[test]
+fn bench_reports_stages_for_every_capture_in_a_directory() {
+    let dir = repo("fixtures/synthetic");
+    let interpretation = repo("fixtures/synthetic/interpretation.yaml");
+    let out = run(&[
+        "bench",
+        dir.to_str().unwrap(),
+        "--interpretation",
+        interpretation.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let json: serde_json::Value = serde_json::from_str(&text(&out.stdout)).unwrap();
+    let files = json["files"].as_array().unwrap();
+    assert!(files.len() >= 10, "{files:?}");
+    let normal = files.iter().find(|f| f["name"] == "normal.pcapng").unwrap();
+    assert_eq!(normal["frames"], 15);
+    assert_eq!(normal["connections"], 1);
+    assert_eq!(normal["messages"], 8);
+    assert!(normal["timings"]["totalMs"].as_f64().is_some());
+    assert!(json["peakMemoryBytes"].is_null() || json["peakMemoryBytes"].as_u64().unwrap() > 0);
+
+    let table = run(&["bench", dir.join("normal.pcapng").to_str().unwrap()]);
+    assert_eq!(table.status.code(), Some(0));
+    assert!(text(&table.stdout).contains("normal.pcapng"));
+}
+
+#[test]
+fn bench_errors_have_code_two() {
+    assert_eq!(run(&["bench", "нет-такого"]).status.code(), Some(2));
+    let empty = temp("bench-empty");
+    assert_eq!(
+        run(&["bench", empty.to_str().unwrap()]).status.code(),
+        Some(2)
+    );
+    let text_file = empty.join("x.pcap");
+    std::fs::write(&text_file, "не запись").unwrap();
+    assert_eq!(
+        run(&["bench", text_file.to_str().unwrap()]).status.code(),
+        Some(2)
+    );
+}

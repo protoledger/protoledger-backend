@@ -9,4 +9,4 @@ pub mod scenario;
 pub mod tcp;
 
 pub use capture::{Capture, Format};
-pub use scenario::{Generated, SCENARIOS, Scenario, find, generate};
+pub use scenario::{Generated, SCENARIOS, Scenario, find, generate, profile};

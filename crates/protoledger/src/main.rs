@@ -1,4 +1,5 @@
 mod apply;
+mod bench;
 mod common;
 mod report;
 mod verify;
@@ -43,8 +44,8 @@ enum Command {
     Verify(verify::VerifyArgs),
     /// Сформировать отчёт
     Report(report::ReportArgs),
-    /// Замерить время и память
-    Bench,
+    /// Замерить время этапов и пиковую память на записях
+    Bench(bench::BenchArgs),
 }
 
 #[tokio::main]
@@ -93,10 +94,7 @@ async fn main() -> ExitCode {
         Command::Apply(args) => finish(apply::run(args)),
         Command::Verify(args) => finish(verify::run(args)),
         Command::Report(args) => finish(report::run(args)),
-        Command::Bench => {
-            eprintln!("Команда пока не реализована.");
-            ExitCode::from(2)
-        }
+        Command::Bench(args) => finish(bench::run(args)),
     }
 }
 

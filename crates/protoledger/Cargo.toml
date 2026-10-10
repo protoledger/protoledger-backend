@@ -13,6 +13,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 pl-actions = { version = "0.1.0", path = "../pl-actions" }
 pl-report = { version = "0.1.0", path = "../pl-report" }
 pl-app = { version = "0.1.0", path = "../pl-app" }
+pl-capture = { path = "../pl-capture" }
 pl-core = { version = "0.1.0", path = "../pl-core" }
 pl-interp = { version = "0.1.0", path = "../pl-interp" }
 pl-project = { version = "0.1.0", path = "../pl-project" }

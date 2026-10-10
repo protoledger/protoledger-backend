@@ -18,6 +18,23 @@ struct Cli {
 enum Cmd {
     /// Список сценариев
     List,
+    /// Запись контрольного профиля для замеров (по умолчанию: 1000 соединений, 250 тыс. кадров, файл около 100 МиБ)
+    Profile {
+        /// Файл результата
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 1000)]
+        connections: usize,
+        #[arg(long, default_value_t = 250_000)]
+        frames: usize,
+        /// Размер файла, МиБ
+        #[arg(long, default_value_t = 100)]
+        mib: usize,
+        #[arg(long, value_enum, default_value_t = Format::Pcapng)]
+        format: Format,
+    },
     /// Записать сценарии в каталог: <имя>.<формат> и <имя>.expected.json
     Generate {
         /// Каталог для файлов
@@ -39,6 +56,31 @@ fn main() -> ExitCode {
                 println!("{:<18} {}", s.name, s.description);
             }
             ExitCode::SUCCESS
+        }
+        Cmd::Profile {
+            out,
+            seed,
+            connections,
+            frames,
+            mib,
+            format,
+        } => {
+            let capture = pl_synth::profile(connections, frames, mib << 20, seed);
+            match std::fs::write(&out, capture.encode(format)) {
+                Ok(()) => {
+                    println!(
+                        "{}: {} кадров, {} соединений",
+                        out.display(),
+                        capture.frames.len(),
+                        connections
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("ошибка: {}: {e}", out.display());
+                    ExitCode::from(2)
+                }
+            }
         }
         Cmd::Generate {
             out,
