@@ -1,0 +1,2662 @@
+{
+  "format": "protoledger/apply-result@1",
+  "engineVersion": "0.1.0",
+  "interpretationDigest": "2ac26870a47dc909a0afa564c8b8f75d7582b7afc380523280c434c680ead430",
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "summary": {
+    "inputs": 1,
+    "streams": 2,
+    "outOfScopeStreams": 0,
+    "messages": 32,
+    "unknownBytes": 0,
+    "counts": {
+      "matched": 32
+    }
+  },
+  "inputs": [
+    {
+      "name": "main.pcapng",
+      "sha256": "d05c6bf0777f43e39d377ad69da0ef1ff86c3e741a7b27cdb7cdc510950efb75",
+      "format": "pcapng",
+      "frames": 108,
+      "connections": 1,
+      "diagnostics": [
+        {
+          "code": "non_ip",
+          "count": 1
+        },
+        {
+          "code": "non_tcp",
+          "count": 1
+        }
+      ],
+      "streams": [
+        {
+          "id": "d05c6bf0:c0001:ab",
+          "outOfScope": false,
+          "counts": {
+            "matched": 16
+          },
+          "unknownBytes": 0,
+          "messages": [
+            {
+              "start": 0,
+              "end": 8,
+              "category": "matched",
+              "messageId": "read_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 0,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 2,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "session",
+                  "at": 3,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "length",
+                  "at": 4,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "param",
+                  "at": 6,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "checksum",
+                  "at": 7,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 34
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 8,
+              "end": 16,
+              "category": "matched",
+              "messageId": "read_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 8,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 10,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "session",
+                  "at": 11,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "length",
+                  "at": 12,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "param",
+                  "at": 14,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "checksum",
+                  "at": 15,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 36
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 16,
+              "end": 24,
+              "category": "matched",
+              "messageId": "read_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 16,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 18,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "session",
+                  "at": 19,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "length",
+                  "at": 20,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "param",
+                  "at": 22,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 23,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 35
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 24,
+              "end": 36,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 24,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 26,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 27,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 4
+                },
+                {
+                  "name": "length",
+                  "at": 28,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 30,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "value",
+                  "at": 31,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 21
+                },
+                {
+                  "name": "checksum",
+                  "at": 35,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 62
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 36,
+              "end": 44,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 36,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 38,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 39,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "length",
+                  "at": 40,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 42,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 43,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 39
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 44,
+              "end": 56,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 44,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 46,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 47,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "length",
+                  "at": 48,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 50,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "value",
+                  "at": 51,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 37
+                },
+                {
+                  "name": "checksum",
+                  "at": 55,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 80
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 56,
+              "end": 64,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 56,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 58,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 59,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 7
+                },
+                {
+                  "name": "length",
+                  "at": 60,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 62,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 63,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 41
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 64,
+              "end": 76,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 64,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 66,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 67,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 8
+                },
+                {
+                  "name": "length",
+                  "at": 68,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 70,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "value",
+                  "at": 71,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1000
+                },
+                {
+                  "name": "checksum",
+                  "at": 75,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 24
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 76,
+              "end": 84,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 76,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 78,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 79,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 9
+                },
+                {
+                  "name": "length",
+                  "at": 80,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 82,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "checksum",
+                  "at": 83,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 44
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 84,
+              "end": 92,
+              "category": "matched",
+              "messageId": "read_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 84,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 86,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "session",
+                  "at": 87,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 10
+                },
+                {
+                  "name": "length",
+                  "at": 88,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "param",
+                  "at": 90,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 91,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 42
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 92,
+              "end": 104,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 92,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 94,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 95,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 11
+                },
+                {
+                  "name": "length",
+                  "at": 96,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 98,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "value",
+                  "at": 99,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 300
+                },
+                {
+                  "name": "checksum",
+                  "at": 103,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 94
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 104,
+              "end": 116,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 104,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 106,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 107,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 12
+                },
+                {
+                  "name": "length",
+                  "at": 108,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 110,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "value",
+                  "at": 111,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "checksum",
+                  "at": 115,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 55
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 116,
+              "end": 128,
+              "category": "matched",
+              "messageId": "set_param_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 116,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 118,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "session",
+                  "at": 119,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 13
+                },
+                {
+                  "name": "length",
+                  "at": 120,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 122,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "value",
+                  "at": 123,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "checksum",
+                  "at": 127,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 54
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 128,
+              "end": 136,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 128,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 130,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 131,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 14
+                },
+                {
+                  "name": "length",
+                  "at": 132,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 134,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 135,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 48
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 136,
+              "end": 144,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 136,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 138,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 139,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 15
+                },
+                {
+                  "name": "length",
+                  "at": 140,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 142,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "checksum",
+                  "at": 143,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 50
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 144,
+              "end": 152,
+              "category": "matched",
+              "messageId": "measure_req",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 144,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 146,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "session",
+                  "at": 147,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 16
+                },
+                {
+                  "name": "length",
+                  "at": 148,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "channel",
+                  "at": 150,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "checksum",
+                  "at": 151,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 52
+                }
+              ],
+              "violations": []
+            }
+          ]
+        },
+        {
+          "id": "d05c6bf0:c0001:ba",
+          "outOfScope": false,
+          "counts": {
+            "matched": 16
+          },
+          "unknownBytes": 0,
+          "messages": [
+            {
+              "start": 0,
+              "end": 12,
+              "category": "matched",
+              "messageId": "read_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 0,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 2,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 129
+                },
+                {
+                  "name": "session",
+                  "at": 3,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "length",
+                  "at": 4,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 6,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "value",
+                  "at": 7,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 11,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 167
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 12,
+              "end": 24,
+              "category": "matched",
+              "messageId": "read_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 12,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 14,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 129
+                },
+                {
+                  "name": "session",
+                  "at": 15,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "length",
+                  "at": 16,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 18,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "value",
+                  "at": 19,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "checksum",
+                  "at": 23,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 168
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 24,
+              "end": 36,
+              "category": "matched",
+              "messageId": "read_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 24,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 26,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 129
+                },
+                {
+                  "name": "session",
+                  "at": 27,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "length",
+                  "at": 28,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 30,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "value",
+                  "at": 31,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "checksum",
+                  "at": 35,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 167
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 36,
+              "end": 49,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 36,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 38,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 39,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 4
+                },
+                {
+                  "name": "length",
+                  "at": 40,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 42,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "result",
+                  "at": 43,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "applied",
+                  "at": 44,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 21
+                },
+                {
+                  "name": "checksum",
+                  "at": 48,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 191
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 49,
+              "end": 75,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 49,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 51,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 52,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "length",
+                  "at": 53,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 19
+                },
+                {
+                  "name": "channel",
+                  "at": 55,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "count",
+                  "at": 56,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 8
+                },
+                {
+                  "name": "samples",
+                  "at": 58,
+                  "len": 16,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "00020027004c000d003200570018003d"
+                },
+                {
+                  "name": "checksum",
+                  "at": 74,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 33
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 75,
+              "end": 88,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 75,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 77,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 78,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "length",
+                  "at": 79,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 81,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "result",
+                  "at": 82,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "applied",
+                  "at": 83,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 37
+                },
+                {
+                  "name": "checksum",
+                  "at": 87,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 209
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 88,
+              "end": 114,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 88,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 90,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 91,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 7
+                },
+                {
+                  "name": "length",
+                  "at": 92,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 19
+                },
+                {
+                  "name": "channel",
+                  "at": 94,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "count",
+                  "at": 95,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 8
+                },
+                {
+                  "name": "samples",
+                  "at": 97,
+                  "len": 16,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "00030028004d000e003300580019003e"
+                },
+                {
+                  "name": "checksum",
+                  "at": 113,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 43
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 114,
+              "end": 127,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 114,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 116,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 117,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 8
+                },
+                {
+                  "name": "length",
+                  "at": 118,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 120,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "result",
+                  "at": 121,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "applied",
+                  "at": 122,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1000
+                },
+                {
+                  "name": "checksum",
+                  "at": 126,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 153
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 127,
+              "end": 737,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 127,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 129,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 130,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 9
+                },
+                {
+                  "name": "length",
+                  "at": 131,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 603
+                },
+                {
+                  "name": "channel",
+                  "at": 133,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "count",
+                  "at": 134,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 300
+                },
+                {
+                  "name": "samples",
+                  "at": 136,
+                  "len": 600,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "0064008900ae006f009400b9007a009f00c4008500aa006b009000b50076009b00c0008100a60067008c00b10072009700bc007d00a200c7008800ad006e009300b80079009e00c3008400a9006a008f00b40075009a00bf008000a50066008b00b00071009600bb007c00a100c6008700ac006d009200b70078009d00c2008300a80069008e00b30074009900be007f00a40065008a00af0070009500ba007b00a000c5008600ab006c009100b60077009c00c1008200a70068008d00b20073009800bd007e00a30064008900ae006f009400b9007a009f00c4008500aa006b009000b50076009b00c0008100a60067008c00b10072009700bc007d00a200c7",
+                  "valueTruncated": true
+                },
+                {
+                  "name": "checksum",
+                  "at": 736,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 103
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 737,
+              "end": 749,
+              "category": "matched",
+              "messageId": "read_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 737,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 739,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 129
+                },
+                {
+                  "name": "session",
+                  "at": 740,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 10
+                },
+                {
+                  "name": "length",
+                  "at": 741,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "param",
+                  "at": 743,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "value",
+                  "at": 744,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1000
+                },
+                {
+                  "name": "checksum",
+                  "at": 748,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 153
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 749,
+              "end": 762,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 749,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 751,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 752,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 11
+                },
+                {
+                  "name": "length",
+                  "at": 753,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 755,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "result",
+                  "at": 756,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "applied",
+                  "at": 757,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "checksum",
+                  "at": 761,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 180
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 762,
+              "end": 775,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 762,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 764,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 765,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 12
+                },
+                {
+                  "name": "length",
+                  "at": 766,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 768,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "result",
+                  "at": 769,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "applied",
+                  "at": 770,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 5
+                },
+                {
+                  "name": "checksum",
+                  "at": 774,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 184
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 775,
+              "end": 788,
+              "category": "matched",
+              "messageId": "set_param_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 775,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 777,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 130
+                },
+                {
+                  "name": "session",
+                  "at": 778,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 13
+                },
+                {
+                  "name": "length",
+                  "at": 779,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 6
+                },
+                {
+                  "name": "param",
+                  "at": 781,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H1",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "result",
+                  "at": 782,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H4",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 0
+                },
+                {
+                  "name": "applied",
+                  "at": 783,
+                  "len": 4,
+                  "status": "hypothesis",
+                  "hypothesis": "H2",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "checksum",
+                  "at": 787,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 183
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 788,
+              "end": 814,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 788,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 790,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 791,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 14
+                },
+                {
+                  "name": "length",
+                  "at": 792,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 19
+                },
+                {
+                  "name": "channel",
+                  "at": 794,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 1
+                },
+                {
+                  "name": "count",
+                  "at": 795,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 8
+                },
+                {
+                  "name": "samples",
+                  "at": 797,
+                  "len": 16,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "000000b90172003700f001a9006e0127"
+                },
+                {
+                  "name": "checksum",
+                  "at": 813,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 93
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 814,
+              "end": 1424,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 814,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 816,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 817,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 15
+                },
+                {
+                  "name": "length",
+                  "at": 818,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 603
+                },
+                {
+                  "name": "channel",
+                  "at": 820,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 2
+                },
+                {
+                  "name": "count",
+                  "at": 821,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 300
+                },
+                {
+                  "name": "samples",
+                  "at": 823,
+                  "len": 600,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "000000b90172003700f001a9006e012701e000a5015e002300dc0195005a011301cc0091014a000f00c80181004600ff01b8007d013601ef00b4016d003200eb01a40069012201db00a00159001e00d701900055010e01c7008c0145000a00c3017c004100fa01b30078013101ea00af0168002d00e6019f0064011d01d6009b0154001900d2018b0050010901c200870140000500be0177003c00f501ae0073012c01e500aa0163002800e1019a005f011801d10096014f001400cd0186004b010401bd0082013b000000b90172003700f001a9006e012701e000a5015e002300dc0195005a011301cc0091014a000f00c80181004600ff01b8007d013601ef",
+                  "valueTruncated": true
+                },
+                {
+                  "name": "checksum",
+                  "at": 1423,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 213
+                }
+              ],
+              "violations": []
+            },
+            {
+              "start": 1424,
+              "end": 61434,
+              "category": "matched",
+              "messageId": "measure_resp",
+              "unknownBytes": 0,
+              "fields": [
+                {
+                  "name": "signature",
+                  "at": 1424,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "5ac3"
+                },
+                {
+                  "name": "type",
+                  "at": 1426,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 131
+                },
+                {
+                  "name": "session",
+                  "at": 1427,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 16
+                },
+                {
+                  "name": "length",
+                  "at": 1428,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 60003
+                },
+                {
+                  "name": "channel",
+                  "at": 1430,
+                  "len": 1,
+                  "status": "hypothesis",
+                  "hypothesis": "H3",
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 3
+                },
+                {
+                  "name": "count",
+                  "at": 1431,
+                  "len": 2,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 30000
+                },
+                {
+                  "name": "samples",
+                  "at": 1433,
+                  "len": 60000,
+                  "status": "hypothesis",
+                  "hypothesis": "H5",
+                  "state": "decoded",
+                  "valueType": "bytes",
+                  "value": "000000b90172003700f001a9006e012701e000a5015e002300dc0195005a011301cc0091014a000f00c80181004600ff01b8007d013601ef00b4016d003200eb01a40069012201db00a00159001e00d701900055010e01c7008c0145000a00c3017c004100fa01b30078013101ea00af0168002d00e6019f0064011d01d6009b0154001900d2018b0050010901c200870140000500be0177003c00f501ae0073012c01e500aa0163002800e1019a005f011801d10096014f001400cd0186004b010401bd0082013b000000b90172003700f001a9006e012701e000a5015e002300dc0195005a011301cc0091014a000f00c80181004600ff01b8007d013601ef",
+                  "valueTruncated": true
+                },
+                {
+                  "name": "checksum",
+                  "at": 61433,
+                  "len": 1,
+                  "status": "rule",
+                  "hypothesis": null,
+                  "state": "decoded",
+                  "valueType": "int",
+                  "value": 205
+                }
+              ],
+              "violations": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H2",
+      "statement": "value и applied — значение параметра, знаковое 32 бита, старший байт первым",
+      "test": "value == action.params.value",
+      "test": "value == action.params.value",
+      "verdict": "no_counterexample",
+      "applicable": 6,
+      "held": 6,
+      "notApplicable": 26,
+      "counterexamplesTotal": 0,
+      "counterexamples": [],
+      "errorsTotal": 0,
+      "errors": [],
+      "logs": [
+        "log-0001"
+      ]
+    }
+  ]
+}

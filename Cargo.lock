@@ -1015,7 +1015,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "pl-actions",
+ "pl-app",
+ "pl-core",
+ "pl-interp",
+ "pl-project",
+ "pl-reassembly",
  "pl-server",
+ "pl-verify",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2",
  "tokio",
  "tracing-subscriber",
 ]

@@ -63,6 +63,11 @@ impl Session {
         }
     }
 
+    /// Подставляет уже открытый проект (командная строка работает с проектом без сервера).
+    pub fn attach(&self, project: Project) {
+        *self.write() = Some(project);
+    }
+
     pub fn workspace(&self) -> &Path {
         &self.workspace
     }

@@ -124,22 +124,42 @@ pub fn analyze(
     policy: Policy,
     ctx: &JobContext,
 ) -> Result<SourceData, Problem> {
+    analyze_with(
+        file,
+        name,
+        import_id,
+        policy,
+        &|| ctx.is_cancelled(),
+        &mut |stage, done, total, unit| {
+            ctx.progress(stage, done, total, unit);
+        },
+    )
+}
+
+/// То же без задачи: для командной строки и тестов.
+pub fn analyze_with(
+    file: Vec<u8>,
+    name: String,
+    import_id: String,
+    policy: Policy,
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(ProgressStage, u64, u64, ProgressUnit),
+) -> Result<SourceData, Problem> {
     let total = file.len() as u64;
     let sha256: String = Sha256::digest(&file)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let cancelled = || ctx.is_cancelled();
-    ctx.progress(ProgressStage::Reading, 0, total, ProgressUnit::Bytes);
-    let index = pl_capture::index(&file, Limits::default(), &cancelled, &mut |done| {
-        ctx.progress(ProgressStage::Reading, done, total, ProgressUnit::Bytes);
+    progress(ProgressStage::Reading, 0, total, ProgressUnit::Bytes);
+    let index = pl_capture::index(&file, Limits::default(), cancelled, &mut |done| {
+        progress(ProgressStage::Reading, done, total, ProgressUnit::Bytes);
     })
     .map_err(capture_problem)?;
     let frames = index.frames.len() as u64;
-    ctx.progress(ProgressStage::Reassembling, 0, frames, ProgressUnit::Frames);
+    progress(ProgressStage::Reassembling, 0, frames, ProgressUnit::Frames);
     let connections =
-        pl_reassembly::reassemble(&index, &file, policy, &cancelled).map_err(reassembly_problem)?;
-    ctx.progress(
+        pl_reassembly::reassemble(&index, &file, policy, cancelled).map_err(reassembly_problem)?;
+    progress(
         ProgressStage::Reassembling,
         frames,
         frames,
@@ -181,7 +201,11 @@ pub fn read_capture_file(path: &Path) -> Result<Vec<u8>, Problem> {
 }
 
 fn policy_of(project: &Project) -> Policy {
-    let settings = project.manifest().settings;
+    policy_from(project.manifest().settings)
+}
+
+/// Политики сборки потоков из настроек проекта.
+pub fn policy_from(settings: pl_project::Settings) -> Policy {
     Policy {
         // «flag» собирает как «first»: неоднозначность и так видна в карте потока.
         overlap: match settings.overlap_policy {
@@ -300,4 +324,50 @@ pub fn reload_sources(
         Ok(serde_json::Value::Null)
     })
     .map(Some)
+}
+
+/// Разбирает записи открытого проекта из копий в `sources/` синхронно (для командной строки).
+/// Копия, не совпавшая с sha256, не загружается и попадает в список проблем.
+pub fn load_project_sources(
+    session: &Session,
+    store: &SourceStore,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<String>, Problem> {
+    let (plan, policy) = {
+        let guard = session.read();
+        let project = guard.as_ref().ok_or_else(Session::no_project)?;
+        let plan: Vec<_> = project
+            .sources()
+            .into_iter()
+            .filter_map(|s| project.source_path(&s.sha256).ok().map(|p| (s, p)))
+            .collect();
+        (plan, policy_of(project))
+    };
+    let mut problems = Vec::new();
+    for (source, path) in plan {
+        let file = match read_capture_file(&path) {
+            Ok(file) => file,
+            Err(p) => {
+                problems.push(format!("{}: {}", source.name, p.detail.unwrap_or_default()));
+                continue;
+            }
+        };
+        let data = analyze_with(
+            file,
+            source.name.clone(),
+            source.import_id,
+            policy,
+            cancelled,
+            &mut |_, _, _, _| {},
+        )?;
+        if data.sha256 == source.sha256 {
+            store.insert(data);
+        } else {
+            problems.push(format!(
+                "{}: копия в проекте не совпала с sha256, запись не загружена",
+                source.name
+            ));
+        }
+    }
+    Ok(problems)
 }
