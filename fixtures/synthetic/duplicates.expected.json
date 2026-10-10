@@ -1,0 +1,66 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "duplicates",
+  "description": "Одинаковые повторы: запрос сразу, ответ позже",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 12,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 83,
+        "knownBytes": 83,
+        "sha256": "02aa555c611268cf34ce2aa58ee76b1d2970e55d7ab5cb412e3b633da4a89fb2",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [
+          5
+        ],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 32
+          },
+          {
+            "offset": 32,
+            "length": 51
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 60,
+        "knownBytes": 60,
+        "sha256": "98e7169d251e786b45cfea4cb29e33a77c5a7ddc5c51fbc513743ca72505da5a",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [
+          9
+        ],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 21
+          },
+          {
+            "offset": 21,
+            "length": 39
+          }
+        ]
+      }
+    }
+  ]
+}

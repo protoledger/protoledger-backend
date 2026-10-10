@@ -1,0 +1,134 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "port-reuse",
+  "description": "Три соединения с одним 4-кортежем: после FIN, после RST, новый ISN",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 24,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:45000",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 76,
+        "knownBytes": 76,
+        "sha256": "22e5bce804e180c73d1e0da575a1ad48b27a70f917dfea64e9e21547a11bf063",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 34
+          },
+          {
+            "offset": 34,
+            "length": 42
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 88,
+        "knownBytes": 88,
+        "sha256": "fe0596db45492e137b0768bba9f8e8096d61920b761a247889609fb19f2d117c",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 41
+          },
+          {
+            "offset": 41,
+            "length": 47
+          }
+        ]
+      }
+    },
+    {
+      "client": "10.0.0.10:45000",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 11,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 27,
+        "knownBytes": 27,
+        "sha256": "36b6d44a8f85200d83145d806824286627bbf4d66b1f689d7508dfb8a3a862eb",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 27
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 30,
+        "knownBytes": 30,
+        "sha256": "307eb14b45ef1925775c1ed921ba97bf1062a32c3ac0d827722d8b2cff2a1aa8",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 30
+          }
+        ]
+      }
+    },
+    {
+      "client": "10.0.0.10:45000",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 17,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 11,
+        "knownBytes": 11,
+        "sha256": "c948377ea8980364b55b28d817a03ed127029298705295a9d5daf8a64ed8094a",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 11
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 14,
+        "knownBytes": 14,
+        "sha256": "8658e292c60ff3bb1da6f8adccc9afdfdb053c12e07d15888623d8499076b794",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 14
+          }
+        ]
+      }
+    }
+  ]
+}
