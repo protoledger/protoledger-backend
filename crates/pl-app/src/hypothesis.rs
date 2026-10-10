@@ -135,13 +135,13 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Моменты первого и последнего кадра сообщения по участкам потока (отсортированным по началу).
-struct Times {
+pub(crate) struct Times {
     spans: Vec<(u64, u64, u64)>,
     max_end: Vec<u64>,
 }
 
 impl Times {
-    fn new(data: &SourceData, stream: &pl_reassembly::Stream) -> Self {
+    pub(crate) fn new(data: &SourceData, stream: &pl_reassembly::Stream) -> Self {
         let mut spans: Vec<(u64, u64, u64)> = stream
             .frames
             .iter()
@@ -165,7 +165,7 @@ impl Times {
         Self { spans, max_end }
     }
 
-    fn first_ts(&self, start: u64, end: u64) -> Option<u64> {
+    pub(crate) fn first_ts(&self, start: u64, end: u64) -> Option<u64> {
         let lo = self.max_end.partition_point(|m| *m <= start);
         let hi = self.spans.partition_point(|s| s.0 < end);
         self.spans
@@ -179,7 +179,11 @@ impl Times {
 
 /// Назначает действия сообщениям одного потока по порядку: пачка действий в один момент
 /// соответствует пачке сообщений в одном сегменте. Сообщение без действия в окне остаётся без него.
-fn assign<'a>(first_ts: &[u64], actions: &[&'a Action], window_ns: u64) -> Vec<Option<&'a Action>> {
+pub(crate) fn assign<'a>(
+    first_ts: &[u64],
+    actions: &[&'a Action],
+    window_ns: u64,
+) -> Vec<Option<&'a Action>> {
     let mut used = vec![false; actions.len()];
     let mut out = Vec::with_capacity(first_ts.len());
     let mut from = 0usize;

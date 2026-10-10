@@ -14,10 +14,15 @@
     )
 )]
 
+mod correlation;
 mod exchanges;
 mod framing;
 mod variability;
 
+pub use correlation::{
+    ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, MAX_CORR_SAMPLES, ValueHint,
+    correlate,
+};
 pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
 pub use framing::{
     Counter, CounterReason, DelimiterHint, FieldRef, FixedHint, FramingHints, FramingSpec,

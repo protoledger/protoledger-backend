@@ -1,8 +1,8 @@
 //! Подсказки исследователю поверх собранных потоков: границы, изменчивость, пары запрос→ответ.
 
 use pl_analysis::{
-    DataRun, Exchange, ExchangeStats, FramingHints, Msg, StreamSample, Variability,
-    VariabilityOptions, find_framing, pair_exchanges, variability,
+    CorrSample, Correlations, DataRun, Exchange, ExchangeStats, FramingHints, Msg, StreamSample,
+    Variability, VariabilityOptions, correlate, find_framing, pair_exchanges, variability,
 };
 use pl_core::{Problem, ProblemKind};
 use pl_interp::schema::Framing;
@@ -11,7 +11,8 @@ use pl_reassembly::Stream;
 use serde::Serialize;
 
 use crate::{
-    Session, SourceData, SourceStore, current_interpretation, resolve_stream, stream_input,
+    ActionLogStore, Session, SourceData, SourceStore, current_interpretation, resolve_stream,
+    stream_input,
 };
 
 /// Сколько потоков принимает один запрос подсказок.
@@ -345,4 +346,119 @@ fn find_connection(store: &SourceStore, id: &str) -> Option<(std::sync::Arc<Sour
         .checked_sub(1)
         .filter(|i| *i < data.connections.len())?;
     Some((data, index))
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CorrelationRequest {
+    pub streams: Vec<String>,
+    pub framing: Option<Framing>,
+    pub message_id: Option<String>,
+    /// Журнал действий; без значения — все журналы проекта.
+    pub log_id: Option<String>,
+    pub window_ms: Option<u64>,
+}
+
+/// Связи байтов сообщений с параметрами и именем действий из журнала.
+pub fn message_correlations(
+    session: &Session,
+    store: &SourceStore,
+    logs: &ActionLogStore,
+    request: &CorrelationRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Correlations, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    if request.window_ms.is_some_and(|w| w > 600_000) {
+        return Err(bad("windowMs — не больше 600000."));
+    }
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    let loaded = match &request.log_id {
+        Some(id) => vec![logs.get(id).ok_or_else(|| {
+            Problem::new(ProblemKind::NotFound, format!("Журнала действий {id} нет."))
+        })?],
+        None => logs.list(),
+    };
+    if loaded.is_empty() {
+        return Err(Problem::new(
+            ProblemKind::Conflict,
+            "В проекте нет журнала действий: импортируйте его через POST /api/action-logs.",
+        ));
+    }
+    let mut actions: Vec<&pl_actions::Action> =
+        loaded.iter().flat_map(|l| l.actions.iter()).collect();
+    actions.sort_by_key(|a| (a.ts_ns, a.line));
+    let window_ns = request
+        .window_ms
+        .unwrap_or(crate::DEFAULT_WINDOW_MS)
+        .saturating_mul(1_000_000);
+
+    let mut samples: Vec<CorrSample> = Vec::new();
+    for id in &request.streams {
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        let result = pl_interp::apply(&it, &input, cancelled)
+            .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
+        let times = crate::hypothesis::Times::new(&data, stream);
+        let messages: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|m| {
+                request
+                    .message_id
+                    .as_ref()
+                    .is_none_or(|want| m.message_id.as_ref() == Some(want))
+            })
+            .collect();
+        let first_ts: Vec<u64> = messages
+            .iter()
+            .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
+            .collect();
+        let assigned = crate::hypothesis::assign(&first_ts, &actions, window_ns);
+        for (m, action) in messages.iter().zip(assigned) {
+            if samples.len() > pl_analysis::MAX_CORR_SAMPLES {
+                break;
+            }
+            let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) else {
+                continue;
+            };
+            let mut params = std::collections::BTreeMap::new();
+            if let Some(a) = action {
+                for (k, v) in &a.params {
+                    if let pl_actions::Param::Int(i) = v
+                        && let Ok(i) = i64::try_from(*i)
+                    {
+                        params.insert(format!("params.{k}"), i);
+                    }
+                }
+                for (k, v) in &a.result {
+                    if let pl_actions::Param::Int(i) = v
+                        && let Ok(i) = i64::try_from(*i)
+                    {
+                        params.insert(format!("result.{k}"), i);
+                    }
+                }
+            }
+            samples.push(CorrSample {
+                stream: id.clone(),
+                start: m.start,
+                bytes: bytes.into_owned(),
+                params,
+                action: action.map(|a| a.action.clone()),
+            });
+        }
+    }
+    Ok(correlate(&samples))
 }
