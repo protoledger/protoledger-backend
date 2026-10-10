@@ -11,8 +11,10 @@ mod project;
 
 pub use error::ProjectError;
 pub use manifest::{
-    ChecksumPolicy, FORMAT_VERSION, ImportRecord, Manifest, OverlapPolicy, Settings, SourceFormat,
+    ChecksumPolicy, FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, OverlapPolicy,
+    Settings, SourceFormat,
 };
 pub use project::{
-    MAX_MANIFEST_SIZE, MAX_SOURCE_SIZE, Project, Source, SourceStatus, is_valid_sha256,
+    MAX_INTERPRETATION_SIZE, MAX_MANIFEST_SIZE, MAX_SOURCE_SIZE, Project, Source, SourceStatus,
+    is_valid_sha256,
 };

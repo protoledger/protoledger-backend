@@ -554,7 +554,7 @@ impl Interpretation {
             let ok = match (f.ty, expect) {
                 (FieldType::Bytes, Expect::Text(t)) => parse_hex(t).is_some(),
                 (FieldType::String, Expect::Text(_)) => true,
-                (t, Expect::Int(_)) => t.int().is_some(),
+                (t, Expect::Int(v)) => t.int().is_some_and(|int| fits(int, i128::from(*v))),
                 (t, Expect::Text(s)) => t.int().is_some() && parse_hex(s).is_some(),
             };
             if !ok {
@@ -566,6 +566,17 @@ impl Interpretation {
         let _ = m;
         Ok(())
     }
+}
+
+/// Помещается ли число в целый тип: `expect` вне диапазона никогда не выполнится.
+fn fits(ty: IntType, value: i128) -> bool {
+    let bits = (ty.size() * 8) as u32;
+    let (min, max) = if ty.signed() {
+        (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+    } else {
+        (0, (1i128 << bits) - 1)
+    };
+    (min..=max).contains(&value)
 }
 
 /// Поле с известным размером: целое или bytes/string с числовой длиной.
@@ -712,6 +723,27 @@ checks:
         assert_eq!(Interpretation::parse(&huge), Err(SchemaError::TooLarge));
         assert!(Interpretation::parse("").is_err());
         assert!(Interpretation::parse("- 1\n- 2").is_err());
+    }
+
+    #[test]
+    fn expect_must_fit_the_type() {
+        let make = |ty: &str, v: &str| {
+            format!(
+                "format: protoledger/interpretation@1
+framing: {{ kind: fixed, size: 8 }}
+messages:
+  - id: m
+    fields:
+      - {{ name: x, at: 0, type: {ty}, status: rule, expect: {v} }}
+"
+            )
+        };
+        assert!(Interpretation::parse(&make("u16be", "65535")).is_ok());
+        assert!(Interpretation::parse(&make("u16be", "70000")).is_err());
+        assert!(Interpretation::parse(&make("u8", "-1")).is_err());
+        assert!(Interpretation::parse(&make("i8", "-128")).is_ok());
+        assert!(Interpretation::parse(&make("i8", "128")).is_err());
+        assert!(Interpretation::parse(&make("i32be", "70000")).is_ok());
     }
 
     #[test]

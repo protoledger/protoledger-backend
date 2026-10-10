@@ -928,6 +928,7 @@ dependencies = [
  "pl-capture",
  "pl-core",
  "pl-hostile",
+ "pl-interp",
  "pl-project",
  "pl-reassembly",
  "rust-embed",

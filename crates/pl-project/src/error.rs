@@ -26,6 +26,8 @@ pub enum ProjectError {
     },
     #[error("запись {0} не найдена в проекте")]
     UnknownSource(String),
+    #[error("ревизии интерпретации {0} нет в проекте")]
+    UnknownRevision(u32),
     #[error("операция отменена")]
     Cancelled,
     #[error("ошибка ввода-вывода при операции «{op}»: {source}")]
@@ -87,6 +89,10 @@ impl From<ProjectError> for Problem {
             ProjectError::UnknownSource(sha) => Problem::new(
                 ProblemKind::NotFound,
                 format!("Запись {sha} не найдена в проекте."),
+            ),
+            ProjectError::UnknownRevision(rev) => Problem::new(
+                ProblemKind::NotFound,
+                format!("Ревизии интерпретации {rev} в проекте нет."),
             ),
             ProjectError::Cancelled => Problem::new(ProblemKind::Conflict, "Операция отменена."),
             ProjectError::Io { op, .. } => Problem::new(
