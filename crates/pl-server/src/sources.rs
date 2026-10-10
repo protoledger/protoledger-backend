@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -25,7 +25,13 @@ const MAX_LEN: u64 = 1 << 20;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/sources", get(list_sources).post(import_source))
+        .route(
+            "/sources",
+            // Размер тела проверяет сам обработчик: JSON — 8 МиБ, загрузка — предел размера записи.
+            get(list_sources)
+                .post(import_source)
+                .layer(DefaultBodyLimit::disable()),
+        )
         .route("/sources/{sha256}/diagnostics", get(diagnostics))
         .route("/connections", get(list_connections))
         .route("/streams/{stream}/bytes", get(stream_bytes))
@@ -131,16 +137,52 @@ struct JobAccepted {
 
 async fn import_source(
     State(state): State<AppState>,
-    body: Result<Json<ImportByPath>, JsonRejection>,
+    request: Request,
 ) -> Result<(StatusCode, HeaderMap, Json<JobAccepted>), ApiError> {
-    let Json(req) = body.map_err(|e| match e {
-        JsonRejection::MissingJsonContentType(_) => ApiError::new(
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let job_id = if content_type.starts_with("application/json") {
+        let bytes = axum::body::to_bytes(request.into_body(), crate::MAX_JSON_BODY)
+            .await
+            .map_err(|_| {
+                ApiError::new(ProblemKind::LimitExceeded, "Тело запроса слишком большое.")
+            })?;
+        let req: ImportByPath = serde_json::from_slice(&bytes).map_err(|_| {
+            bad_request("Ожидается JSON {\"path\": \"...\"} с путём к файлу записи.")
+        })?;
+        pl_app::import_path(&state.jobs, &state.sources, &state.session, req.path, None)?
+    } else if content_type.starts_with("multipart/form-data") {
+        // Проект проверяем до чтения тела: гигабайты загрузки без проекта не нужны.
+        if state.session.read().is_none() {
+            return Err(ApiError(pl_app::Session::no_project()));
+        }
+        let multipart = Multipart::from_request(request, &state)
+            .await
+            .map_err(|_| bad_request("Тело запроса не похоже на multipart/form-data."))?;
+        let upload = crate::upload::save(&state, multipart).await?;
+        match pl_app::import_path(
+            &state.jobs,
+            &state.sources,
+            &state.session,
+            upload.file,
+            Some(upload.dir.clone()),
+        ) {
+            Ok(id) => id,
+            Err(problem) => {
+                let _ = tokio::fs::remove_dir_all(&upload.dir).await;
+                return Err(problem.into());
+            }
+        }
+    } else {
+        return Err(ApiError::new(
             ProblemKind::UnsupportedMedia,
-            "Ожидается JSON {\"path\": \"...\"}.",
-        ),
-        other => bad_request(format!("Некорректное тело запроса: {}", other.body_text())),
-    })?;
-    let job_id = pl_app::import_path(&state.jobs, &state.sources, &state.session, req.path)?;
+            "Ожидается application/json или multipart/form-data.",
+        ));
+    };
     let mut headers = HeaderMap::new();
     if let Ok(v) = HeaderValue::from_str(&format!("/api/jobs/{job_id}")) {
         headers.insert(header::LOCATION, v);
