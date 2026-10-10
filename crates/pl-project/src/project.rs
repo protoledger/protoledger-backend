@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::ProjectError;
 use crate::manifest::{
-    FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, RunRef, Settings, SourceFormat,
+    ActionLogRecord, FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, RunRef,
+    Settings, SourceFormat,
 };
 
 /// Размер файла записи, `plan/security.md` §6.
@@ -20,6 +21,8 @@ pub const MAX_INTERPRETATION_SIZE: usize = 4 << 20;
 pub const MAX_RUN_SIZE: usize = 256 << 20;
 const MAX_RUNS: usize = 100_000;
 const RUNS_DIR: &str = "runs";
+const ACTION_LOGS_DIR: &str = "action-logs";
+const MAX_ACTION_LOGS: usize = 10_000;
 const MAX_REVISIONS: usize = 100_000;
 const MAX_IMPORTS: usize = 100_000;
 const MAX_NAME_CHARS: usize = 255;
@@ -297,6 +300,18 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), ProjectError> {
             "прогоны: идентификаторы идут подряд вида run-0001".to_owned(),
         ));
     }
+    if manifest.action_logs.len() > MAX_ACTION_LOGS
+        || manifest
+            .action_logs
+            .iter()
+            .enumerate()
+            .any(|(i, l)| l.id != format!("log-{:04}", i + 1) || !is_valid_sha256(&l.sha256))
+    {
+        return Err(ProjectError::InvalidManifest(
+            "журналы действий: идентификаторы идут подряд вида log-0001, sha256 — 64 hex-цифры"
+                .to_owned(),
+        ));
+    }
     let mut seen = std::collections::BTreeSet::new();
     for record in &manifest.imports {
         if !is_valid_sha256(&record.sha256) {
@@ -382,6 +397,7 @@ impl Project {
             imports: Vec::new(),
             interpretations: Vec::new(),
             runs: Vec::new(),
+            action_logs: Vec::new(),
         };
         save_manifest(path, &manifest)?;
         Ok(Self {
@@ -418,6 +434,77 @@ impl Project {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    pub fn action_logs(&self) -> &[ActionLogRecord] {
+        &self.manifest.action_logs
+    }
+
+    /// Копирует журнал в `action-logs/<sha256>.csv` (только чтение) и регистрирует его.
+    /// Повторный импорт того же файла — новая запись, файл один.
+    pub fn add_action_log(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        mapping: &pl_actions::Mapping,
+        rows: u64,
+    ) -> Result<ActionLogRecord, ProjectError> {
+        if bytes.len() > pl_actions::MAX_FILE_BYTES {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_action_log_size",
+                value: pl_actions::MAX_FILE_BYTES as u64,
+                unit: "bytes",
+            });
+        }
+        let sha256 = hex(&Sha256::digest(bytes));
+        let dir = self.root.join(ACTION_LOGS_DIR);
+        if !dir.is_dir() {
+            fs::create_dir(&dir).map_err(ProjectError::io("создание папки журналов"))?;
+            restrict_dir(&dir)?;
+        }
+        let target = dir.join(format!("{sha256}.csv"));
+        if fs::symlink_metadata(&target).is_err() {
+            write_atomic(&dir, &target, bytes)?;
+            make_readonly(&target)?;
+        }
+        let record = ActionLogRecord {
+            id: format!("log-{:04}", self.manifest.action_logs.len() + 1),
+            sha256,
+            name: sanitize_name(name),
+            mapping: mapping.clone(),
+            rows,
+        };
+        let mut updated = self.manifest.clone();
+        updated.action_logs.push(record.clone());
+        save_manifest(&self.root, &updated)?;
+        self.manifest = updated;
+        Ok(record)
+    }
+
+    /// Содержимое журнала; путь строится из проверенного sha256.
+    pub fn read_action_log(&self, id: &str) -> Result<Vec<u8>, ProjectError> {
+        let record = self
+            .manifest
+            .action_logs
+            .iter()
+            .find(|l| l.id == id)
+            .ok_or_else(|| ProjectError::UnknownActionLog(id.chars().take(32).collect()))?;
+        let path = self
+            .root
+            .join(ACTION_LOGS_DIR)
+            .join(format!("{}.csv", record.sha256));
+        let meta = fs::symlink_metadata(&path).map_err(ProjectError::io("чтение журнала"))?;
+        if !meta.is_file() {
+            return Err(ProjectError::NotRegularFile);
+        }
+        if meta.len() > pl_actions::MAX_FILE_BYTES as u64 {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_action_log_size",
+                value: pl_actions::MAX_FILE_BYTES as u64,
+                unit: "bytes",
+            });
+        }
+        fs::read(&path).map_err(ProjectError::io("чтение журнала"))
     }
 
     pub fn run_ids(&self) -> Vec<&str> {
@@ -1229,6 +1316,51 @@ mod tests {
             project.save_run("run-0003", &huge),
             Err(ProjectError::LimitExceeded { .. })
         ));
+    }
+
+    #[test]
+    fn action_logs_are_copied_once_and_registered_each_time() {
+        let dir = TestDir::new();
+        let mut project = new_project(&dir);
+        let mapping = pl_actions::Mapping {
+            time: "time".into(),
+            action: "action".into(),
+            params: None,
+            result: None,
+            time_format: Default::default(),
+            params_format: Default::default(),
+            result_format: Default::default(),
+            delimiter: None,
+            utc_offset_minutes: 0,
+            clock_offset_ms: 0,
+        };
+        let csv = b"time,action\n2026-10-01T00:00:00Z,x\n";
+        let a = project
+            .add_action_log("../../стенд.csv", csv, &mapping, 1)
+            .unwrap();
+        let b = project
+            .add_action_log("again.csv", csv, &mapping, 1)
+            .unwrap();
+        assert_eq!((a.id.as_str(), b.id.as_str()), ("log-0001", "log-0002"));
+        assert_eq!(a.sha256, b.sha256);
+        assert_eq!(
+            fs::read_dir(dir.path("demo.protoledger/action-logs"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(project.read_action_log("log-0002").unwrap(), csv);
+        assert!(matches!(
+            project.read_action_log("log-0009"),
+            Err(ProjectError::UnknownActionLog(_))
+        ));
+        assert!(matches!(
+            project.read_action_log("../x"),
+            Err(ProjectError::UnknownActionLog(_))
+        ));
+        let reopened = Project::open(project.root()).unwrap();
+        assert_eq!(reopened.action_logs().len(), 2);
+        assert_eq!(reopened.action_logs()[0].mapping, mapping);
     }
 
     #[test]

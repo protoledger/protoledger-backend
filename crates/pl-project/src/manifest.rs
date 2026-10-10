@@ -73,6 +73,18 @@ pub struct InterpretationRevision {
     pub digest: String,
 }
 
+/// Журнал действий: копия `action-logs/<sha256>.csv` и сопоставление колонок, с которым он разобран.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionLogRecord {
+    /// `log-0001`, …
+    pub id: String,
+    pub sha256: String,
+    pub name: String,
+    pub mapping: pl_actions::Mapping,
+    pub rows: u64,
+}
+
 /// Сохранённый прогон проверки: `runs/<id>.json`, `id` вида `run-0001`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -94,4 +106,6 @@ pub struct Manifest {
     pub interpretations: Vec<InterpretationRevision>,
     #[serde(default)]
     pub runs: Vec<RunRef>,
+    #[serde(default)]
+    pub action_logs: Vec<ActionLogRecord>,
 }
