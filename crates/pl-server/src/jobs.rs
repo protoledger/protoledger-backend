@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures_util::StreamExt;
 use futures_util::stream::{self, Stream};
 use pl_app::{Job, JobProgress};
 use pl_core::{Problem, ProblemKind};
@@ -13,6 +14,9 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use crate::{ApiError, AppState};
+
+/// Предел жизни одного SSE-потока (T21).
+const SSE_MAX_DURATION: Duration = Duration::from_secs(30 * 60);
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -67,7 +71,9 @@ async fn job_events(
     Path(id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let rx = state.jobs.subscribe(&id).ok_or_else(|| not_found(&id))?;
-    Ok(Sse::new(event_stream(rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    // Долгое соединение закрываем: клиент переподключится и сразу получит текущее состояние.
+    let stream = event_stream(rx).take_until(tokio::time::sleep(SSE_MAX_DURATION));
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
 fn event(name: &str, data: &impl Serialize) -> Event {

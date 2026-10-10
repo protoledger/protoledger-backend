@@ -44,7 +44,11 @@ async fn send(
     path: &str,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let mut req = Request::builder().method(method).uri(path);
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::HOST, "localhost:8080")
+        .header("x-protoledger-token", state.guard.token());
     let body = match body {
         Some(v) => {
             req = req.header(header::CONTENT_TYPE, "application/json");
@@ -250,6 +254,8 @@ async fn errors_are_problem_details() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/sources")
+        .header(header::HOST, "localhost:8080")
+        .header("x-protoledger-token", state.guard.token())
         .header(header::CONTENT_TYPE, "text/plain")
         .body(Body::from("x"))
         .unwrap();
