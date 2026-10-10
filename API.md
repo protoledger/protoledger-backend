@@ -47,7 +47,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 |---|---|---|---|
 | GET | `/api/health` | Проверка, что движок запущен | `200 {status, version}` |
 | GET | `/api/project` | Текущий проект | `200 Project`, `409 no-project` |
-| POST | `/api/project` | Создать (`mode: create`) или открыть (`mode: open`) проект | `200 Project` |
+| POST | `/api/project` | Создать (`mode: create`) или открыть (`mode: open`) проект; относительный `path` — от каталога проектов (`--workspace`) | `200 Project` |
 | GET | `/api/sources` | Записи проекта | `200` страница `Source` |
 | POST | `/api/sources` | Импорт записи: JSON `{path}` или `multipart` с полем `file` | `202 {jobId}` |
 | GET | `/api/sources/{sha256}/diagnostics` | Что не разобрано в записи и почему | `200 SourceDiagnostics` |
@@ -112,6 +112,10 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 6. Клик по участку потока → `frames[].frameNo` → `GET /api/frames/<sha256>/7` — заголовки, байты кадра, `payload` внутри кадра и `streamRange` обратно в поток.
 7. Что не разобрано в записи: `GET /api/sources/<sha256>/diagnostics`.
 
+### Открытие существующего проекта
+
+`POST /api/project` с `mode: open` сбрасывает записи прежнего проекта и запускает фоновую задачу, которая заново разбирает записи из `sources/`. Они появляются в `GET /api/sources` по мере готовности; ход виден в `GET /api/jobs`. Пока задачи идут, сменить проект нельзя (`409`).
+
 ### Повторный импорт того же файла
 
 `POST /api/sources` с тем же файлом создаёт новый импорт (`importId` растёт), записи не склеиваются.
@@ -140,5 +144,6 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 
 | Дата | Изменение | Ломающее | PR |
 |---|---|---|---|
+| 2026-10-10 | Уточнено: `path` проекта и `..`, коды 400/409/422 при открытии (поведение, не схема) | — | — |
 | 2026-10-10 | Контракт v0.1.0: проект, источники, соединения, байты потока, кадры, задачи | — | — |
 | 2026-10-10 | v0.1.1: коды диагностики `non_ip` (ARP и др.) и `non_tcp` (UDP, ICMP) | — | — |

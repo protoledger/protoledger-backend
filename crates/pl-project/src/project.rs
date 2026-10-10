@@ -445,7 +445,10 @@ impl Project {
         cancelled: &dyn Fn() -> bool,
         progress: &mut dyn FnMut(u64),
     ) -> Result<ImportRecord, ProjectError> {
-        validate_path(path)?;
+        // Путь к записи выбирает пользователь, «..» допустим; защита — токен API и проверка «обычный файл».
+        if path.as_os_str().is_empty() {
+            return Err(ProjectError::InvalidPath("путь пустой"));
+        }
         let meta = match fs::metadata(path) {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

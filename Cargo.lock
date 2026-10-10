@@ -813,6 +813,7 @@ version = "0.1.0"
 dependencies = [
  "pl-capture",
  "pl-core",
+ "pl-project",
  "pl-reassembly",
  "serde",
  "serde_json",

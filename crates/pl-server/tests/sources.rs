@@ -8,6 +8,28 @@ use pl_server::AppState;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// Состояние с открытым проектом во временном каталоге.
+fn project_state(name: &str) -> AppState {
+    let dir = std::env::temp_dir().join(format!("pl-sources-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = AppState::new(dir);
+    state
+        .session
+        .open(&state.jobs, "demo.protoledger", pl_app::OpenMode::Create)
+        .unwrap();
+    state
+}
+
+async fn wait_jobs(state: &AppState) {
+    for job in state.jobs.list() {
+        let mut rx = state.jobs.subscribe(&job.id).unwrap();
+        while !rx.borrow_and_update().state.is_terminal() {
+            rx.changed().await.unwrap();
+        }
+    }
+}
+
 fn fixture(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/synthetic")
@@ -71,7 +93,7 @@ async fn import(state: &AppState, name: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn import_then_explore() {
-    let state = AppState::default();
+    let state = project_state("t1");
     let sha = import(&state, "mixed.pcapng").await;
 
     let (status, sources) = get(&state, "/api/sources").await;
@@ -165,7 +187,7 @@ async fn import_then_explore() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ambiguous_segment_has_variants() {
-    let state = AppState::default();
+    let state = project_state("t2");
     let sha = import(&state, "overlap-conflict.pcapng").await;
     let (_, bytes) = get(
         &state,
@@ -186,7 +208,7 @@ async fn ambiguous_segment_has_variants() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn errors_are_problem_details() {
-    let state = AppState::default();
+    let state = project_state("t3");
     let sha = import(&state, "normal.pcap").await;
 
     for (path, want) in [
@@ -237,7 +259,7 @@ async fn errors_are_problem_details() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn import_of_non_capture_fails_job() {
-    let state = AppState::default();
+    let state = project_state("t4");
     let readme = fixture("README.md");
     let (status, body) = send(
         &state,
@@ -259,4 +281,46 @@ async fn import_of_non_capture_fails_job() {
     assert_eq!(job.error.unwrap().status, 422);
     let (_, sources) = get(&state, "/api/sources").await;
     assert_eq!(sources["total"], 0);
+}
+
+#[tokio::test]
+async fn import_requires_open_project() {
+    let state = AppState::default();
+    let (status, body) = send(
+        &state,
+        Method::POST,
+        "/api/sources",
+        Some(json!({ "path": fixture("normal.pcap") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["type"], "urn:protoledger:problem:no-project");
+}
+
+#[tokio::test]
+async fn import_copies_into_project_and_survives_reopen() {
+    let state = project_state("reopen");
+    let sha = import(&state, "normal.pcap").await;
+    let root = state.session.read().as_ref().unwrap().root().to_path_buf();
+    let copy = root.join("sources").join(format!("{sha}.pcap"));
+    assert!(copy.is_file(), "копии записи нет в проекте");
+
+    // Новая сессия на том же каталоге: проект открывается, записи разбираются заново.
+    let workspace = root.parent().unwrap().to_path_buf();
+    let fresh = AppState::new(workspace);
+    let (status, body) = send(
+        &fresh,
+        Method::POST,
+        "/api/project",
+        Some(json!({ "path": "demo.protoledger", "mode": "open" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sourceCount"], 1);
+    wait_jobs(&fresh).await;
+    let (_, list) = get(&fresh, "/api/sources").await;
+    assert_eq!(list["items"][0]["sha256"], sha.as_str());
+    assert_eq!(list["items"][0]["importId"], "imp-0001");
+    let (status, _) = get(&fresh, "/api/connections").await;
+    assert_eq!(status, StatusCode::OK);
 }

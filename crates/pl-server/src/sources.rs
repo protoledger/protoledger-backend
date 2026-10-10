@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use pl_app::SourceData;
 use pl_capture::{Checksum, DiagCode, Severity, decode, frame_bytes, tcp_flags};
 use pl_core::ProblemKind;
-use pl_reassembly::{Bytes, Close, Connection, Flag, PieceKind, Policy, Stream};
+use pl_reassembly::{Bytes, Close, Connection, Flag, PieceKind, Stream};
 use serde::{Deserialize, Serialize};
 
 use crate::encode::{base64, rfc3339};
@@ -140,7 +140,7 @@ async fn import_source(
         ),
         other => bad_request(format!("Некорректное тело запроса: {}", other.body_text())),
     })?;
-    let job_id = pl_app::import_path(&state.jobs, &state.sources, req.path, Policy::default())?;
+    let job_id = pl_app::import_path(&state.jobs, &state.sources, &state.session, req.path)?;
     let mut headers = HeaderMap::new();
     if let Ok(v) = HeaderValue::from_str(&format!("/api/jobs/{job_id}")) {
         headers.insert(header::LOCATION, v);
