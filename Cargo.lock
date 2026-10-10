@@ -553,6 +553,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-capture"
+version = "0.1.0"
+dependencies = [
+ "pcap-parser",
+ "pl-synth",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "pl-core"
 version = "0.1.0"
 dependencies = [

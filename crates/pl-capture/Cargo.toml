@@ -1,0 +1,17 @@
+[package]
+name = "pl-capture"
+description = "Чтение записей pcap/pcapng, индекс кадров, разбор Ethernet/IPv4/TCP"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pcap-parser = "0.17.0"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+serde_json = "1.0.151"
+pl-synth = { path = "../pl-synth" }
