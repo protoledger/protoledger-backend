@@ -68,17 +68,17 @@ impl ProblemKind {
 /// Превышенный защитный предел (`plan/security.md` §6).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Limit {
-    pub name: String,
+    pub name: &'static str,
     pub value: u64,
-    pub unit: String,
+    pub unit: &'static str,
 }
 
 /// Тело ошибки по RFC 9457.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Problem {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub title: String,
+    #[serde(rename = "type", serialize_with = "serialize_kind")]
+    pub kind: ProblemKind,
+    pub title: &'static str,
     pub status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -86,11 +86,15 @@ pub struct Problem {
     pub limit: Option<Limit>,
 }
 
+fn serialize_kind<S: serde::Serializer>(kind: &ProblemKind, s: S) -> Result<S::Ok, S::Error> {
+    s.collect_str(&format_args!("urn:protoledger:problem:{}", kind.code()))
+}
+
 impl Problem {
     pub fn new(kind: ProblemKind, detail: impl Into<String>) -> Self {
         Self {
-            kind: format!("urn:protoledger:problem:{}", kind.code()),
-            title: kind.title().to_owned(),
+            kind,
+            title: kind.title(),
             status: kind.status(),
             detail: Some(detail.into()),
             limit: None,

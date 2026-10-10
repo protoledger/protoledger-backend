@@ -9,7 +9,9 @@ workspace = true
 
 [dependencies]
 axum = "0.8.9"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 mime_guess = "2.0.5"
+pl-app = { version = "0.1.0", path = "../pl-app" }
 pl-core = { path = "../pl-core" }
 rust-embed = { version = "8.13.0", features = ["interpolate-folder-path"] }
 serde = "1.0.229"

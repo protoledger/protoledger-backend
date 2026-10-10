@@ -1,0 +1,19 @@
+[package]
+name = "pl-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pl-core = { path = "../pl-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt", "sync", "macros"] }
+tokio-util = "0.7.20"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.53.2", features = ["rt", "sync", "macros", "time"] }
