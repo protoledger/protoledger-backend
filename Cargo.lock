@@ -846,10 +846,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-analysis"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pl-app"
 version = "0.1.0"
 dependencies = [
  "pl-actions",
+ "pl-analysis",
  "pl-capture",
  "pl-core",
  "pl-interp",
@@ -946,6 +955,7 @@ dependencies = [
  "http-body-util",
  "mime_guess",
  "pl-actions",
+ "pl-analysis",
  "pl-app",
  "pl-capture",
  "pl-core",

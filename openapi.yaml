@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.8
+  version: 0.1.9
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -30,6 +30,8 @@ tags:
     description: Журналы действий клиента и поиск обмена по действию
   - name: research
     description: Наблюдения, гипотезы и вопросы исследователя
+  - name: analysis
+    description: Подсказки исследователю — границы сообщений, изменчивость байтов, пары запрос-ответ
   - name: reports
     description: Отчёт по проекту
   - name: jobs
@@ -1287,6 +1289,160 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
 
+  /api/analysis/framing:
+    post:
+      tags: [analysis]
+      operationId: findFraming
+      summary: Подсказки по границам сообщений
+      description: |
+        По байтам указанных направленных потоков ищет, где проходят границы сообщений: кандидаты поля длины
+        (смещение, ширина 1/2/4, порядок байтов, поправка), фиксированный размер, начальные сигнатуры и разделители.
+        Это **подсказки с основаниями**, не выводы: у каждой — доля подтверждений, число сообщений, первый контрпример.
+        У каждого кандидата есть `framing` в виде, который принимает интерпретация (`status: hypothesis`).
+        Поле длины подтверждается не меньше чем восемью сообщениями, а начала сообщений должны быть похожи друг на друга
+        или совпадать с началами TCP-сегментов; иначе кандидат не показывается. Дыры не заполняются: разбор идёт по
+        непрерывным участкам. Анализируется не больше 1 МиБ на поток и 16 МиБ на запрос; если часть данных отброшена,
+        `truncated: true`; если поиск прерван по времени (20 с), `incomplete: true`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FramingRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba'] }
+      responses:
+        '200':
+          description: Кандидаты границ, лучшие первыми
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FramingHints' }
+              example:
+                streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba']
+                sampledBytes: 61586
+                truncated: false
+                incomplete: false
+                length:
+                  - at: 4
+                    width: 2
+                    bigEndian: false
+                    adjust: 7
+                    messages: 64
+                    coveredBytes: 61586
+                    totalBytes: 61586
+                    scorePermille: 1000
+                    streamsConfirmed: 2
+                    streamsTotal: 2
+                    streamsEndedExactly: 2
+                    startCoherencePermille: 1000
+                    segmentAlignmentPermille: 312
+                    distinctValues: 18
+                    minLength: 8
+                    maxLength: 1472
+                    firstCounterexample: null
+                    equivalent: [{ at: 4, type: u8, adjust: 7 }]
+                    framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }
+                fixed: []
+                signatures:
+                  - { bytes: 5ac3, basis: segments, atStarts: 64, startsTotal: 64, occurrences: 64, framing: { kind: magic, bytes: 5ac3, status: hypothesis } }
+                delimiters: []
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/analysis/variability:
+    post:
+      tags: [analysis]
+      operationId: getVariability
+      summary: Какие байты сообщений постоянны, какие меняются
+      description: |
+        Выравнивает сообщения по началу и для каждого смещения считает число разных значений, энтропию и частые значения;
+        постоянные и меняющиеся области подряд идущих смещений; похожие на счётчик поля (значение растёт на 1 от
+        сообщения к сообщению). Берутся сообщения одной длины: `length` или самой частой. Границы сообщений — из
+        `framing` (например, кандидат из `/api/analysis/framing`) или из сохранённой интерпретации. Фильтр
+        `messageId` оставляет сообщения одного типа и требует сохранённой интерпретации. Подсказки, не выводы.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariabilityRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab']
+              framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }
+      responses:
+        '200':
+          description: Изменчивость по смещениям
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variability' }
+              example:
+                messages: 32
+                truncated: false
+                classes: [{ length: 13, count: 12 }, { length: 15, count: 8 }]
+                length: 13
+                analysed: 12
+                columns:
+                  - { offset: 0, samples: 12, distinct: 1, entropyMillibits: 0, constant: 90, top: [{ value: 90, count: 12 }] }
+                  - { offset: 1, samples: 12, distinct: 1, entropyMillibits: 0, constant: 195, top: [{ value: 195, count: 12 }] }
+                regions:
+                  - { start: 0, end: 2, kind: constant, bytes: 5ac3 }
+                  - { start: 2, end: 6, kind: varying }
+                counters: [{ at: 3, width: 1, bigEndian: true, steps: 11, pairs: 11 }]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/exchanges:
+    post:
+      tags: [analysis]
+      operationId: findExchanges
+      summary: Пары запрос→ответ в соединении
+      description: |
+        Сообщения соединения по обоим направлениям упорядочиваются по времени первого кадра; подряд идущие сообщения
+        одной стороны образуют «ход», ход запросов (от инициатора) сопоставляется со следующим ходом ответов.
+        `certainty`: `certain` — один запрос и один ответ; `ordered` — запросов и ответов поровну, сопоставлены по порядку
+        (конвейер, порядок — допущение); `ambiguous` — число разное, чей ответ — неизвестно; `unanswered` — запрос без
+        ответа; `unsolicited` — ответ без запроса. Границы сообщений — из `framing` либо из сохранённой интерпретации
+        (без `framing` и без интерпретации — `409`); типы сообщений берутся из интерпретации, если она есть.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExchangesRequest' }
+            example: { connection: '3f5a1c0d:c0001', limit: 50, offset: 0 }
+      responses:
+        '200':
+          description: Страница обменов в порядке времени
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExchangePairPage' }
+              example:
+                items:
+                  - requests: [{ stream: '3f5a1c0d:c0001:ab', start: 0, end: 13, messageId: set_param_req, firstTsNs: 1790899200000000000, lastTsNs: 1790899200000000000 }]
+                    responses: [{ stream: '3f5a1c0d:c0001:ba', start: 0, end: 12, messageId: set_param_resp, firstTsNs: 1790899200001200000, lastTsNs: 1790899200001200000 }]
+                    delayNs: 1200000
+                    certainty: certain
+                total: 12
+                limit: 50
+                offset: 0
+                stats: { exchanges: 12, certain: 8, ordered: 4, ambiguous: 0, unanswered: 0, unsolicited: 0, minDelayNs: 900000, medianDelayNs: 1200000, maxDelayNs: 4100000 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/jobs:
     get:
       tags: [jobs]
@@ -2177,6 +2333,247 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Question' }
+
+    FramingSpec:
+      type: object
+      description: Фрейминг в виде, который принимает интерпретация (раздел `framing`)
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [length_prefixed, delimiter, fixed, magic] }
+        length:
+          type: object
+          required: [at, type]
+          additionalProperties: false
+          properties:
+            at: { type: integer, minimum: 0 }
+            type: { type: string, enum: [u8, u16be, u16le, u32be, u32le, u64be, u64le, i8, i16be, i16le, i32be, i32le, i64be, i64le] }
+            adjust: { type: integer, description: 'Длина сообщения = значение поля + adjust' }
+        size: { type: integer, minimum: 1 }
+        bytes: { type: string, description: 'hex' }
+        status: { type: string, enum: [rule, hypothesis, unknown] }
+
+    FramingRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, description: 'Направленный поток, например 3f5a1c0d:c0001:ab' }
+
+    FramingCounter:
+      type: object
+      description: Первое место, где кандидат расходится с данными
+      required: [stream, offset, run, reason]
+      properties:
+        stream: { type: string }
+        offset: { type: integer, minimum: 0, description: 'Смещение внутри непрерывного участка потока' }
+        run: { type: integer, minimum: 0, description: 'Номер непрерывного участка потока (между дырами), с нуля' }
+        reason: { type: string, enum: [bad_length, overrun, short_header, dissimilar] }
+        value: { type: [integer, 'null'], description: 'Значение поля длины в этом месте' }
+
+    LengthHint:
+      type: object
+      required: [at, width, bigEndian, adjust, messages, coveredBytes, totalBytes, scorePermille, streamsConfirmed, streamsTotal, streamsEndedExactly, startCoherencePermille, segmentAlignmentPermille, distinctValues, minLength, maxLength, firstCounterexample, equivalent, framing]
+      properties:
+        at: { type: integer, minimum: 0 }
+        width: { type: integer, enum: [1, 2, 4] }
+        bigEndian: { type: boolean }
+        adjust: { type: integer }
+        messages: { type: integer, minimum: 0 }
+        coveredBytes: { type: integer, minimum: 0 }
+        totalBytes: { type: integer, minimum: 0 }
+        scorePermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля байтов, разбитых на сообщения без противоречий' }
+        streamsConfirmed: { type: integer, minimum: 0 }
+        streamsTotal: { type: integer, minimum: 0 }
+        streamsEndedExactly: { type: integer, minimum: 0 }
+        startCoherencePermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля начал сообщений с самым частым значением на одном из первых 8 смещений' }
+        segmentAlignmentPermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля начал сообщений, совпавших с началами TCP-сегментов' }
+        distinctValues: { type: integer, minimum: 0 }
+        minLength: { type: integer, minimum: 0 }
+        maxLength: { type: integer, minimum: 0 }
+        firstCounterexample:
+          oneOf:
+            - { $ref: '#/components/schemas/FramingCounter' }
+            - { type: 'null' }
+        equivalent:
+          type: array
+          description: Другие поля, дающие те же границы (например, младший байт того же числа)
+          items:
+            type: object
+            required: [at, type, adjust]
+            properties:
+              at: { type: integer }
+              type: { type: string }
+              adjust: { type: integer }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    FixedHint:
+      type: object
+      required: [size, messages, scorePermille, framing]
+      properties:
+        size: { type: integer, minimum: 1 }
+        messages: { type: integer, minimum: 0 }
+        scorePermille: { type: integer, minimum: 0, maximum: 1000 }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    SignatureHint:
+      type: object
+      required: [bytes, basis, atStarts, startsTotal, occurrences, framing]
+      properties:
+        bytes: { type: string, description: 'hex' }
+        basis: { type: string, enum: [segments, length_candidate], description: 'По каким началам посчитано' }
+        atStarts: { type: integer, minimum: 0 }
+        startsTotal: { type: integer, minimum: 0 }
+        occurrences: { type: integer, minimum: 0, description: 'Сколько раз последовательность встречается во всех данных' }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    DelimiterHint:
+      type: object
+      required: [bytes, atEnds, endsTotal, inside, framing]
+      properties:
+        bytes: { type: string, description: 'hex' }
+        atEnds: { type: integer, minimum: 0 }
+        endsTotal: { type: integer, minimum: 0 }
+        inside: { type: integer, minimum: 0, description: 'Сколько раз встречается не на конце сегмента' }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    FramingHints:
+      type: object
+      required: [streams, sampledBytes, truncated, incomplete, length, fixed, signatures, delimiters]
+      properties:
+        streams: { type: array, items: { type: string } }
+        sampledBytes: { type: integer, minimum: 0 }
+        truncated: { type: boolean, description: 'Часть данных не вошла в анализ (предел размера или числа потоков)' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени: список по длине неполон' }
+        length: { type: array, items: { $ref: '#/components/schemas/LengthHint' } }
+        fixed: { type: array, items: { $ref: '#/components/schemas/FixedHint' } }
+        signatures: { type: array, items: { $ref: '#/components/schemas/SignatureHint' } }
+        delimiters: { type: array, items: { $ref: '#/components/schemas/DelimiterHint' } }
+
+    VariabilityRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
+        length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    VariabilityColumn:
+      type: object
+      required: [offset, samples, distinct, entropyMillibits, constant, top]
+      properties:
+        offset: { type: integer, minimum: 0 }
+        samples: { type: integer, minimum: 0 }
+        distinct: { type: integer, minimum: 0, maximum: 256 }
+        entropyMillibits: { type: integer, minimum: 0, maximum: 8000, description: 'Энтропия в тысячных долях бита' }
+        constant: { type: [integer, 'null'], minimum: 0, maximum: 255 }
+        top:
+          type: array
+          items:
+            type: object
+            required: [value, count]
+            properties:
+              value: { type: integer, minimum: 0, maximum: 255 }
+              count: { type: integer, minimum: 0 }
+
+    Variability:
+      type: object
+      required: [messages, truncated, classes, length, analysed, columns, regions, counters]
+      properties:
+        messages: { type: integer, minimum: 0 }
+        truncated: { type: boolean }
+        classes:
+          type: array
+          description: Длины сообщений и их количество, частые первыми
+          items:
+            type: object
+            required: [length, count]
+            properties:
+              length: { type: integer, minimum: 0 }
+              count: { type: integer, minimum: 0 }
+        length: { type: integer, minimum: 0, description: 'Длина, по которой построены столбцы' }
+        analysed: { type: integer, minimum: 0 }
+        columns: { type: array, items: { $ref: '#/components/schemas/VariabilityColumn' } }
+        regions:
+          type: array
+          items:
+            type: object
+            required: [start, end, kind]
+            properties:
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 1 }
+              kind: { type: string, enum: [constant, varying] }
+              bytes: { type: string, description: 'Для постоянной области — её байты, hex' }
+        counters:
+          type: array
+          description: Поля, значение которых растёт на 1 от сообщения к сообщению
+          items:
+            type: object
+            required: [at, width, bigEndian, steps, pairs]
+            properties:
+              at: { type: integer }
+              width: { type: integer, enum: [1, 2, 4] }
+              bigEndian: { type: boolean }
+              steps: { type: integer }
+              pairs: { type: integer }
+
+    ExchangesRequest:
+      type: object
+      required: [connection]
+      additionalProperties: false
+      properties:
+        connection: { type: string, description: 'Идентификатор соединения, например 3f5a1c0d:c0001' }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        limit: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        offset: { type: integer, minimum: 0, default: 0 }
+
+    PairedMessage:
+      type: object
+      required: [stream, start, end, messageId, firstTsNs, lastTsNs]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        messageId: { type: [string, 'null'], description: 'Тип сообщения по интерпретации; null — не определён' }
+        firstTsNs: { type: integer, minimum: 0, description: 'Время первого кадра сообщения, нс с эпохи' }
+        lastTsNs: { type: integer, minimum: 0 }
+
+    ExchangePair:
+      type: object
+      required: [requests, responses, delayNs, certainty]
+      properties:
+        requests: { type: array, items: { $ref: '#/components/schemas/PairedMessage' } }
+        responses: { type: array, items: { $ref: '#/components/schemas/PairedMessage' } }
+        delayNs: { type: [integer, 'null'], minimum: 0, description: 'От последнего кадра запроса до первого кадра ответа' }
+        certainty: { type: string, enum: [certain, ordered, ambiguous, unanswered, unsolicited] }
+
+    ExchangePairPage:
+      type: object
+      required: [items, total, limit, offset, stats]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ExchangePair' } }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+        stats:
+          type: object
+          required: [exchanges, certain, ordered, ambiguous, unanswered, unsolicited]
+          properties:
+            exchanges: { type: integer }
+            certain: { type: integer }
+            ordered: { type: integer }
+            ambiguous: { type: integer }
+            unanswered: { type: integer }
+            unsolicited: { type: integer }
+            minDelayNs: { type: [integer, 'null'] }
+            medianDelayNs: { type: [integer, 'null'] }
+            maxDelayNs: { type: [integer, 'null'] }
 
     ReportRequest:
       type: object
