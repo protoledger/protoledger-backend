@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.3
+  version: 0.1.4
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -24,6 +24,8 @@ tags:
     description: Соединения, потоки, кадры
   - name: interpretation
     description: Описание протокола (интерпретация) и его применение к потокам
+  - name: runs
+    description: Прогоны проверки интерпретации на корпусе
   - name: jobs
     description: Долгие операции с прогрессом и отменой
 
@@ -279,6 +281,201 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      summary: Прогоны проверки, новые первыми
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Страница прогонов со сводкой и признаком устаревания
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunPage' }
+              example:
+                items:
+                  - id: run-0002
+                    revision: 2
+                    interpretationDigest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
+                    settingsDigest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
+                    corpus: {}
+                    sources: [3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d]
+                    engineVersion: 0.1.0
+                    summary:
+                      streams: 2
+                      outOfScopeStreams: 0
+                      messages: 32
+                      messageBytes: 61586
+                      unknownBytes: 0
+                      counts: { matched: 31, violated: 1 }
+                      byMessage: { set_param_req: { matched: 6 }, measure_resp: { matched: 5, violated: 1 } }
+                      counterexamples: 1
+                      counterexamplesTruncated: false
+                    stale: false
+                    staleReasons: []
+                total: 1
+                limit: 50
+                offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [runs]
+      operationId: startRun
+      summary: Запустить прогон (задача)
+      description: |
+        Применяет интерпретацию к потокам корпуса. Без `revision` берётся последняя ревизия, без `corpus` — все
+        потоки всех записей проекта. Фильтры корпуса сохраняются в прогоне и видны рядом со сводкой. Прогон —
+        задача (`202`, SSE прогресса, отмена); результат задачи — `{runId}`. Без открытого проекта, без
+        интерпретации и без записей — `409`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartRunRequest' }
+            example: { revision: 2, corpus: { port: 4710 } }
+      responses:
+        '202':
+          description: Прогон принят, создана задача
+          headers:
+            Location:
+              description: Адрес задачи
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+              example: { jobId: job-0003 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyJobs' }
+
+  /api/runs/diff:
+    get:
+      tags: [runs]
+      operationId: diffRuns
+      summary: Сравнить два прогона
+      description: |
+        Сообщения сопоставляются по потоку и началу. `fixed` — стало лучше (нарушенное или не охваченное теперь
+        совпало), `regressed` — хуже, `changed` — категория другого рода, `added` и `removed` — сообщения
+        есть только во втором или только в первом прогоне. Устаревший прогон помечен (`staleA`, `staleB`).
+      parameters:
+        - { name: a, in: query, required: true, description: Первый прогон, schema: { type: string, example: run-0001 } }
+        - { name: b, in: query, required: true, description: Второй прогон, schema: { type: string, example: run-0002 } }
+        - { name: kind, in: query, description: Только изменения этого вида, schema: { $ref: '#/components/schemas/ChangeKind' } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Итог сравнения и страница изменений
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunDiffPage' }
+              example:
+                a: run-0001
+                b: run-0002
+                staleA: true
+                staleB: false
+                totals: { fixed: 1, regressed: 0, changed: 0, added: 0, removed: 0, unchanged: 31 }
+                countsA: { matched: 31, violated: 1 }
+                countsB: { matched: 32 }
+                items:
+                  - { stream: 'd05c6bf0:c0001:ba', start: 1210, end: 61210, kind: fixed, from: violated, to: matched, messageId: measure_resp }
+                total: 1
+                limit: 100
+                offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/runs/{id}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: "Прогон: сводка, потоки и контрпримеры"
+      parameters:
+        - { $ref: '#/components/parameters/RunId' }
+      responses:
+        '200':
+          description: Прогон
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunDetail' }
+              example:
+                id: run-0002
+                revision: 2
+                interpretationDigest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
+                settingsDigest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
+                corpus: {}
+                sources: [3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d]
+                engineVersion: 0.1.0
+                summary:
+                  streams: 2
+                  outOfScopeStreams: 0
+                  messages: 32
+                  messageBytes: 61586
+                  unknownBytes: 0
+                  counts: { matched: 31, violated: 1 }
+                  byMessage: { set_param_req: { matched: 6 }, measure_resp: { matched: 5, violated: 1 } }
+                  counterexamples: 1
+                  counterexamplesTruncated: false
+                stale: false
+                staleReasons: []
+                streams:
+                  - { id: 'd05c6bf0:c0001:ab', source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, outOfScope: false, counts: { matched: 16 }, unknownBytes: 0, messageBytes: 152, messages: 16 }
+                counterexamples:
+                  - anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ba', start: 1210, end: 61210, sha256: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706 }
+                    category: violated
+                    messageId: measure_resp
+                    violations:
+                      - { kind: check, id: C2, detail: контрольная сумма не сходится, status: rule }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/runs/{id}/items:
+    get:
+      tags: [runs]
+      operationId: listRunItems
+      summary: Сообщения прогона с категориями
+      description: Таблица всех сообщений корпуса с фильтрами; `messageId=?` — сообщения без определённого типа.
+      parameters:
+        - { $ref: '#/components/parameters/RunId' }
+        - { name: stream, in: query, description: Только этот поток, schema: { type: string } }
+        - { name: category, in: query, schema: { $ref: '#/components/schemas/ResultCategory' } }
+        - { name: messageId, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Страница сообщений
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunItemPage' }
+              example:
+                items:
+                  - { stream: 'd05c6bf0:c0001:ab', start: 0, end: 8, category: matched, messageId: read_param_req }
+                total: 32
+                limit: 50
+                offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
 
   /api/sources:
     get:
@@ -688,6 +885,12 @@ components:
       required: true
       description: sha256 записи
       schema: { $ref: '#/components/schemas/Sha256' }
+    RunId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор прогона
+      schema: { type: string, example: run-0001 }
     JobId:
       name: id
       in: path
@@ -963,6 +1166,197 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PreviewMessage' }
         total: { type: integer, minimum: 0, description: Сообщений с учётом фильтра }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    CorpusFilter:
+      type: object
+      additionalProperties: false
+      description: Что именно проверялось; пусто — все потоки всех записей
+      properties:
+        sources:
+          type: [array, 'null']
+          items: { $ref: '#/components/schemas/Sha256' }
+        direction: { type: [string, 'null'], enum: [a_to_b, b_to_a, null] }
+        port: { type: [integer, 'null'], minimum: 0, maximum: 65535, description: Порт любой из сторон }
+
+    StartRunRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        corpus: { $ref: '#/components/schemas/CorpusFilter' }
+        revision: { type: [integer, 'null'], minimum: 1, description: Ревизия интерпретации; без значения — последняя }
+
+    StaleReason:
+      type: string
+      enum: [interpretation, settings, sources]
+      description: Почему прогон устарел — интерпретацию или настройки сборки изменили, записи пропали из проекта
+
+    RunSummary:
+      type: object
+      required: [streams, outOfScopeStreams, messages, messageBytes, unknownBytes, counts, byMessage, counterexamples, counterexamplesTruncated]
+      properties:
+        streams: { type: integer, minimum: 0 }
+        outOfScopeStreams: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        messageBytes: { type: integer, minimum: 0 }
+        unknownBytes: { type: integer, minimum: 0, description: Байты вне описанных полей и в зонах unknown }
+        counts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        byMessage:
+          type: object
+          description: Разбивка по типам сообщений; `?` — тип не определён
+          additionalProperties:
+            type: object
+            additionalProperties: { type: integer, minimum: 0 }
+        counterexamples: { type: integer, minimum: 0 }
+        counterexamplesTruncated: { type: boolean, description: В списке не все контрпримеры (хранится до 1000) }
+
+    RunHead:
+      type: object
+      required: [id, revision, interpretationDigest, settingsDigest, corpus, sources, engineVersion, summary, stale, staleReasons]
+      properties:
+        id: { type: string }
+        revision: { type: [integer, 'null'] }
+        interpretationDigest: { $ref: '#/components/schemas/Sha256' }
+        settingsDigest: { $ref: '#/components/schemas/Sha256' }
+        corpus: { $ref: '#/components/schemas/CorpusFilter' }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/Sha256' }
+        engineVersion: { type: string }
+        summary: { $ref: '#/components/schemas/RunSummary' }
+        stale: { type: boolean }
+        staleReasons:
+          type: array
+          items: { $ref: '#/components/schemas/StaleReason' }
+
+    RunPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunHead' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    Anchor:
+      type: object
+      description: Стабильная ссылка на байты записи
+      required: [source, stream, start, end, sha256]
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        sha256: { type: [string, 'null'], description: 'sha256 байтов; null, если в них есть дыра или неоднозначность' }
+
+    Counterexample:
+      type: object
+      required: [anchor, category, messageId, violations]
+      properties:
+        anchor: { $ref: '#/components/schemas/Anchor' }
+        category: { $ref: '#/components/schemas/ResultCategory' }
+        messageId: { type: [string, 'null'] }
+        violations:
+          type: array
+          items: { $ref: '#/components/schemas/PreviewViolation' }
+
+    RunStream:
+      type: object
+      required: [id, source, outOfScope, counts, unknownBytes, messageBytes, messages]
+      properties:
+        id: { type: string }
+        source: { $ref: '#/components/schemas/Sha256' }
+        outOfScope: { type: boolean }
+        counts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        unknownBytes: { type: integer, minimum: 0 }
+        messageBytes: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/RunHead'
+        - type: object
+          required: [streams, counterexamples]
+          properties:
+            streams:
+              type: array
+              items: { $ref: '#/components/schemas/RunStream' }
+            counterexamples:
+              type: array
+              items: { $ref: '#/components/schemas/Counterexample' }
+
+    RunItem:
+      type: object
+      required: [stream, start, end, category, messageId]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        category: { $ref: '#/components/schemas/ResultCategory' }
+        messageId: { type: [string, 'null'] }
+
+    RunItemPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunItem' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    ChangeKind:
+      type: string
+      enum: [fixed, regressed, changed, added, removed]
+
+    RunChange:
+      type: object
+      required: [stream, start, end, kind, from, to, messageId]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        kind: { $ref: '#/components/schemas/ChangeKind' }
+        from: { oneOf: [{ $ref: '#/components/schemas/ResultCategory' }, { type: 'null' }] }
+        to: { oneOf: [{ $ref: '#/components/schemas/ResultCategory' }, { type: 'null' }] }
+        messageId: { type: [string, 'null'] }
+
+    RunDiffPage:
+      type: object
+      required: [a, b, staleA, staleB, totals, countsA, countsB, items, total, limit, offset]
+      properties:
+        a: { type: string }
+        b: { type: string }
+        staleA: { type: boolean }
+        staleB: { type: boolean }
+        totals:
+          type: object
+          required: [fixed, regressed, changed, added, removed, unchanged]
+          properties:
+            fixed: { type: integer }
+            regressed: { type: integer }
+            changed: { type: integer }
+            added: { type: integer }
+            removed: { type: integer }
+            unchanged: { type: integer }
+        countsA:
+          type: object
+          additionalProperties: { type: integer }
+        countsB:
+          type: object
+          additionalProperties: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunChange' }
+        total: { type: integer }
         limit: { type: integer }
         offset: { type: integer }
 
@@ -1284,7 +1678,7 @@ components:
 
     JobKind:
       type: string
-      enum: [import]
+      enum: [import, verify]
 
     JobState:
       type: string
@@ -1296,10 +1690,10 @@ components:
       properties:
         stage:
           type: string
-          enum: [reading, reassembling, saving, done]
+          enum: [reading, reassembling, verifying, saving, done]
         done: { type: integer, minimum: 0 }
         total: { type: integer, minimum: 0, description: "0, если ещё неизвестно" }
-        unit: { type: string, enum: [frames, bytes] }
+        unit: { type: string, enum: [frames, bytes, streams] }
 
     ImportResult:
       type: object
@@ -1307,6 +1701,12 @@ components:
       properties:
         sourceSha256: { $ref: '#/components/schemas/Sha256' }
         importId: { type: string }
+
+    RunResult:
+      type: object
+      required: [runId]
+      properties:
+        runId: { type: string, example: run-0001 }
 
     Job:
       type: object
@@ -1319,6 +1719,7 @@ components:
         result:
           oneOf:
             - { $ref: '#/components/schemas/ImportResult' }
+            - { $ref: '#/components/schemas/RunResult' }
             - type: 'null'
           description: Только для `succeeded`
         error:

@@ -73,6 +73,13 @@ pub struct InterpretationRevision {
     pub digest: String,
 }
 
+/// Сохранённый прогон проверки: `runs/<id>.json`, `id` вида `run-0001`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRef {
+    pub id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -85,4 +92,6 @@ pub struct Manifest {
     pub imports: Vec<ImportRecord>,
     #[serde(default)]
     pub interpretations: Vec<InterpretationRevision>,
+    #[serde(default)]
+    pub runs: Vec<RunRef>,
 }
