@@ -46,7 +46,7 @@ impl Default for Limits {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CaptureError {
-    #[error("Файл не является записью pcap или pcapng.")]
+    #[error("Файл не является записью pcap или pcapng либо повреждён с самого начала.")]
     NotCapture,
     #[error("Превышен предел «{name}»: {value}, допустимо не больше {max}.")]
     LimitExceeded {

@@ -872,6 +872,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-hostile"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "pl-capture",
+ "pl-reassembly",
+ "pl-synth",
+ "serde_json",
+]
+
+[[package]]
 name = "pl-project"
 version = "0.1.0"
 dependencies = [
@@ -904,6 +915,7 @@ dependencies = [
  "pl-app",
  "pl-capture",
  "pl-core",
+ "pl-hostile",
  "pl-project",
  "pl-reassembly",
  "rust-embed",

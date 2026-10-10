@@ -1,0 +1,18 @@
+[package]
+name = "pl-hostile"
+description = "Генератор злых записей трафика для проверки устойчивости разборщиков (только тесты)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+pl-synth = { path = "../pl-synth" }
+
+[dev-dependencies]
+pl-capture = { path = "../pl-capture" }
+pl-reassembly = { path = "../pl-reassembly" }
+serde_json = "1.0.151"
