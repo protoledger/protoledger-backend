@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.0
+  version: 0.1.1
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -728,8 +728,8 @@ components:
         code:
           type: string
           description: |
-            Стабильный код: `unsupported_link_type`, `ipv6_skipped`, `ip_fragment`, `truncated_frame`,
-            `bad_ip_header`, `bad_tcp_header`, `bad_checksum`, `bad_block`, `limit_exceeded`
+            Стабильный код: `unsupported_link_type`, `non_ip`, `ipv6_skipped`, `non_tcp`, `ip_fragment`,
+            `truncated_frame`, `bad_ip_header`, `bad_tcp_header`, `bad_checksum`, `bad_block`, `limit_exceeded`
         severity: { $ref: '#/components/schemas/Severity' }
         title: { type: string }
         detail: { type: string }

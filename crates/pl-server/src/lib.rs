@@ -2,8 +2,10 @@
 
 #[cfg(feature = "dev-tools")]
 pub mod dev;
+mod encode;
 mod error;
 mod jobs;
+mod sources;
 mod spa;
 
 use std::net::SocketAddr;
@@ -11,7 +13,7 @@ use std::path::PathBuf;
 
 use axum::routing::get;
 use axum::{Json, Router};
-use pl_app::JobRegistry;
+use pl_app::{JobRegistry, SourceStore};
 use pl_core::ProblemKind;
 use serde::Serialize;
 
@@ -21,6 +23,7 @@ pub use error::ApiError;
 #[derive(Clone, Default)]
 pub struct AppState {
     pub jobs: JobRegistry,
+    pub sources: SourceStore,
     #[cfg(feature = "dev-tools")]
     pub dev: Option<dev::DevConfig>,
 }
@@ -54,6 +57,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .merge(jobs::routes())
+        .merge(sources::routes())
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());
