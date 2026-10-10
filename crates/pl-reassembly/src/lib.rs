@@ -109,6 +109,8 @@ pub struct Connection {
     pub frame_count: u32,
     pub close: Close,
     pub flags: BTreeSet<Flag>,
+    /// Сколько раз признак встретился (повторных кадров, дыр, сегментов с неверной суммой…); ключи — это `flags`.
+    pub flag_counts: BTreeMap<Flag, u64>,
     /// `[a → b, b → a]`.
     pub streams: [Stream; 2],
 }
@@ -291,32 +293,52 @@ fn connection(
     };
     let streams = [dir(a)?, dir(b)?];
 
-    let mut flags = BTreeSet::new();
-    let any_piece =
-        |f: fn(&PieceKind) -> bool| streams.iter().any(|s| s.pieces.iter().any(|p| f(&p.kind)));
-    if streams.iter().any(|s| s.frames.iter().any(|f| f.duplicate)) {
-        flags.insert(Flag::Retransmissions);
+    // Счётчики к значкам: повторные кадры, участки-дыры и неоднозначные участки, сегменты.
+    let pieces = |f: fn(&PieceKind) -> bool| {
+        streams
+            .iter()
+            .flat_map(|s| &s.pieces)
+            .filter(|p| f(&p.kind))
+            .count() as u64
+    };
+    let mut flag_counts = BTreeMap::new();
+    let mut count = |flag: Flag, n: u64| {
+        if n > 0 {
+            flag_counts.insert(flag, n);
+        }
+    };
+    count(
+        Flag::Retransmissions,
+        streams
+            .iter()
+            .flat_map(|s| &s.frames)
+            .filter(|f| f.duplicate)
+            .count() as u64,
+    );
+    count(Flag::Gaps, pieces(|k| matches!(k, PieceKind::Gap)));
+    count(
+        Flag::Ambiguous,
+        pieces(|k| matches!(k, PieceKind::Ambiguous { .. })),
+    );
+    count(Flag::NoSyn, u64::from(e.syn.is_none()));
+    if policy.checksum != ChecksumPolicy::Ignore {
+        count(
+            Flag::BadChecksum,
+            e.segs
+                .iter()
+                .filter(|s| s.checksum == Checksum::Bad)
+                .count() as u64,
+        );
     }
-    if any_piece(|k| matches!(k, PieceKind::Gap)) {
-        flags.insert(Flag::Gaps);
-    }
-    if any_piece(|k| matches!(k, PieceKind::Ambiguous { .. })) {
-        flags.insert(Flag::Ambiguous);
-    }
-    if e.syn.is_none() {
-        flags.insert(Flag::NoSyn);
-    }
-    if policy.checksum != ChecksumPolicy::Ignore
-        && e.segs.iter().any(|s| s.checksum == Checksum::Bad)
-    {
-        flags.insert(Flag::BadChecksum);
-    }
-    if e.segs.iter().any(|s| s.captured_len < s.payload_len) {
-        flags.insert(Flag::Truncated);
-    }
-    if e.reused {
-        flags.insert(Flag::ReusedPorts);
-    }
+    count(
+        Flag::Truncated,
+        e.segs
+            .iter()
+            .filter(|s| s.captured_len < s.payload_len)
+            .count() as u64,
+    );
+    count(Flag::ReusedPorts, u64::from(e.reused));
+    let flags: BTreeSet<Flag> = flag_counts.keys().copied().collect();
 
     let ts = |frame: u32| idx.frame(frame).map_or(0, |f| f.ts_ns);
     Ok(Some(Connection {
@@ -337,6 +359,7 @@ fn connection(
             Close::Open
         },
         flags,
+        flag_counts,
         streams,
     }))
 }

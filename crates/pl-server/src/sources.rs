@@ -1,5 +1,6 @@
 //! Записи, соединения, байты потоков и кадры (контракт v0.1.0).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -301,6 +302,7 @@ struct ConnectionDto {
     frame_count: u32,
     close: &'static str,
     flags: Vec<&'static str>,
+    flag_counts: BTreeMap<&'static str, u64>,
     streams: Vec<StreamSummary>,
 }
 
@@ -326,6 +328,7 @@ fn connection_dto(s: &SourceData, c: &Connection) -> ConnectionDto {
             Close::Open => "open",
         },
         flags: c.flags.iter().map(|f| f.code()).collect(),
+        flag_counts: c.flag_counts.iter().map(|(f, n)| (f.code(), *n)).collect(),
         streams: c
             .streams
             .iter()

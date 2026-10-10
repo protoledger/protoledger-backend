@@ -121,6 +121,20 @@ async fn import_then_explore() {
     assert_eq!(c2["id"], format!("{}:c0002", &sha[..8]));
     assert_eq!(c2["a"]["address"], "10.0.0.11");
     assert!(c2["flags"].as_array().unwrap().contains(&json!("gaps")));
+    assert!(c2["flagCounts"]["gaps"].as_u64().unwrap() >= 1);
+    let flag_keys: std::collections::BTreeSet<_> = c2["flagCounts"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let flags: std::collections::BTreeSet<_> = c2["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(flag_keys, flags);
     assert_eq!(c2["streams"][1]["gapBytes"], 27);
     assert!(
         c2["firstFrameTime"]

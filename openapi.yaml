@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.7
+  version: 0.1.8
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1121,6 +1121,7 @@ paths:
                     frameCount: 42
                     close: fin
                     flags: [retransmissions]
+                    flagCounts: { retransmissions: 14 }
                     streams:
                       - id: 3f5a1c0d:c0001:ab
                         direction: a_to_b
@@ -2368,6 +2369,14 @@ components:
         flags:
           type: array
           items: { $ref: '#/components/schemas/ConnectionFlag' }
+        flagCounts:
+          type: object
+          description: |
+            Сколько раз встретился каждый признак из `flags` (для значков с числом): повторных кадров,
+            участков-дыр, неоднозначных участков, сегментов с неверной суммой или усечённых. У `no_syn`
+            и `reused_ports` — 1. Ключи совпадают с `flags`.
+          additionalProperties: { type: integer, minimum: 1 }
+          propertyNames: { $ref: '#/components/schemas/ConnectionFlag' }
         streams:
           type: array
           description: Два направленных потока
