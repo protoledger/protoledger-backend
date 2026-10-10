@@ -17,6 +17,27 @@ pub const MAX_SOURCE_SIZE: u64 = 1 << 30;
 pub const MAX_MANIFEST_SIZE: u64 = 4 << 20;
 /// Размер файла интерпретации (`plan/security.md` §6).
 pub const MAX_INTERPRETATION_SIZE: usize = 4 << 20;
+/// Размер документа исследования (наблюдения, гипотезы, вопросы).
+pub const MAX_DOC_SIZE: usize = 4 << 20;
+
+/// Документы исследования: файлы YAML в корне проекта, заменяются целиком и атомарно.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocKind {
+    Observations,
+    Hypotheses,
+    Questions,
+}
+
+impl DocKind {
+    fn file(self) -> &'static str {
+        match self {
+            DocKind::Observations => "observations.yaml",
+            DocKind::Hypotheses => "hypotheses.yaml",
+            DocKind::Questions => "questions.yaml",
+        }
+    }
+}
+
 /// Размер файла прогона: таблица сообщений всего корпуса.
 pub const MAX_RUN_SIZE: usize = 256 << 20;
 const MAX_RUNS: usize = 100_000;
@@ -434,6 +455,45 @@ impl Project {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    /// Текст документа исследования; `None`, пока его не сохраняли.
+    pub fn read_doc(&self, kind: DocKind) -> Result<Option<String>, ProjectError> {
+        let path = self.root.join(kind.file());
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(ProjectError::Io {
+                    op: "чтение документа",
+                    source: e,
+                });
+            }
+        };
+        if !meta.is_file() {
+            return Err(ProjectError::NotRegularFile);
+        }
+        if meta.len() > MAX_DOC_SIZE as u64 {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_doc_size",
+                value: MAX_DOC_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        fs::read_to_string(&path)
+            .map(Some)
+            .map_err(ProjectError::io("чтение документа"))
+    }
+
+    pub fn write_doc(&mut self, kind: DocKind, text: &str) -> Result<(), ProjectError> {
+        if text.len() > MAX_DOC_SIZE {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_doc_size",
+                value: MAX_DOC_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        write_atomic(&self.root, &self.root.join(kind.file()), text.as_bytes())
     }
 
     pub fn action_logs(&self) -> &[ActionLogRecord] {
@@ -1361,6 +1421,52 @@ mod tests {
         let reopened = Project::open(project.root()).unwrap();
         assert_eq!(reopened.action_logs().len(), 2);
         assert_eq!(reopened.action_logs()[0].mapping, mapping);
+    }
+
+    #[test]
+    fn research_documents_are_replaced_atomically() {
+        let dir = TestDir::new();
+        let mut project = new_project(&dir);
+        assert_eq!(project.read_doc(DocKind::Observations).unwrap(), None);
+        project
+            .write_doc(
+                DocKind::Observations,
+                "a: 1
+",
+            )
+            .unwrap();
+        project
+            .write_doc(
+                DocKind::Observations,
+                "a: 2
+",
+            )
+            .unwrap();
+        assert_eq!(
+            project.read_doc(DocKind::Observations).unwrap().as_deref(),
+            Some(
+                "a: 2
+"
+            )
+        );
+        assert_eq!(project.read_doc(DocKind::Questions).unwrap(), None);
+        let huge = "x".repeat(MAX_DOC_SIZE + 1);
+        assert!(matches!(
+            project.write_doc(DocKind::Hypotheses, &huge),
+            Err(ProjectError::LimitExceeded { .. })
+        ));
+        assert_eq!(
+            fs::read_dir(project.root())
+                .unwrap()
+                .filter(|e| e
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+                .count(),
+            0
+        );
     }
 
     #[test]

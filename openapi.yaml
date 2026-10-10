@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.5
+  version: 0.1.6
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -28,6 +28,8 @@ tags:
     description: Прогоны проверки интерпретации на корпусе
   - name: actions
     description: Журналы действий клиента и поиск обмена по действию
+  - name: research
+    description: Наблюдения, гипотезы и вопросы исследователя
   - name: jobs
     description: Долгие операции с прогрессом и отменой
 
@@ -626,6 +628,340 @@ paths:
                 messages:
                   - { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 46, end: 58, category: matched, messageId: set_param_req, firstTime: '2026-10-01T00:00:02.768513000Z', lastTime: '2026-10-01T00:00:02.768513000Z' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/observations:
+    get:
+      tags: [research]
+      operationId: listObservations
+      summary: Наблюдения
+      responses:
+        '200':
+          description: Все наблюдения проекта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObservationList' }
+              example: { items: [{ id: obs-1, anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 36, end: 44, sha256: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706 }, comment: 'значение 21 после уставки', anchorState: ok }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [research]
+      operationId: createObservation
+      summary: Создать наблюдение на байтах потока
+      description: |
+        Наблюдение — якорь на конкретные байты направленного потока плюс комментарий. Диапазон проверяется,
+        sha256 байтов фиксируется на момент создания (если в диапазоне нет дыры).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewObservation' }
+            example: { anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 36, end: 44 }, comment: значение 21 после уставки }
+      responses:
+        '201':
+          description: Наблюдение создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Observation' }
+              example: { id: obs-1, anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 36, end: 44, sha256: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706 }, comment: 'значение 21 после уставки', anchorState: ok }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+
+  /api/observations/{id}:
+    get:
+      tags: [research]
+      operationId: getObservation
+      summary: Наблюдение
+      description: "`anchorState`: `ok` — байты те же; `broken` — изменились (другая политика сборки), наблюдение не переезжает молча; `unavailable` — запись не загружена или в диапазоне дыра."
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор наблюдения", schema: { type: string, example: obs-1 } }
+      responses:
+        '200':
+          description: Наблюдение
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Observation' }
+              example: { id: obs-1, anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 36, end: 44, sha256: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706 }, comment: 'значение 21 после уставки', anchorState: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    put:
+      tags: [research]
+      operationId: updateObservation
+      summary: Изменить комментарий наблюдения
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор наблюдения", schema: { type: string, example: obs-1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EditObservation' }
+            example: { comment: значение уставки }
+      responses:
+        '200':
+          description: Наблюдение обновлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Observation' }
+              example: { id: obs-1, anchor: { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 36, end: 44, sha256: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706 }, comment: 'значение 21 после уставки', anchorState: ok }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+    delete:
+      tags: [research]
+      operationId: deleteObservation
+      summary: Удалить наблюдение
+      description: "Наблюдение, на которое ссылается гипотеза, не удаляется (`409`): основания нельзя терять молча."
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор наблюдения", schema: { type: string, example: obs-1 } }
+      responses:
+        '204': { description: Удалено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/hypotheses:
+    get:
+      tags: [research]
+      operationId: listHypotheses
+      summary: Гипотезы
+      responses:
+        '200':
+          description: Все гипотезы проекта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HypothesisList' }
+              example: { items: [{ id: H2, statement: 'value — устанавливаемое значение', basis: [obs-1], test: 'value == action.params.value', status: proposed, supersededBy: null, note: null }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [research]
+      operationId: createHypothesis
+      summary: Создать гипотезу
+      description: |
+        Утверждение, основания (наблюдения), тест-выражение и статус. Статусы: `proposed` — предложена,
+        `supported` — поддержана на примерах (**не доказана**), `refuted` — опровергнута, `superseded` — заменена
+        другой (`supersededBy`). Основания должны существовать; тест проверяется на синтаксис.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HypothesisInput' }
+            example: { statement: 'value — устанавливаемое значение', basis: [obs-1], test: 'value == action.params.value' }
+      responses:
+        '201':
+          description: Гипотеза создана
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hypothesis' }
+              example: { id: H2, statement: 'value — устанавливаемое значение', basis: [obs-1], test: 'value == action.params.value', status: proposed, supersededBy: null, note: null }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/hypotheses/{id}:
+    get:
+      tags: [research]
+      operationId: getHypothesis
+      summary: Гипотеза
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор гипотезы", schema: { type: string, example: H2 } }
+      responses:
+        '200':
+          description: Гипотеза
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hypothesis' }
+              example: { id: H2, statement: 'value — устанавливаемое значение', basis: [obs-1], test: 'value == action.params.value', status: proposed, supersededBy: null, note: null }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    put:
+      tags: [research]
+      operationId: updateHypothesis
+      summary: Изменить гипотезу
+      description: Передайте только изменяемые поля. Статус меняет исследователь; проверка теста сама статус не меняет.
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор гипотезы", schema: { type: string, example: H2 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HypothesisInput' }
+            example: { status: supported, note: 'поддержана на 6 из 6 примеров основной записи' }
+      responses:
+        '200':
+          description: Гипотеза обновлена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Hypothesis' }
+              example: { id: H2, statement: 'value — устанавливаемое значение', basis: [obs-1], test: 'value == action.params.value', status: proposed, supersededBy: null, note: null }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [research]
+      operationId: deleteHypothesis
+      summary: Удалить гипотезу
+      description: Гипотеза, которую заменяет другая (`supersededBy`), не удаляется (`409`).
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор гипотезы", schema: { type: string, example: H2 } }
+      responses:
+        '204': { description: Удалено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/hypotheses/{id}/test:
+    post:
+      tags: [research]
+      operationId: testHypothesis
+      summary: Проверить тест гипотезы на записях проекта
+      description: |
+        Применяет тест-выражение гипотезы к сообщениям всех записей проекта по сохранённой интерпретации.
+        В выражении доступны поля сообщения (`value`), поля парного ответа (`response.value`), параметры и результат
+        действия из журнала (`action.params.value`, `action.result.applied`, `action.result`, `action.name`),
+        `message.len`. Сообщение, для которого нужных данных нет, к тесту не применяется (`notApplicable`) — это не успех
+        и не неудача. Итог: `no_counterexample` — контрпримеров нет (**не доказательство**), `refuted` — есть
+        контрпример (приведён с якорем), `untested` — применимых сообщений нет. Статус гипотезы не меняется.
+        Тело обязательно, достаточно `{}`.
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор гипотезы", schema: { type: string, example: H2 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestRequest' }
+            example: { logId: log-0001 }
+      responses:
+        '200':
+          description: Результат проверки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HypothesisTest' }
+              example:
+                hypothesis: H2
+                statement: value — устанавливаемое значение
+                status: proposed
+                test: value == action.params.value
+                verdict: no_counterexample
+                applicable: 6
+                held: 6
+                notApplicable: 26
+                counterexamplesTotal: 0
+                counterexamples: []
+                errorsTotal: 0
+                errors: []
+                logs: [log-0001]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/questions:
+    get:
+      tags: [research]
+      operationId: listQuestions
+      summary: Открытые вопросы исследователя
+      responses:
+        '200':
+          description: Все вопросы (попадают в отчёт)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionList' }
+              example: { items: [{ id: q-1, text: 'Что означает параметр 3?', status: open, answer: null }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [research]
+      operationId: createQuestion
+      summary: Добавить вопрос
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewQuestion' }
+            example: { text: 'Что означает параметр 3?' }
+      responses:
+        '201':
+          description: Вопрос создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Question' }
+              example: { id: q-1, text: 'Что означает параметр 3?', status: open, answer: null }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+
+  /api/questions/{id}:
+    put:
+      tags: [research]
+      operationId: updateQuestion
+      summary: Изменить вопрос или закрыть его
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор вопроса", schema: { type: string, example: q-1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EditQuestion' }
+            example: { status: closed, answer: режим работы }
+      responses:
+        '200':
+          description: Вопрос обновлён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Question' }
+              example: { id: q-1, text: 'Что означает параметр 3?', status: closed, answer: режим работы }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+    delete:
+      tags: [research]
+      operationId: deleteQuestion
+      summary: Удалить вопрос
+      parameters:
+        - { name: id, in: path, required: true, description: "Идентификатор вопроса", schema: { type: string, example: q-1 } }
+      responses:
+        '204': { description: Удалено }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1648,6 +1984,175 @@ components:
         messages:
           type: array
           items: { $ref: '#/components/schemas/ExchangeMessage' }
+
+    AnchorInput:
+      type: object
+      required: [source, stream, start, end]
+      additionalProperties: false
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 1 }
+
+    ObservationAnchor:
+      allOf:
+        - $ref: '#/components/schemas/Anchor'
+
+    Observation:
+      type: object
+      required: [id, anchor, comment, anchorState]
+      properties:
+        id: { type: string, example: obs-1 }
+        anchor: { $ref: '#/components/schemas/ObservationAnchor' }
+        comment: { type: string }
+        anchorState: { type: string, enum: [ok, broken, unavailable] }
+
+    ObservationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Observation' }
+
+    NewObservation:
+      type: object
+      required: [anchor, comment]
+      additionalProperties: false
+      properties:
+        anchor: { $ref: '#/components/schemas/AnchorInput' }
+        comment: { type: string, minLength: 1, maxLength: 10000 }
+
+    EditObservation:
+      type: object
+      required: [comment]
+      additionalProperties: false
+      properties:
+        comment: { type: string, minLength: 1, maxLength: 10000 }
+
+    HypothesisStatus:
+      type: string
+      enum: [proposed, supported, refuted, superseded]
+
+    Hypothesis:
+      type: object
+      required: [id, statement, basis, test, status, supersededBy, note]
+      properties:
+        id: { type: string, example: H2 }
+        statement: { type: string }
+        basis:
+          type: array
+          items: { type: string }
+        test: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/HypothesisStatus' }
+        supersededBy: { type: [string, 'null'] }
+        note: { type: [string, 'null'] }
+
+    HypothesisList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Hypothesis' }
+
+    HypothesisInput:
+      type: object
+      additionalProperties: false
+      properties:
+        statement: { type: string, minLength: 1, maxLength: 10000 }
+        basis:
+          type: array
+          items: { type: string }
+        test: { type: string, description: Выражение; пустая строка убирает тест }
+        status: { $ref: '#/components/schemas/HypothesisStatus' }
+        supersededBy: { type: string }
+        note: { type: string }
+
+    TestRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        logId: { type: [string, 'null'], description: Журнал действий; без значения — все }
+        windowMs: { type: [integer, 'null'], minimum: 0, maximum: 600000, description: "Окно между действием и сообщением, по умолчанию 2000" }
+
+    TestCounterexample:
+      type: object
+      required: [anchor, messageId, values, actionLine]
+      properties:
+        anchor: { $ref: '#/components/schemas/ObservationAnchor' }
+        messageId: { type: [string, 'null'] }
+        values:
+          type: object
+          description: Значения имён из выражения на этом сообщении
+          additionalProperties: { type: string }
+        actionLine: { type: [integer, 'null'] }
+
+    TestIssue:
+      type: object
+      required: [anchor, detail]
+      properties:
+        anchor: { $ref: '#/components/schemas/ObservationAnchor' }
+        detail: { type: string }
+
+    HypothesisTest:
+      type: object
+      required: [hypothesis, statement, status, test, verdict, applicable, held, notApplicable, counterexamplesTotal, counterexamples, errorsTotal, errors, logs]
+      properties:
+        hypothesis: { type: string }
+        statement: { type: string }
+        status: { $ref: '#/components/schemas/HypothesisStatus' }
+        test: { type: string }
+        verdict: { type: string, enum: [untested, no_counterexample, refuted] }
+        applicable: { type: integer, minimum: 0, description: "Сообщений, к которым тест применим" }
+        held: { type: integer, minimum: 0, description: Из них выполнилось }
+        notApplicable: { type: integer, minimum: 0 }
+        counterexamplesTotal: { type: integer, minimum: 0 }
+        counterexamples:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/TestCounterexample' }
+        errorsTotal: { type: integer, minimum: 0 }
+        errors:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/TestIssue' }
+        logs:
+          type: array
+          items: { type: string }
+
+    Question:
+      type: object
+      required: [id, text, status, answer]
+      properties:
+        id: { type: string, example: q-1 }
+        text: { type: string }
+        status: { type: string, enum: [open, closed] }
+        answer: { type: [string, 'null'] }
+
+    QuestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Question' }
+
+    NewQuestion:
+      type: object
+      required: [text]
+      additionalProperties: false
+      properties:
+        text: { type: string, minLength: 1, maxLength: 10000 }
+
+    EditQuestion:
+      type: object
+      additionalProperties: false
+      properties:
+        text: { type: string }
+        status: { type: string, enum: [open, closed] }
+        answer: { type: string }
 
     ProjectSettingsPatch:
       type: object

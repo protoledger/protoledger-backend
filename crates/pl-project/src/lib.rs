@@ -15,6 +15,6 @@ pub use manifest::{
     Manifest, OverlapPolicy, RunRef, Settings, SourceFormat,
 };
 pub use project::{
-    MAX_INTERPRETATION_SIZE, MAX_MANIFEST_SIZE, MAX_RUN_SIZE, MAX_SOURCE_SIZE, Project, Source,
-    SourceStatus, is_valid_sha256,
+    DocKind, MAX_DOC_SIZE, MAX_INTERPRETATION_SIZE, MAX_MANIFEST_SIZE, MAX_RUN_SIZE,
+    MAX_SOURCE_SIZE, Project, Source, SourceStatus, is_valid_sha256,
 };

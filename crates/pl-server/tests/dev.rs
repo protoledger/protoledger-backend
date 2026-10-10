@@ -79,7 +79,7 @@ fn every_response_has_example() {
     for (path, item) in spec["paths"].as_object().unwrap() {
         for (method, op) in item.as_object().unwrap() {
             for (status, response) in op["responses"].as_object().unwrap() {
-                if response.get("$ref").is_some() {
+                if response.get("$ref").is_some() || response.get("content").is_none() {
                     continue;
                 }
                 let has_example = response["content"]
