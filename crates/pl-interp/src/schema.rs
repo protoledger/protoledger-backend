@@ -215,7 +215,7 @@ pub enum Len {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Expect {
-    Int(i128),
+    Int(i64),
     Text(String),
 }
 

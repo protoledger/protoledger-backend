@@ -11,8 +11,15 @@
     )
 )]
 
+pub mod apply;
 pub mod expr;
+pub mod framing;
+pub mod input;
 pub mod schema;
 
+pub use apply::{
+    Category, FieldResult, FieldState, MessageResult, StreamResult, Violation, ViolationKind, apply,
+};
 pub use expr::{Context, Expr, ExprError, Value};
+pub use input::{Read, Region, RegionKind, StreamInput, StreamMeta};
 pub use schema::{Interpretation, SchemaError};
