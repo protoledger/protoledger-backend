@@ -1,0 +1,1017 @@
+openapi: 3.1.0
+info:
+  title: protoledger API
+  version: 0.1.0
+  description: |
+    Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
+    Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
+    `Origin` (если есть) → 403, заголовок `X-Protoledger-Token` → 401.
+    Токен сессии движок отдаёт только своей SPA в `<meta name="protoledger-token">`.
+    Ошибки — RFC 9457 Problem Details, `title` и `detail` по-русски.
+    Все смещения и длины — целые числа (в пределах 2^53), время — строка RFC 3339 в UTC с наносекундами.
+servers:
+  - url: http://localhost:8080
+security:
+  - sessionToken: []
+tags:
+  - name: system
+    description: Состояние движка
+  - name: project
+    description: Проект — папка исследования
+  - name: sources
+    description: Записи трафика (PCAP/PCAPNG) и их импорт
+  - name: explore
+    description: Соединения, потоки, кадры
+  - name: jobs
+    description: Долгие операции с прогрессом и отменой
+
+paths:
+  /api/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Проверка, что движок запущен
+      responses:
+        '200':
+          description: Движок работает
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { status: ok, version: 0.1.0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/project:
+    get:
+      tags: [project]
+      operationId: getProject
+      summary: Текущий открытый проект
+      responses:
+        '200':
+          description: Проект открыт
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+              example:
+                name: demo
+                path: /workspace/demo.protoledger
+                formatVersion: 1
+                engineVersion: 0.1.0
+                settings: { overlapPolicy: first, checksumPolicy: warn }
+                sourceCount: 2
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [project]
+      operationId: openProject
+      summary: Создать или открыть проект
+      description: |
+        `mode: open` — открыть существующую папку проекта, `mode: create` — создать новую
+        (папка не должна существовать или должна быть пустой). Предыдущий проект закрывается;
+        пока идут его задачи — `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenProjectRequest' }
+            example: { path: /workspace/demo.protoledger, mode: create }
+      responses:
+        '200':
+          description: Проект открыт или создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+              example:
+                name: demo
+                path: /workspace/demo.protoledger
+                formatVersion: 1
+                engineVersion: 0.1.0
+                settings: { overlapPolicy: first, checksumPolicy: warn }
+                sourceCount: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/sources:
+    get:
+      tags: [sources]
+      operationId: listSources
+      summary: Записи проекта
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Страница записей, в порядке импорта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourcePage' }
+              example:
+                items:
+                  - sha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                    importId: imp-0001
+                    name: session-1.pcapng
+                    format: pcapng
+                    sizeBytes: 482113
+                    status: ready
+                    frameCount: 1203
+                    connectionCount: 4
+                total: 1
+                limit: 50
+                offset: 0
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [sources]
+      operationId: importSource
+      summary: Импортировать запись (задача)
+      description: |
+        Принимает либо JSON `{path}` (путь к файлу на диске — CLI, десктоп, Docker с `./workspace`),
+        либо `multipart/form-data` с полем `file` (браузер). В обоих случаях файл копируется
+        в `sources/<sha256>.<ext>` проекта. Читаются только обычные файлы. Импорт возвращает задачу:
+        прогресс — `GET /api/jobs/{id}/events`, соединения появляются в списке по мере импорта.
+        Повторный импорт того же файла — новый импорт, не склейка.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportByPathRequest' }
+            example: { path: /workspace/captures/session-1.pcapng }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: Файл PCAP или PCAPNG }
+      responses:
+        '202':
+          description: Импорт принят, создана задача
+          headers:
+            Location:
+              description: Адрес задачи
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+              example: { jobId: job-0001 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyJobs' }
+
+  /api/sources/{sha256}/diagnostics:
+    get:
+      tags: [sources]
+      operationId: getSourceDiagnostics
+      summary: Диагностика записи
+      description: Что не удалось или не поддерживается в записи; остальные кадры при этом обработаны.
+      parameters:
+        - { $ref: '#/components/parameters/SourceSha' }
+      responses:
+        '200':
+          description: Диагностика записи
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceDiagnostics' }
+              example:
+                sha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                frames: { total: 1203, parsed: 1190, skipped: 13 }
+                items:
+                  - code: ipv6_skipped
+                    severity: info
+                    title: Кадры IPv6 пропущены
+                    detail: IPv6 не поддерживается, кадры не разобраны.
+                    count: 11
+                    frameNumbers: [14, 15, 90]
+                  - code: bad_checksum
+                    severity: warning
+                    title: Неверная контрольная сумма TCP
+                    detail: Все неверные суммы — от одного хоста, вероятно offloading на стороне отправителя.
+                    count: 2
+                    frameNumbers: [201, 202]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/connections:
+    get:
+      tags: [explore]
+      operationId: listConnections
+      summary: TCP-соединения
+      description: |
+        Порядок — по первому кадру, стабильный. Во время импорта список растёт: `total` — число уже
+        известных соединений.
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: source
+          in: query
+          description: Только соединения этой записи (sha256)
+          schema: { $ref: '#/components/schemas/Sha256' }
+        - name: port
+          in: query
+          description: Порт любой из сторон
+          schema: { type: integer, minimum: 0, maximum: 65535 }
+        - name: address
+          in: query
+          description: Адрес любой из сторон (точное совпадение)
+          schema: { type: string, example: 192.168.1.10 }
+        - name: flag
+          in: query
+          description: Только соединения с этим признаком
+          schema: { $ref: '#/components/schemas/ConnectionFlag' }
+      responses:
+        '200':
+          description: Страница соединений
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectionPage' }
+              example:
+                items:
+                  - id: 3f5a1c0d:c0001
+                    source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                    a: { address: 192.168.1.10, port: 51234 }
+                    b: { address: 192.168.1.20, port: 9000 }
+                    rolesKnown: true
+                    firstFrameTime: '2026-10-09T12:00:00.100000000Z'
+                    lastFrameTime: '2026-10-09T12:00:05.420000000Z'
+                    frameCount: 42
+                    close: fin
+                    flags: [retransmissions]
+                    streams:
+                      - id: 3f5a1c0d:c0001:ab
+                        direction: a_to_b
+                        length: 310
+                        dataBytes: 310
+                        gapBytes: 0
+                        ambiguousBytes: 0
+                        startAvailable: true
+                      - id: 3f5a1c0d:c0001:ba
+                        direction: b_to_a
+                        length: 1480
+                        dataBytes: 1400
+                        gapBytes: 80
+                        ambiguousBytes: 0
+                        startAvailable: true
+                total: 1
+                limit: 50
+                offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/streams/{stream}/bytes:
+    get:
+      tags: [explore]
+      operationId: getStreamBytes
+      summary: Байты направленного потока и карта сегментов
+      description: |
+        Диапазон `[from, from+len)` потока. Ответ — список участков карты, обрезанных по диапазону:
+        `data` — байты есть (base64), `gap` — данных нет в записи (байтов нет, нули не подставляются),
+        `ambiguous` — перекрытие с разными байтами (`data` — вариант по политике проекта,
+        `variants` — все варианты). Диапазон за концом потока усекается, `length` в ответе — фактическая
+        длина. Максимум `len` — 1 МиБ, больше — `400`.
+      parameters:
+        - name: stream
+          in: path
+          required: true
+          description: Идентификатор направленного потока
+          schema: { type: string, example: '3f5a1c0d:c0001:ab' }
+        - name: from
+          in: query
+          description: Смещение начала диапазона
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: len
+          in: query
+          description: Длина диапазона в байтах
+          schema: { type: integer, minimum: 1, maximum: 1048576, default: 4096 }
+      responses:
+        '200':
+          description: Байты и карта сегментов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamBytes' }
+              example:
+                stream: 3f5a1c0d:c0001:ba
+                from: 0
+                length: 24
+                streamLength: 1480
+                segments:
+                  - start: 0
+                    end: 16
+                    status: data
+                    data: qlUAEAABAAAAAAAIAAAAAA==
+                    frames:
+                      - { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, frameNo: 7, duplicate: false }
+                  - start: 16
+                    end: 24
+                    status: gap
+                    data: null
+                    frames: []
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/frames/{source}/{frameNo}:
+    get:
+      tags: [explore]
+      operationId: getFrame
+      summary: Кадр записи
+      description: |
+        Номера кадров — с 1, как в Wireshark. Ответ содержит байты кадра целиком, разобранные заголовки
+        и, если payload попал в поток, ссылку на участок потока (переход «кадр → байты»).
+      parameters:
+        - name: source
+          in: path
+          required: true
+          description: sha256 записи
+          schema: { $ref: '#/components/schemas/Sha256' }
+        - name: frameNo
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Кадр
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Frame' }
+              example:
+                source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                frameNo: 7
+                time: '2026-10-09T12:00:00.250000000Z'
+                fileOffset: 1024
+                capturedLength: 70
+                originalLength: 70
+                data: AAECAwQFBgcICQoLDA0ODw==
+                ethernet: { src: '00:11:22:33:44:55', dst: '66:77:88:99:aa:bb', etherType: 2048 }
+                ipv4: { src: 192.168.1.20, dst: 192.168.1.10, ttl: 64, protocol: 6, headerLength: 20 }
+                tcp:
+                  srcPort: 9000
+                  dstPort: 51234
+                  seq: 1000
+                  ack: 311
+                  flags: [ack, psh]
+                  window: 502
+                  headerLength: 32
+                  checksum: ok
+                payload: { offset: 66, length: 4 }
+                streamRange: { stream: '3f5a1c0d:c0001:ba', start: 0, end: 4, duplicate: false }
+                diagnostics: []
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/jobs:
+    get:
+      tags: [jobs]
+      operationId: listJobs
+      summary: Задачи текущей сессии
+      responses:
+        '200':
+          description: Задачи, новые первыми
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Job' }
+              example:
+                items:
+                  - id: job-0001
+                    kind: import
+                    state: running
+                    progress: { stage: reassembling, done: 600, total: 1203, unit: frames }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/jobs/{id}:
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Состояние задачи
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: Задача
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                id: job-0001
+                kind: import
+                state: succeeded
+                progress: { stage: done, done: 1203, total: 1203, unit: frames }
+                result: { sourceSha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, importId: imp-0001 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [jobs]
+      operationId: cancelJob
+      summary: Отменить задачу
+      description: |
+        Запрос отмены; задача останавливается на ближайшей проверке токена отмены и переходит в `cancelled`.
+        Уже завершённая задача — `409`. Частичные результаты отменённого импорта удаляются.
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '202':
+          description: Отмена запрошена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                id: job-0001
+                kind: import
+                state: cancelling
+                progress: { stage: reassembling, done: 600, total: 1203, unit: frames }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/jobs/{id}/events:
+    get:
+      tags: [jobs]
+      operationId: streamJobEvents
+      summary: Прогресс задачи (SSE)
+      description: |
+        `text/event-stream`. Первым событием приходит текущее состояние. События: `progress`
+        (данные — `{jobId, stage, done, total, unit}`), `state` (данные — `Job`, при смене состояния),
+        поток закрывается после терминального состояния. Для завершённой задачи — одно событие `state`
+        и закрытие. Заголовок токена в `EventSource` не передать, поэтому клиент использует
+        `fetch` со стримом.
+      parameters:
+        - { $ref: '#/components/parameters/JobId' }
+      responses:
+        '200':
+          description: Поток событий
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                event: progress
+                data: {"jobId":"job-0001","stage":"reassembling","done":600,"total":1203,"unit":"frames"}
+
+                event: state
+                data: {"id":"job-0001","kind":"import","state":"succeeded","progress":{"stage":"done","done":1203,"total":1203,"unit":"frames"},"result":{"sourceSha256":"3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d","importId":"imp-0001"}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    sessionToken:
+      type: apiKey
+      in: header
+      name: X-Protoledger-Token
+      description: Токен сессии (256 бит), выдаётся встроенной SPA через `<meta name="protoledger-token">`
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Размер страницы
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      description: Сколько элементов пропустить
+      schema: { type: integer, minimum: 0, default: 0 }
+    SourceSha:
+      name: sha256
+      in: path
+      required: true
+      description: sha256 записи
+      schema: { $ref: '#/components/schemas/Sha256' }
+    JobId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор задачи
+      schema: { type: string, example: job-0001 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос (параметры, тело, путь вне допустимого)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:bad-request
+            title: Некорректный запрос
+            status: 400
+            detail: Параметр len должен быть от 1 до 1048576.
+    Unauthorized:
+      description: Нет или неверный токен сессии
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:unauthorized
+            title: Нет доступа
+            status: 401
+            detail: Не передан или неверен заголовок X-Protoledger-Token.
+    Forbidden:
+      description: Чужой Host или Origin
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:forbidden
+            title: Запрос отклонён
+            status: 403
+            detail: Заголовок Host не совпадает с адресом движка.
+    NotFound:
+      description: Объект не найден
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:not-found
+            title: Не найдено
+            status: 404
+            detail: Поток 3f5a1c0d:c0009:ab не существует.
+    NoProject:
+      description: Проект не открыт
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:no-project
+            title: Проект не открыт
+            status: 409
+            detail: Сначала создайте или откройте проект (POST /api/project).
+    Conflict:
+      description: Конфликт состояния (задача уже завершена, у проекта идут задачи)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:conflict
+            title: Конфликт состояния
+            status: 409
+            detail: Задача job-0001 уже завершена.
+    TooLarge:
+      description: Тело запроса или файл больше защитного предела
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:limit-exceeded
+            title: Превышен предел
+            status: 413
+            detail: Размер файла 2 ГиБ больше предела 1 ГиБ.
+            limit: { name: max_source_size, value: 1073741824, unit: bytes }
+    UnsupportedMedia:
+      description: Недопустимый тип содержимого запроса
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:unsupported-media
+            title: Неподдерживаемый тип
+            status: 415
+            detail: Ожидается application/json или multipart/form-data.
+    Unprocessable:
+      description: Запрос разобран, но объект не принят (не проект, не запись, формат не поддерживается)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:unprocessable
+            title: Файл не принят
+            status: 422
+            detail: Файл не похож на PCAP или PCAPNG.
+    TooManyJobs:
+      description: Достигнут предел одновременных долгих задач
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: urn:protoledger:problem:too-many-jobs
+            title: Слишком много задач
+            status: 429
+            detail: Одновременно можно выполнять не больше 2 задач, дождитесь завершения.
+            limit: { name: max_concurrent_jobs, value: 2, unit: jobs }
+
+  schemas:
+    Sha256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: sha256 содержимого, строчные hex-цифры
+      example: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details
+      required: [type, title, status]
+      properties:
+        type: { type: string, description: 'Идентификатор вида ошибки, `urn:protoledger:problem:<код>`' }
+        title: { type: string, description: Краткое название по-русски }
+        status: { type: integer }
+        detail: { type: string, description: "Что произошло и что делать, по-русски" }
+        limit:
+          type: object
+          description: Только для превышения предела
+          required: [name, value, unit]
+          properties:
+            name: { type: string, description: Имя предела из docs/limits.md }
+            value: { type: integer }
+            unit: { type: string }
+
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, enum: [ok] }
+        version: { type: string }
+
+    ProjectSettings:
+      type: object
+      description: Настройки сборки потоков; часть воспроизводимости проекта
+      required: [overlapPolicy, checksumPolicy]
+      properties:
+        overlapPolicy:
+          type: string
+          enum: [first, last, flag]
+          description: Какие байты брать при перекрытии с различающимся содержимым
+        checksumPolicy:
+          type: string
+          enum: [ignore, warn, drop]
+          description: Что делать с кадрами с неверной контрольной суммой TCP
+
+    Project:
+      type: object
+      required: [name, path, formatVersion, engineVersion, settings, sourceCount]
+      properties:
+        name: { type: string }
+        path: { type: string, description: Путь к папке проекта }
+        formatVersion: { type: integer }
+        engineVersion: { type: string }
+        settings: { $ref: '#/components/schemas/ProjectSettings' }
+        sourceCount: { type: integer, minimum: 0 }
+
+    OpenProjectRequest:
+      type: object
+      required: [path, mode]
+      properties:
+        path: { type: string, description: Путь к папке проекта }
+        mode: { type: string, enum: [open, create] }
+
+    ImportByPathRequest:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string, description: Путь к файлу записи на диске }
+
+    SourceStatus:
+      type: string
+      enum: [importing, ready, error, damaged]
+      description: |
+        `importing` — идёт импорт, `ready` — готова, `error` — файл не принят или разобран с ошибкой,
+        `damaged` — копия в проекте изменена или пропала (sha256 не совпал).
+
+    Source:
+      type: object
+      required: [sha256, importId, name, format, sizeBytes, status, frameCount, connectionCount]
+      properties:
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        importId: { type: string, description: 'Последний импорт этой записи, `imp-0001`…', example: imp-0001 }
+        name: { type: string, description: Исходное имя файла }
+        format: { type: string, enum: [pcap, pcapng] }
+        sizeBytes: { type: integer, minimum: 0 }
+        status: { $ref: '#/components/schemas/SourceStatus' }
+        frameCount: { type: integer, minimum: 0 }
+        connectionCount: { type: integer, minimum: 0 }
+
+    SourcePage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Source' }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    Severity:
+      type: string
+      enum: [info, warning, error]
+
+    Diagnostic:
+      type: object
+      description: Группа однотипных замечаний к записи; ограничение реализации или дефект данных, не вывод о протоколе
+      required: [code, severity, title, detail, count, frameNumbers]
+      properties:
+        code:
+          type: string
+          description: |
+            Стабильный код: `unsupported_link_type`, `ipv6_skipped`, `ip_fragment`, `truncated_frame`,
+            `bad_ip_header`, `bad_tcp_header`, `bad_checksum`, `bad_block`, `limit_exceeded`
+        severity: { $ref: '#/components/schemas/Severity' }
+        title: { type: string }
+        detail: { type: string }
+        count: { type: integer, minimum: 1, description: Сколько кадров затронуто }
+        frameNumbers:
+          type: array
+          maxItems: 100
+          description: Первые номера затронутых кадров
+          items: { type: integer, minimum: 1 }
+
+    SourceDiagnostics:
+      type: object
+      required: [sha256, frames, items]
+      properties:
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        frames:
+          type: object
+          required: [total, parsed, skipped]
+          properties:
+            total: { type: integer }
+            parsed: { type: integer }
+            skipped: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Diagnostic' }
+
+    Endpoint:
+      type: object
+      required: [address, port]
+      properties:
+        address: { type: string, description: Адрес IPv4 }
+        port: { type: integer, minimum: 0, maximum: 65535 }
+
+    ConnectionFlag:
+      type: string
+      enum: [retransmissions, gaps, ambiguous, no_syn, bad_checksum, truncated, reused_ports]
+      description: |
+        Признаки для значков в списке: повторы сегментов, дыры, неоднозначные перекрытия,
+        нет SYN (роли неизвестны), неверные контрольные суммы, усечённые кадры,
+        порты переиспользованы раньше (соединение начато заново).
+
+    DirectionKind:
+      type: string
+      enum: [a_to_b, b_to_a]
+      description: '`a` — инициатор, если виден SYN; иначе меньший адрес:порт'
+
+    StreamSummary:
+      type: object
+      required: [id, direction, length, dataBytes, gapBytes, ambiguousBytes, startAvailable]
+      properties:
+        id: { type: string, description: '`<соединение>:ab` или `<соединение>:ba`' }
+        direction: { $ref: '#/components/schemas/DirectionKind' }
+        length: { type: integer, minimum: 0, description: 'Длина потока, байт: data + gap + ambiguous' }
+        dataBytes: { type: integer, minimum: 0 }
+        gapBytes: { type: integer, minimum: 0 }
+        ambiguousBytes: { type: integer, minimum: 0 }
+        startAvailable:
+          type: boolean
+          description: Начало потока известно (виден SYN); иначе смещение 0 — первый наблюдённый байт
+
+    Connection:
+      type: object
+      required: [id, source, a, b, rolesKnown, firstFrameTime, lastFrameTime, frameCount, close, flags, streams]
+      properties:
+        id: { type: string, description: 'Идентификатор `<первые 8 hex sha256>:c0001`', example: '3f5a1c0d:c0001' }
+        source: { $ref: '#/components/schemas/Sha256' }
+        a: { $ref: '#/components/schemas/Endpoint' }
+        b: { $ref: '#/components/schemas/Endpoint' }
+        rolesKnown: { type: boolean, description: Роли клиент/сервер установлены по SYN }
+        firstFrameTime: { type: string, format: date-time, description: Время захвата первого кадра }
+        lastFrameTime: { type: string, format: date-time, description: Время захвата последнего кадра }
+        frameCount: { type: integer, minimum: 1 }
+        close:
+          type: string
+          enum: [fin, rst, open]
+          description: Как закрыто соединение; `open` — конец записи раньше закрытия
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/ConnectionFlag' }
+        streams:
+          type: array
+          description: Два направленных потока
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/StreamSummary' }
+
+    ConnectionPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Connection' }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    FrameRef:
+      type: object
+      required: [source, frameNo, duplicate]
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        frameNo: { type: integer, minimum: 1 }
+        duplicate: { type: boolean, description: Кадр — повтор уже принятых байтов (ретрансмиссия) }
+
+    SegmentStatus:
+      type: string
+      enum: [data, gap, ambiguous]
+
+    SegmentVariant:
+      type: object
+      required: [data, frames]
+      properties:
+        data: { type: string, contentEncoding: base64 }
+        frames:
+          type: array
+          items: { $ref: '#/components/schemas/FrameRef' }
+
+    Segment:
+      type: object
+      description: Участок карты потока `[start, end)`, обрезанный по запрошенному диапазону
+      required: [start, end, status, data, frames]
+      properties:
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 1 }
+        status: { $ref: '#/components/schemas/SegmentStatus' }
+        data:
+          type: [string, 'null']
+          contentEncoding: base64
+          description: Байты участка в base64; `null` для `gap`
+        frames:
+          type: array
+          description: Кадры-источники, включая повторы; для `gap` пусто
+          items: { $ref: '#/components/schemas/FrameRef' }
+        variants:
+          type: array
+          description: Только для `ambiguous` — все варианты байтов с кадрами; `data` — выбранный политикой проекта
+          items: { $ref: '#/components/schemas/SegmentVariant' }
+
+    StreamBytes:
+      type: object
+      required: [stream, from, length, streamLength, segments]
+      properties:
+        stream: { type: string }
+        from: { type: integer, minimum: 0 }
+        length: { type: integer, minimum: 0, description: Фактическая длина диапазона после усечения по концу потока }
+        streamLength: { type: integer, minimum: 0 }
+        segments:
+          type: array
+          description: Участки подряд, без пропусков, покрывают `[from, from+length)`
+          items: { $ref: '#/components/schemas/Segment' }
+
+    Ethernet:
+      type: object
+      required: [src, dst, etherType]
+      properties:
+        src: { type: string }
+        dst: { type: string }
+        etherType: { type: integer }
+
+    Ipv4:
+      type: object
+      required: [src, dst, ttl, protocol, headerLength]
+      properties:
+        src: { type: string }
+        dst: { type: string }
+        ttl: { type: integer }
+        protocol: { type: integer }
+        headerLength: { type: integer }
+
+    Tcp:
+      type: object
+      required: [srcPort, dstPort, seq, ack, flags, window, headerLength, checksum]
+      properties:
+        srcPort: { type: integer }
+        dstPort: { type: integer }
+        seq: { type: integer, minimum: 0, maximum: 4294967295 }
+        ack: { type: integer, minimum: 0, maximum: 4294967295 }
+        flags:
+          type: array
+          items: { type: string, enum: [fin, syn, rst, psh, ack, urg, ece, cwr] }
+        window: { type: integer }
+        headerLength: { type: integer }
+        checksum:
+          type: string
+          enum: [ok, bad, unknown]
+          description: '`unknown` — кадр усечён, сумму проверить нельзя'
+
+    StreamRange:
+      type: object
+      description: Куда попали байты payload кадра
+      required: [stream, start, end, duplicate]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        duplicate: { type: boolean }
+
+    Frame:
+      type: object
+      required: [source, frameNo, time, fileOffset, capturedLength, originalLength, data, diagnostics]
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        frameNo: { type: integer, minimum: 1 }
+        time: { type: string, format: date-time, description: Время захвата из записи }
+        fileOffset: { type: integer, minimum: 0, description: Смещение кадра в файле записи }
+        capturedLength: { type: integer, minimum: 0 }
+        originalLength: { type: integer, minimum: 0, description: Длина на проводе; больше captured — кадр усечён }
+        data: { type: string, contentEncoding: base64, description: Байты кадра целиком }
+        ethernet: { oneOf: [{ $ref: '#/components/schemas/Ethernet' }, { type: 'null' }] }
+        ipv4: { oneOf: [{ $ref: '#/components/schemas/Ipv4' }, { type: 'null' }] }
+        tcp: { oneOf: [{ $ref: '#/components/schemas/Tcp' }, { type: 'null' }] }
+        payload:
+          oneOf:
+            - type: object
+              required: [offset, length]
+              properties:
+                offset: { type: integer, minimum: 0, description: Смещение payload внутри кадра }
+                length: { type: integer, minimum: 0 }
+            - type: 'null'
+        streamRange:
+          oneOf:
+            - { $ref: '#/components/schemas/StreamRange' }
+            - type: 'null'
+        diagnostics:
+          type: array
+          description: Замечания к этому кадру
+          items:
+            type: object
+            required: [code, severity, title]
+            properties:
+              code: { type: string }
+              severity: { $ref: '#/components/schemas/Severity' }
+              title: { type: string }
+
+    JobKind:
+      type: string
+      enum: [import]
+
+    JobState:
+      type: string
+      enum: [queued, running, cancelling, succeeded, failed, cancelled]
+
+    JobProgress:
+      type: object
+      required: [stage, done, total, unit]
+      properties:
+        stage:
+          type: string
+          enum: [reading, reassembling, saving, done]
+        done: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0, description: "0, если ещё неизвестно" }
+        unit: { type: string, enum: [frames, bytes] }
+
+    ImportResult:
+      type: object
+      required: [sourceSha256, importId]
+      properties:
+        sourceSha256: { $ref: '#/components/schemas/Sha256' }
+        importId: { type: string }
+
+    Job:
+      type: object
+      required: [id, kind, state, progress]
+      properties:
+        id: { type: string, example: job-0001 }
+        kind: { $ref: '#/components/schemas/JobKind' }
+        state: { $ref: '#/components/schemas/JobState' }
+        progress: { $ref: '#/components/schemas/JobProgress' }
+        result:
+          oneOf:
+            - { $ref: '#/components/schemas/ImportResult' }
+            - type: 'null'
+          description: Только для `succeeded`
+        error:
+          oneOf:
+            - { $ref: '#/components/schemas/Problem' }
+            - type: 'null'
+          description: Только для `failed`
+
+    JobAccepted:
+      type: object
+      required: [jobId]
+      properties:
+        jobId: { type: string, example: job-0001 }
