@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.10
+  version: 0.1.11
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1320,6 +1320,7 @@ paths:
                 sampledBytes: 61586
                 truncated: false
                 incomplete: false
+                minMessages: 8
                 length:
                   - at: 4
                     width: 2
@@ -2502,12 +2503,13 @@ components:
 
     FramingHints:
       type: object
-      required: [streams, sampledBytes, truncated, incomplete, length, fixed, signatures, delimiters]
+      required: [streams, sampledBytes, truncated, incomplete, minMessages, length, fixed, signatures, delimiters]
       properties:
         streams: { type: array, items: { type: string } }
         sampledBytes: { type: integer, minimum: 0 }
         truncated: { type: boolean, description: 'Часть данных не вошла в анализ (предел размера или числа потоков)' }
         incomplete: { type: boolean, description: 'Поиск прерван по времени: список по длине неполон' }
+        minMessages: { type: integer, description: 'Сколько сообщений нужно, чтобы показать кандидата поля длины; на меньшем числе совпадения случайны' }
         length: { type: array, items: { $ref: '#/components/schemas/LengthHint' } }
         fixed: { type: array, items: { $ref: '#/components/schemas/FixedHint' } }
         signatures: { type: array, items: { $ref: '#/components/schemas/SignatureHint' } }

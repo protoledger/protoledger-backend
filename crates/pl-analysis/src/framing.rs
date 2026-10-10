@@ -170,6 +170,8 @@ pub struct FramingHints {
     pub truncated: bool,
     /// Поиск прерван (отмена или время): список кандидатов по длине неполон или пуст.
     pub incomplete: bool,
+    /// Сколько сообщений нужно, чтобы показать кандидата поля длины (меньше — совпадения случайны).
+    pub min_messages: u64,
     pub length: Vec<LengthHint>,
     pub fixed: Vec<FixedHint>,
     pub signatures: Vec<SignatureHint>,
@@ -926,6 +928,7 @@ pub fn find_framing(streams: &[StreamSample], cancelled: &dyn Fn() -> bool) -> F
     }
     FramingHints {
         incomplete: cancelled(),
+        min_messages: MIN_LENGTH_MESSAGES,
         streams: sample.iter().map(|s| s.id.clone()).collect(),
         sampled_bytes: sample
             .iter()
