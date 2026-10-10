@@ -401,7 +401,10 @@ async fn list_connections(
 }
 
 /// `<8 hex>:cNNNN:ab|ba` → запись, соединение, направление (0 — a→b).
-fn resolve_stream(state: &AppState, id: &str) -> Result<(Arc<SourceData>, usize, usize), ApiError> {
+pub(crate) fn resolve_stream(
+    state: &AppState,
+    id: &str,
+) -> Result<(Arc<SourceData>, usize, usize), ApiError> {
     let missing = || not_found(format!("Потока {id} нет."));
     let mut parts = id.split(':');
     let (Some(prefix), Some(conn), Some(dir), None) =

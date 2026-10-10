@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::expr::{Context, Expr, ExprError, Value};
 use crate::framing::{self, Frame, FrameError, Problem, Unknown, read_int};
 use crate::input::{Read, StreamInput};
@@ -11,7 +13,8 @@ use crate::schema::{
     Status, parse_hex,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Category {
     /// Сообщение выделено, тип найден, поля декодированы, проверки прошли.
     Matched,
@@ -40,7 +43,8 @@ impl Category {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FieldState {
     Decoded,
     /// Тип `unknown`: зона отмечена как неизученная.
@@ -63,7 +67,8 @@ pub struct FieldResult {
     pub value: Option<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ViolationKind {
     Framing,
     Expect,

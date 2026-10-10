@@ -6,18 +6,24 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sha2::{Digest, Sha256};
 
 use crate::error::ProjectError;
-use crate::manifest::{FORMAT_VERSION, ImportRecord, Manifest, Settings, SourceFormat};
+use crate::manifest::{
+    FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, Settings, SourceFormat,
+};
 
 /// Размер файла записи, `plan/security.md` §6.
 pub const MAX_SOURCE_SIZE: u64 = 1 << 30;
 /// Размер `project.yaml`: манифест — небольшой текст, больше — признак подмены.
 pub const MAX_MANIFEST_SIZE: u64 = 4 << 20;
+/// Размер файла интерпретации (`plan/security.md` §6).
+pub const MAX_INTERPRETATION_SIZE: usize = 4 << 20;
+const MAX_REVISIONS: usize = 100_000;
 const MAX_IMPORTS: usize = 100_000;
 const MAX_NAME_CHARS: usize = 255;
 
 const MANIFEST_FILE: &str = "project.yaml";
 const SOURCES_DIR: &str = "sources";
 const CACHE_DIR: &str = ".cache";
+const INTERPRETATION_DIR: &str = "interpretation";
 const PROJECT_SUFFIX: &str = ".protoledger";
 const COPY_BUFFER: usize = 64 * 1024;
 
@@ -154,6 +160,20 @@ fn make_readonly(path: &Path) -> Result<(), ProjectError> {
     fs::set_permissions(path, perms).map_err(ProjectError::io("права файла"))
 }
 
+/// Атомарная запись файла: временный файл в той же папке и rename.
+fn write_atomic(dir: &Path, target: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
+    let mut tmp = TempFile::new(dir, "write");
+    let mut file =
+        create_private_file(&tmp.path, 0o600).map_err(ProjectError::io("запись файла"))?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(ProjectError::io("запись файла"))?;
+    drop(file);
+    fs::rename(&tmp.path, target).map_err(ProjectError::io("замена файла"))?;
+    tmp.keep = true;
+    Ok(())
+}
+
 fn save_manifest(root: &Path, manifest: &Manifest) -> Result<(), ProjectError> {
     let text = serde_saphyr::to_string(manifest)
         .map_err(|e| ProjectError::InvalidManifest(e.to_string()))?;
@@ -249,6 +269,19 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), ProjectError> {
             "слишком много импортов".to_owned(),
         ));
     }
+    if manifest.interpretations.len() > MAX_REVISIONS {
+        return Err(ProjectError::InvalidManifest(
+            "слишком много ревизий интерпретации".to_owned(),
+        ));
+    }
+    for (i, r) in manifest.interpretations.iter().enumerate() {
+        if r.rev as usize != i + 1 || !is_valid_sha256(&r.digest) {
+            return Err(ProjectError::InvalidManifest(format!(
+                "ревизия интерпретации {}: номера идут подряд с 1, digest — 64 hex-цифры",
+                r.rev
+            )));
+        }
+    }
     let mut seen = std::collections::BTreeSet::new();
     for record in &manifest.imports {
         if !is_valid_sha256(&record.sha256) {
@@ -332,6 +365,7 @@ impl Project {
             name,
             settings: Settings::default(),
             imports: Vec::new(),
+            interpretations: Vec::new(),
         };
         save_manifest(path, &manifest)?;
         Ok(Self {
@@ -368,6 +402,106 @@ impl Project {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    pub fn interpretation_revisions(&self) -> &[InterpretationRevision] {
+        &self.manifest.interpretations
+    }
+
+    fn interpretation_dir(&self) -> PathBuf {
+        self.root.join(INTERPRETATION_DIR)
+    }
+
+    /// Сохраняет интерпретацию новой ревизией. Тот же digest, что у последней ревизии, новой не даёт.
+    /// Возвращает ревизию и признак «создана новая».
+    pub fn save_interpretation(
+        &mut self,
+        yaml: &str,
+        digest: &str,
+    ) -> Result<(InterpretationRevision, bool), ProjectError> {
+        if yaml.len() > MAX_INTERPRETATION_SIZE {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_interpretation_size",
+                value: MAX_INTERPRETATION_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        if !is_valid_sha256(digest) {
+            return Err(ProjectError::InvalidManifest(
+                "digest интерпретации не sha256".to_owned(),
+            ));
+        }
+        if let Some(last) = self.manifest.interpretations.last()
+            && last.digest == digest
+        {
+            return Ok((last.clone(), false));
+        }
+        let rev = u32::try_from(self.manifest.interpretations.len() + 1)
+            .map_err(|_| ProjectError::InvalidPath("слишком много ревизий"))?;
+        let history = self.interpretation_dir().join("history");
+        for dir in [self.interpretation_dir(), history.clone()] {
+            if !dir.is_dir() {
+                fs::create_dir(&dir).map_err(ProjectError::io("создание папки интерпретации"))?;
+                restrict_dir(&dir)?;
+            }
+        }
+        // Ревизия неизменна: сначала история, потом «текущая», потом манифест.
+        write_atomic(
+            &history,
+            &history.join(format!("{rev:04}.yaml")),
+            yaml.as_bytes(),
+        )?;
+        let current = self.interpretation_dir();
+        write_atomic(&current, &current.join("current.yaml"), yaml.as_bytes())?;
+        let record = InterpretationRevision {
+            rev,
+            digest: digest.to_owned(),
+        };
+        let mut updated = self.manifest.clone();
+        updated.interpretations.push(record.clone());
+        save_manifest(&self.root, &updated)?;
+        self.manifest = updated;
+        Ok((record, true))
+    }
+
+    /// Текст ревизии; путь строится из номера, а не из манифеста.
+    pub fn read_interpretation(
+        &self,
+        rev: u32,
+    ) -> Result<(InterpretationRevision, String), ProjectError> {
+        let record = self
+            .manifest
+            .interpretations
+            .get((rev as usize).wrapping_sub(1))
+            .filter(|r| r.rev == rev)
+            .ok_or(ProjectError::UnknownRevision(rev))?;
+        let path = self
+            .interpretation_dir()
+            .join("history")
+            .join(format!("{rev:04}.yaml"));
+        let meta = fs::symlink_metadata(&path).map_err(ProjectError::io("чтение интерпретации"))?;
+        if !meta.is_file() {
+            return Err(ProjectError::NotRegularFile);
+        }
+        if meta.len() > MAX_INTERPRETATION_SIZE as u64 {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_interpretation_size",
+                value: MAX_INTERPRETATION_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        let text = fs::read_to_string(&path).map_err(ProjectError::io("чтение интерпретации"))?;
+        Ok((record.clone(), text))
+    }
+
+    /// Последняя ревизия, если интерпретация сохранялась.
+    pub fn current_interpretation(
+        &self,
+    ) -> Result<Option<(InterpretationRevision, String)>, ProjectError> {
+        match self.manifest.interpretations.last() {
+            Some(last) => self.read_interpretation(last.rev).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Меняет настройки сборки и атомарно сохраняет манифест.
@@ -933,6 +1067,79 @@ mod tests {
                 name: "max_manifest_size",
                 ..
             })
+        ));
+    }
+
+    const DIGEST_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DIGEST_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn interpretation_revisions_are_kept_and_immutable() {
+        let dir = TestDir::new();
+        let mut project = new_project(&dir);
+        assert_eq!(project.current_interpretation().unwrap(), None);
+
+        let (r1, created) = project
+            .save_interpretation("version: 1\n", DIGEST_A)
+            .unwrap();
+        assert_eq!((r1.rev, created), (1, true));
+        // Тот же digest — новой ревизии нет.
+        let (again, created) = project
+            .save_interpretation("version: 1  # другое форматирование\n", DIGEST_A)
+            .unwrap();
+        assert_eq!((again.rev, created), (1, false));
+        let (r2, _) = project
+            .save_interpretation("version: 2\n", DIGEST_B)
+            .unwrap();
+        assert_eq!(r2.rev, 2);
+
+        let (_, old) = project.read_interpretation(1).unwrap();
+        assert_eq!(old, "version: 1\n", "старая ревизия не меняется");
+        let (cur, text) = project.current_interpretation().unwrap().unwrap();
+        assert_eq!((cur.rev, text.as_str()), (2, "version: 2\n"));
+        assert_eq!(
+            fs::read_to_string(project.root().join("interpretation/current.yaml")).unwrap(),
+            "version: 2\n"
+        );
+
+        let reopened = Project::open(project.root()).unwrap();
+        assert_eq!(reopened.interpretation_revisions().len(), 2);
+        assert_eq!(reopened.read_interpretation(2).unwrap().1, "version: 2\n");
+    }
+
+    #[test]
+    fn interpretation_input_is_validated() {
+        let dir = TestDir::new();
+        let mut project = new_project(&dir);
+        let big = "x".repeat(MAX_INTERPRETATION_SIZE + 1);
+        assert!(matches!(
+            project.save_interpretation(&big, DIGEST_A),
+            Err(ProjectError::LimitExceeded { .. })
+        ));
+        assert!(project.save_interpretation("a: 1", "не digest").is_err());
+        assert!(matches!(
+            project.read_interpretation(0),
+            Err(ProjectError::UnknownRevision(0))
+        ));
+        assert!(matches!(
+            project.read_interpretation(7),
+            Err(ProjectError::UnknownRevision(7))
+        ));
+        assert!(project.interpretation_revisions().is_empty());
+    }
+
+    #[test]
+    fn broken_revision_numbering_in_manifest_is_rejected() {
+        let dir = TestDir::new();
+        let root = write_manifest(
+            &dir,
+            &format!(
+                "formatVersion: 1\nengineVersion: 1\nname: x\ninterpretations:\n  - {{ rev: 2, digest: {DIGEST_A} }}\n"
+            ),
+        );
+        assert!(matches!(
+            Project::open(&root),
+            Err(ProjectError::InvalidManifest(_))
         ));
     }
 

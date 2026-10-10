@@ -15,6 +15,7 @@ mime_guess = "2.0.5"
 pl-app = { version = "0.1.0", path = "../pl-app" }
 pl-capture = { path = "../pl-capture" }
 pl-core = { path = "../pl-core" }
+pl-interp = { version = "0.1.0", path = "../pl-interp" }
 pl-project = { version = "0.1.0", path = "../pl-project" }
 pl-reassembly = { path = "../pl-reassembly" }
 rust-embed = { version = "8.13.0", features = ["interpolate-folder-path"] }

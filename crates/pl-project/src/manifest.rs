@@ -65,6 +65,14 @@ pub struct ImportRecord {
     pub size_bytes: u64,
 }
 
+/// Ревизия интерпретации: файл `interpretation/history/<rev>.yaml` неизменен, `digest` — его sha256 канонической формы.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InterpretationRevision {
+    pub rev: u32,
+    pub digest: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -75,4 +83,6 @@ pub struct Manifest {
     pub settings: Settings,
     #[serde(default)]
     pub imports: Vec<ImportRecord>,
+    #[serde(default)]
+    pub interpretations: Vec<InterpretationRevision>,
 }
