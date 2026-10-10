@@ -222,6 +222,8 @@ async fn settings_survive_reopen_and_validate_input() {
         body["settings"],
         json!({ "overlapPolicy": "last", "checksumPolicy": "ignore" })
     );
+    // Открытие запускает пересборку записей: пока она идёт, настройки менять нельзя (409).
+    wait_jobs(&fresh).await;
 
     for bad in [
         json!({}),
