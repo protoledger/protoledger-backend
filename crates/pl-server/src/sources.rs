@@ -211,7 +211,7 @@ struct DiagnosticDto {
     code: &'static str,
     severity: &'static str,
     title: &'static str,
-    detail: &'static str,
+    detail: String,
     count: u64,
     frame_numbers: Vec<u32>,
 }
@@ -235,6 +235,7 @@ async fn diagnostics(
     Path(sha256): Path<String>,
 ) -> Result<Json<SourceDiagnostics>, ApiError> {
     let s = source(&state, &sha256)?;
+    let checksums = pl_reassembly::checksum_report(&s.index);
     let items = s
         .index
         .diagnostics
@@ -244,7 +245,16 @@ async fn diagnostics(
             code: code.code(),
             severity: severity(code.severity()),
             title: code.title(),
-            detail: code.detail(),
+            detail: match (code, checksums.offloading_host) {
+                (DiagCode::BadChecksum, Some(host)) => format!(
+                    "Неверные суммы только у кадров от {host}, у остальных узлов суммы верны: похоже на offloading при захвате на этом узле. Байты учтены по политике проекта."
+                ),
+                (DiagCode::BadChecksum, None) => format!(
+                    "Неверные суммы у кадров от {} узл. и не у всех кадров узла: похоже на повреждение по пути, а не на offloading. Поведение определяет политика проекта (игнорировать, предупреждать, отбрасывать).",
+                    checksums.bad_hosts.len()
+                ),
+                _ => code.detail().to_owned(),
+            },
             count: g.count,
             frame_numbers: g.frames.clone(),
         })
@@ -508,7 +518,7 @@ fn segments(s: &SourceData, st: &Stream, from: u64, to: u64) -> Vec<SegmentDto> 
                     start,
                     end,
                     status: "ambiguous",
-                    data: variants.get(*chosen).map(bytes),
+                    data: chosen.and_then(|c| variants.get(c)).map(bytes),
                     frames: variants
                         .iter()
                         .flat_map(|v| frame_refs(&s.sha256, v))

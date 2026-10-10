@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.1
+  version: 0.1.2
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -96,6 +96,43 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/project/settings:
+    patch:
+      tags: [project]
+      operationId: updateProjectSettings
+      summary: Изменить настройки сборки потоков
+      description: |
+        Меняет политики сборки TCP: `overlapPolicy` (что делать с перекрытием с различающимися байтами:
+        `first` — брать более ранний сегмент, `last` — более поздний, `flag` — не выбирать, участок
+        остаётся неоднозначным без принятых байтов) и `checksumPolicy` (`ignore`, `warn`, `drop`).
+        Передайте только изменяемые поля. Если настройки изменились, записи проекта заново собираются
+        фоновой задачей; они появляются в `GET /api/sources` по мере готовности. Пока идут задачи — `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectSettingsPatch' }
+            example: { overlapPolicy: flag }
+      responses:
+        '200':
+          description: Проект с новыми настройками
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+              example:
+                name: demo
+                path: /workspace/demo.protoledger
+                formatVersion: 1
+                engineVersion: 0.1.0
+                settings: { overlapPolicy: flag, checksumPolicy: warn }
+                sourceCount: 2
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
 
   /api/sources:
     get:
@@ -661,6 +698,18 @@ components:
           type: string
           enum: [ignore, warn, drop]
           description: Что делать с кадрами с неверной контрольной суммой TCP
+
+    ProjectSettingsPatch:
+      type: object
+      description: Частичное изменение настроек; неизвестные поля — `400`
+      additionalProperties: false
+      properties:
+        overlapPolicy:
+          type: string
+          enum: [first, last, flag]
+        checksumPolicy:
+          type: string
+          enum: [ignore, warn, drop]
 
     Project:
       type: object

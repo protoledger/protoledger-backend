@@ -370,6 +370,15 @@ impl Project {
         &self.manifest
     }
 
+    /// Меняет настройки сборки и атомарно сохраняет манифест.
+    pub fn set_settings(&mut self, settings: Settings) -> Result<(), ProjectError> {
+        let mut updated = self.manifest.clone();
+        updated.settings = settings;
+        save_manifest(&self.root, &updated)?;
+        self.manifest = updated;
+        Ok(())
+    }
+
     pub fn name(&self) -> &str {
         &self.manifest.name
     }

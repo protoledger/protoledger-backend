@@ -14,6 +14,14 @@ pub enum OpenMode {
     Create,
 }
 
+/// Частичное изменение настроек сборки потоков.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub overlap_policy: Option<pl_project::OverlapPolicy>,
+    pub checksum_policy: Option<pl_project::ChecksumPolicy>,
+}
+
 /// Описание открытого проекта для API.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +89,35 @@ impl Session {
             .as_ref()
             .map(ProjectInfo::of)
             .ok_or_else(Self::no_project)
+    }
+
+    /// Меняет настройки сборки. Возвращает проект и признак «настройки изменились»:
+    /// только тогда записи нужно собрать заново.
+    pub fn update_settings(
+        &self,
+        jobs: &JobRegistry,
+        patch: SettingsPatch,
+    ) -> Result<(ProjectInfo, bool), Problem> {
+        if jobs.has_active() {
+            return Err(Problem::new(
+                ProblemKind::Conflict,
+                "Пока идут задачи, настройки менять нельзя: дождитесь завершения или отмените их.",
+            ));
+        }
+        let mut guard = self.write();
+        let project = guard.as_mut().ok_or_else(Self::no_project)?;
+        let mut settings = project.manifest().settings;
+        if let Some(policy) = patch.overlap_policy {
+            settings.overlap_policy = policy;
+        }
+        if let Some(policy) = patch.checksum_policy {
+            settings.checksum_policy = policy;
+        }
+        let changed = settings != project.manifest().settings;
+        if changed {
+            project.set_settings(settings).map_err(Problem::from)?;
+        }
+        Ok((ProjectInfo::of(project), changed))
     }
 
     /// Относительные пути считаются от каталога проектов (`--workspace`).

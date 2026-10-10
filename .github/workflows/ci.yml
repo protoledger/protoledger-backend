@@ -47,8 +47,15 @@ jobs:
       - name: Линтер
         if: steps.ready.outputs.ok == 'true'
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: tshark для сверки собранных потоков
+        if: steps.ready.outputs.ok == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends tshark
       - name: Тесты
         if: steps.ready.outputs.ok == 'true'
+        env:
+          PL_REQUIRE_TSHARK: "1"
         run: cargo test --all-features --locked
 
   api-doc:

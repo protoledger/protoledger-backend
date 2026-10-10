@@ -1,14 +1,16 @@
 use axum::extract::State;
-use axum::routing::get;
+use axum::routing::{get, patch};
 use axum::{Json, Router};
-use pl_app::{OpenMode, ProjectInfo};
+use pl_app::{OpenMode, ProjectInfo, SettingsPatch};
 use serde::Deserialize;
 
 use crate::json::ApiJson;
 use crate::{ApiError, AppState};
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/project", get(get_project).post(open_project))
+    Router::new()
+        .route("/project", get(get_project).post(open_project))
+        .route("/project/settings", patch(update_settings))
 }
 
 #[derive(Deserialize)]
@@ -44,5 +46,29 @@ async fn open_project(
     // Записи прежнего проекта не должны остаться видны; записи нового разбираются фоновой задачей.
     state.sources.clear();
     pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
+    Ok(Json(info))
+}
+
+/// Меняет политики сборки и заново собирает записи проекта фоновой задачей.
+async fn update_settings(
+    State(state): State<AppState>,
+    ApiJson(patch): ApiJson<SettingsPatch>,
+) -> Result<Json<ProjectInfo>, ApiError> {
+    let updated = {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || state.session.update_settings(&state.jobs, patch)).await
+    };
+    let (info, changed) = updated
+        .map_err(|_| {
+            ApiError::new(
+                pl_core::ProblemKind::Internal,
+                "Не удалось сохранить настройки, повторите.",
+            )
+        })?
+        .map_err(ApiError)?;
+    if changed {
+        state.sources.clear();
+        pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
+    }
     Ok(Json(info))
 }

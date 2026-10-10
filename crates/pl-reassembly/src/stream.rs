@@ -28,7 +28,8 @@ pub enum PieceKind {
     Gap,
     /// Перекрытие с разными байтами; `chosen` — вариант по политике проекта.
     Ambiguous {
-        chosen: usize,
+        /// Индекс принятого варианта; `None` — политика «flag», ни один не принят.
+        chosen: Option<usize>,
         variants: Vec<Bytes>,
     },
 }
@@ -287,11 +288,9 @@ fn interval(
     let decisive = match overlap {
         OverlapPolicy::First => active.first(),
         OverlapPolicy::Last => active.last(),
+        OverlapPolicy::Flag => None,
     };
-    let chosen = groups
-        .iter()
-        .position(|(_, m)| decisive.is_some_and(|d| m.contains(d)))
-        .unwrap_or(0);
+    let chosen = decisive.and_then(|d| groups.iter().position(|(_, m)| m.contains(d)));
     PieceKind::Ambiguous {
         chosen,
         variants: groups.iter().map(|(_, m)| to_bytes(m)).collect(),

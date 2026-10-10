@@ -185,8 +185,9 @@ fn policy_of(project: &Project) -> Policy {
     Policy {
         // «flag» собирает как «first»: неоднозначность и так видна в карте потока.
         overlap: match settings.overlap_policy {
+            pl_project::OverlapPolicy::First => pl_reassembly::OverlapPolicy::First,
             pl_project::OverlapPolicy::Last => pl_reassembly::OverlapPolicy::Last,
-            _ => pl_reassembly::OverlapPolicy::First,
+            pl_project::OverlapPolicy::Flag => pl_reassembly::OverlapPolicy::Flag,
         },
         checksum: match settings.checksum_policy {
             pl_project::ChecksumPolicy::Ignore => pl_reassembly::ChecksumPolicy::Ignore,
