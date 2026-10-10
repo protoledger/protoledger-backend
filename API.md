@@ -3,7 +3,7 @@
 Описание для людей. Источник истины для кода — [`openapi.yaml`](openapi.yaml); интерактивная документация — `/api/docs` запущенного приложения (только dev-сборка).
 Правило: меняется контракт — в том же PR обновляются оба файла. CI проверяет, что каждый путь из `openapi.yaml` описан здесь.
 
-Версия контракта: **0.1.1** (фаза Ф1: открыть запись → соединения → поток → байт → кадр).
+Версия контракта: **0.1.2** (фаза Ф1: открыть запись → соединения → поток → байт → кадр).
 
 ## Общее
 
@@ -51,6 +51,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 | GET | `/api/health` | Проверка, что движок запущен | `200 {status, version}` |
 | GET | `/api/project` | Текущий проект | `200 Project`, `409 no-project` |
 | POST | `/api/project` | Создать (`mode: create`) или открыть (`mode: open`) проект; относительный `path` — от каталога проектов (`--workspace`) | `200 Project` |
+| PATCH | `/api/project/settings` | Изменить политики сборки (`overlapPolicy`, `checksumPolicy`); записи собираются заново фоновой задачей | `200 Project` |
 | GET | `/api/sources` | Записи проекта | `200` страница `Source` |
 | POST | `/api/sources` | Импорт записи: JSON `{path}` или `multipart` с полем `file` | `202 {jobId}` |
 | GET | `/api/sources/{sha256}/diagnostics` | Что не разобрано в записи и почему | `200 SourceDiagnostics` |
@@ -83,7 +84,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 |---|---|---|
 | `data` | Байты есть в записи | base64 |
 | `gap` | Байтов нет (потеря, усечение). Нули не подставляются | `null` |
-| `ambiguous` | Перекрытие с разными байтами; `data` — вариант по политике проекта, `variants` — все варианты | base64 |
+| `ambiguous` | Перекрытие с разными байтами; `data` — вариант по политике проекта (`first`, `last`), `variants` — все варианты | base64; `null` при политике `flag` |
 
 Каждый участок несёт `frames` — кадры-источники (с признаком `duplicate` для повторов). Диапазон за концом потока усекается, `length` — фактическая длина. `len` не больше 1 МиБ.
 
@@ -147,6 +148,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 
 | Дата | Изменение | Ломающее | PR |
 |---|---|---|---|
+| 2026-10-10 | v0.1.2: `PATCH /api/project/settings`; при `overlapPolicy: flag` у неоднозначного участка `data = null`, принятого варианта нет (аддитивно) | — | — |
 | 2026-10-10 | Уточнено: `path` проекта и `..`, коды 400/409/422 при открытии (поведение, не схема) | — | — |
 | 2026-10-10 | Контракт v0.1.0: проект, источники, соединения, байты потока, кадры, задачи | — | — |
 | 2026-10-10 | v0.1.1: коды диагностики `non_ip` (ARP и др.) и `non_tcp` (UDP, ICMP) | — | — |

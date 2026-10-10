@@ -39,7 +39,9 @@ fn known_bytes(file: &[u8], s: &Stream) -> Vec<u8> {
     for p in &s.pieces {
         let b = match &p.kind {
             PieceKind::Data(b) => b,
-            PieceKind::Ambiguous { chosen, variants } => &variants[*chosen],
+            PieceKind::Ambiguous { chosen, variants } => {
+                &variants[chosen.expect("политика выбирает вариант")]
+            }
             PieceKind::Gap => continue,
         };
         let at = b.file_offset as usize;
@@ -293,4 +295,56 @@ fn reorder_and_duplicates_do_not_change_stream() {
             assert_eq!(s.gap_bytes() + s.ambiguous_bytes(), 0);
         }
     }
+}
+
+#[test]
+fn flag_policy_keeps_ambiguity_without_choosing() {
+    let flag = Policy {
+        overlap: OverlapPolicy::Flag,
+        checksum: ChecksumPolicy::Warn,
+    };
+    let (_, first) = build("overlap-conflict", Policy::default());
+    let (_, flagged) = build("overlap-conflict", flag);
+    let mut seen = 0;
+    for (a, b) in first.iter().zip(&flagged) {
+        for (sa, sb) in a.streams.iter().zip(&b.streams) {
+            assert_eq!(sa.length, sb.length, "политика не меняет длину потока");
+            assert_eq!(ambiguous(sa), ambiguous(sb), "неоднозначные участки те же");
+            for p in &sb.pieces {
+                if let PieceKind::Ambiguous { chosen, variants } = &p.kind {
+                    assert_eq!(*chosen, None, "flag не принимает ни один вариант");
+                    assert!(variants.len() >= 2);
+                    seen += 1;
+                }
+            }
+        }
+    }
+    assert!(seen > 0, "в записи должны быть неоднозначные участки");
+    assert!(
+        flagged.iter().any(|c| c.flags.contains(&Flag::Ambiguous)),
+        "флаг соединения остаётся"
+    );
+}
+
+#[test]
+fn checksum_report_tells_offloading_from_corruption() {
+    let report = |name: &str| {
+        let file = fixture(&format!("{name}.pcapng"));
+        let idx = index(&file, Limits::default(), &|| false, &mut |_| {}).unwrap();
+        pl_reassembly::checksum_report(&idx)
+    };
+    let offload = report("bad-checksum");
+    assert_eq!(
+        offload.offloading_host.map(|h| h.to_string()).as_deref(),
+        Some("10.0.0.10")
+    );
+    assert!(offload.bad > 0 && offload.bad_hosts.len() == 1);
+
+    let clean = report("normal");
+    assert_eq!(clean.bad, 0);
+    assert!(clean.offloading_host.is_none() && clean.bad_hosts.is_empty());
+
+    // Неверная сумма у отдельных кадров (повреждение по пути) — не offloading.
+    let mixed = report("mixed");
+    assert!(mixed.offloading_host.is_none(), "{mixed:?}");
 }
