@@ -1,0 +1,83 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "background",
+  "description": "Фоновый трафик вне обязательной области: ARP, UDP, IPv6, фрагменты IPv4",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 15,
+  "snaplen": 65535,
+  "skipped": [
+    {
+      "frame": 1,
+      "kind": "arp"
+    },
+    {
+      "frame": 5,
+      "kind": "udp"
+    },
+    {
+      "frame": 8,
+      "kind": "ipv6"
+    },
+    {
+      "frame": 9,
+      "kind": "ipv4-fragment"
+    },
+    {
+      "frame": 10,
+      "kind": "ipv4-fragment"
+    }
+  ],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 2,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 70,
+        "knownBytes": 70,
+        "sha256": "7cf9781ff31011daa841bcbb3d753fe035065a28f44c9718781af1514f7ff02e",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 38
+          },
+          {
+            "offset": 38,
+            "length": 32
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 79,
+        "knownBytes": 79,
+        "sha256": "47f0ba257e85bd9a56319aa426af7f18e5f3c34b2ff70e01a676709298ea366d",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 46
+          },
+          {
+            "offset": 46,
+            "length": 33
+          }
+        ]
+      }
+    }
+  ]
+}

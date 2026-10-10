@@ -1,0 +1,78 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "bad-checksum",
+  "description": "Offloading: у всех TCP-кадров клиента неверная контрольная сумма",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 12,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [
+    1,
+    3,
+    4,
+    6,
+    8,
+    10,
+    12
+  ],
+  "offloadingHost": "10.0.0.10",
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 115,
+        "knownBytes": 115,
+        "sha256": "6b219cf3f337e7ed5e836a8d41f8766382832967031394154a8ba16145694533",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 32
+          },
+          {
+            "offset": 32,
+            "length": 51
+          },
+          {
+            "offset": 83,
+            "length": 32
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 80,
+        "knownBytes": 80,
+        "sha256": "e7168716afb6d5253cd47adcbf3af377a81171a1f684a4fd4081a1b65c985836",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 21
+          },
+          {
+            "offset": 21,
+            "length": 39
+          },
+          {
+            "offset": 60,
+            "length": 20
+          }
+        ]
+      }
+    }
+  ]
+}

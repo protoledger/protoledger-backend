@@ -1,0 +1,78 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "normal",
+  "description": "Рукопожатие, обмены запрос-ответ, два запроса в одном сегменте, ответ в двух сегментах, FIN",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 15,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 135,
+        "knownBytes": 135,
+        "sha256": "f45c50e8f5ebe054c5cc3205f6ff8c0528c917fbc80c4e56593aec14fdfad19e",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 32
+          },
+          {
+            "offset": 32,
+            "length": 51
+          },
+          {
+            "offset": 83,
+            "length": 32
+          },
+          {
+            "offset": 115,
+            "length": 20
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 225,
+        "knownBytes": 225,
+        "sha256": "217856789de0e236da59e5c122b0fb9428bf62ae09a7b3dd2468e54d3c9147e0",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 21
+          },
+          {
+            "offset": 21,
+            "length": 39
+          },
+          {
+            "offset": 60,
+            "length": 41
+          },
+          {
+            "offset": 101,
+            "length": 124
+          }
+        ]
+      }
+    }
+  ]
+}

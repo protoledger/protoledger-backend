@@ -1,0 +1,73 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "overlap-conflict",
+  "description": "Повтор части сегмента с другими байтами (неоднозначно) и с теми же байтами (повтор)",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 12,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 73,
+        "knownBytes": 73,
+        "sha256": "8de08114a212d89b5cae7ccad0e1c39189d6b652c689b38a95781e2724aa1a8d",
+        "gaps": [],
+        "ambiguous": [
+          {
+            "offset": 8,
+            "length": 16,
+            "frames": [
+              4,
+              5
+            ]
+          }
+        ],
+        "duplicateFrames": [
+          6
+        ],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 40
+          },
+          {
+            "offset": 40,
+            "length": 33
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 95,
+        "knownBytes": 95,
+        "sha256": "1d1660ddba76b159351d5d2512549d2c94741b37da03e421770aec2d7ab6645f",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 48
+          },
+          {
+            "offset": 48,
+            "length": 47
+          }
+        ]
+      }
+    }
+  ]
+}

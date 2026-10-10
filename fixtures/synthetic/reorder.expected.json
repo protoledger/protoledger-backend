@@ -1,0 +1,70 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "reorder",
+  "description": "Сегменты захвачены не по порядку; seq клиента переходит через 2^32",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 12,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:41000",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 88,
+        "knownBytes": 88,
+        "sha256": "172f62766f80687f7fb86db8d5ce262e90be2d7ce7277d147605873ffe154966",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 10
+          },
+          {
+            "offset": 10,
+            "length": 36
+          },
+          {
+            "offset": 46,
+            "length": 42
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 89,
+        "knownBytes": 89,
+        "sha256": "b42e5f25835aba4a882cc09d02b2cdfea46040e6df4b8754deabe30b92bcd3c6",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 43
+          },
+          {
+            "offset": 43,
+            "length": 27
+          },
+          {
+            "offset": 70,
+            "length": 19
+          }
+        ]
+      }
+    }
+  ]
+}

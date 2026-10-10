@@ -1,0 +1,88 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "gap-truncation",
+  "description": "Сегмент клиента не захвачен (дыра); большой ответ усечён snaplen",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 13,
+  "snaplen": 160,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": true,
+      "clientToServer": {
+        "startKnown": true,
+        "length": 169,
+        "knownBytes": 118,
+        "sha256": "1861415e654d7d73f91831c28866e6a806526fdfe27cba400fdd21bbdddb5172",
+        "gaps": [
+          {
+            "offset": 32,
+            "length": 51
+          }
+        ],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 32
+          },
+          {
+            "offset": 32,
+            "length": 51
+          },
+          {
+            "offset": 83,
+            "length": 39
+          },
+          {
+            "offset": 122,
+            "length": 47
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": true,
+        "length": 393,
+        "knownBytes": 195,
+        "sha256": "aec4a4046af62f5bfec3adddc93665e0614179b91058a80419b6d3289eea7807",
+        "gaps": [
+          {
+            "offset": 159,
+            "length": 198
+          }
+        ],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 0,
+            "length": 21
+          },
+          {
+            "offset": 21,
+            "length": 32
+          },
+          {
+            "offset": 53,
+            "length": 304
+          },
+          {
+            "offset": 357,
+            "length": 36
+          }
+        ]
+      }
+    }
+  ]
+}

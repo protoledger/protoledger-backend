@@ -1,0 +1,70 @@
+{
+  "generator": "pl-synth",
+  "formatVersion": 1,
+  "scenario": "no-handshake",
+  "description": "Запись начата посреди соединения: нет SYN, роли и начало потоков неизвестны",
+  "seed": 1,
+  "policy": {
+    "overlap": "first",
+    "checksum": "warn"
+  },
+  "frames": 9,
+  "snaplen": 65535,
+  "skipped": [],
+  "badChecksumFrames": [],
+  "offloadingHost": null,
+  "connections": [
+    {
+      "client": "10.0.0.10:48465",
+      "server": "10.0.1.1:5020",
+      "firstFrame": 1,
+      "rolesKnown": false,
+      "clientToServer": {
+        "startKnown": false,
+        "length": 86,
+        "knownBytes": 86,
+        "sha256": "fa8e1cdc45f82a29ce68934fe05f86229ff4663d541baf16f2502b6ded386e04",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 1,
+            "length": 32
+          },
+          {
+            "offset": 33,
+            "length": 41
+          },
+          {
+            "offset": 74,
+            "length": 13
+          }
+        ]
+      },
+      "serverToClient": {
+        "startKnown": false,
+        "length": 98,
+        "knownBytes": 98,
+        "sha256": "5e1f14b48024931b451564e7a86e7135da6508e24f46872202837c035c8cf85c",
+        "gaps": [],
+        "ambiguous": [],
+        "duplicateFrames": [],
+        "messages": [
+          {
+            "offset": 1,
+            "length": 20
+          },
+          {
+            "offset": 21,
+            "length": 37
+          },
+          {
+            "offset": 58,
+            "length": 41
+          }
+        ]
+      }
+    }
+  ]
+}
