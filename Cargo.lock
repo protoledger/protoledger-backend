@@ -855,6 +855,7 @@ dependencies = [
  "pl-interp",
  "pl-project",
  "pl-reassembly",
+ "pl-report",
  "pl-verify",
  "serde",
  "serde-saphyr",
@@ -929,6 +930,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-report"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "pl-server"
 version = "0.1.0"
 dependencies = [
@@ -945,6 +953,7 @@ dependencies = [
  "pl-interp",
  "pl-project",
  "pl-reassembly",
+ "pl-report",
  "pl-verify",
  "rust-embed",
  "serde",
@@ -1021,6 +1030,7 @@ dependencies = [
  "pl-interp",
  "pl-project",
  "pl-reassembly",
+ "pl-report",
  "pl-server",
  "pl-verify",
  "serde",

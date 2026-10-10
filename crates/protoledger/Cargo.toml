@@ -11,6 +11,7 @@ workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 pl-actions = { version = "0.1.0", path = "../pl-actions" }
+pl-report = { version = "0.1.0", path = "../pl-report" }
 pl-app = { version = "0.1.0", path = "../pl-app" }
 pl-core = { version = "0.1.0", path = "../pl-core" }
 pl-interp = { version = "0.1.0", path = "../pl-interp" }

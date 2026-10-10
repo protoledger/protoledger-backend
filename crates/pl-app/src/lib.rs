@@ -4,6 +4,7 @@ mod actions;
 mod hypothesis;
 mod interp;
 mod jobs;
+mod report;
 mod research;
 mod session;
 mod sources;
@@ -21,6 +22,7 @@ pub use jobs::{
     Job, JobContext, JobKind, JobProgress, JobRegistry, JobState, MAX_CONCURRENT_JOBS,
     ProgressStage, ProgressUnit,
 };
+pub use report::collect as collect_report;
 pub use research::{
     AnchorRef, AnchorState, Hypothesis, HypothesisInput, HypothesisStatus, Observation, Question,
     QuestionStatus, add_hypothesis, add_observation, add_question, anchor_state, delete_hypothesis,

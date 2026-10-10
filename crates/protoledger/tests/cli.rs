@@ -247,13 +247,53 @@ fn project_with_run(name: &str) -> PathBuf {
         &mut |_, _| {},
     )
     .unwrap();
-    let mut guard = session.write();
-    let project = guard.as_mut().unwrap();
-    run.id = project.next_run_id();
-    project
-        .save_run(&run.id, &serde_json::to_string(&run).unwrap())
-        .unwrap();
+    {
+        let mut guard = session.write();
+        let project = guard.as_mut().unwrap();
+        run.id = project.next_run_id();
+        project
+            .save_run(&run.id, &serde_json::to_string(&run).unwrap())
+            .unwrap();
+    }
+    add_research(&session, &store);
     root
+}
+
+/// Наблюдение, гипотеза с тестом и вопрос; текст нарочно содержит разметку.
+fn add_research(session: &Session, store: &SourceStore) {
+    let logs = pl_app::ActionLogStore::default();
+    let mapping =
+        serde_saphyr::from_str("time: time\naction: action\nparams: params\nresult: result\n")
+            .unwrap();
+    let csv = std::fs::read(repo("fixtures/stand/main.actions.csv")).unwrap();
+    pl_app::import_action_log(session, &logs, "main.actions.csv", &csv, mapping).unwrap();
+
+    let data = store.list().into_iter().next().unwrap();
+    let anchor = pl_app::AnchorRef {
+        source: data.sha256.clone(),
+        stream: format!("{}:ab", data.connections[0].id(&data.sha256)),
+        start: 0,
+        end: 8,
+        sha256: None,
+    };
+    let observation = pl_app::add_observation(
+        session,
+        store,
+        anchor,
+        "заголовок <script>alert(1)</script> | в _таблице_".to_owned(),
+    )
+    .unwrap();
+    pl_app::add_hypothesis(
+        session,
+        pl_app::HypothesisInput {
+            statement: Some("value совпадает с параметром действия".to_owned()),
+            basis: Some(vec![observation.id]),
+            test: Some("message.len > 5".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    pl_app::add_question(session, "Что означает режим 3?".to_owned()).unwrap();
 }
 
 #[test]
@@ -334,4 +374,88 @@ fn verify_errors_have_code_two() {
             .code(),
         Some(2)
     );
+}
+
+#[test]
+fn report_describes_the_project_in_both_formats() {
+    let root = project_with_run("report");
+    let md = run(&["report", root.to_str().unwrap()]);
+    let md_text = text(&md.stdout);
+    assert_eq!(md.status.code(), Some(0), "{}", text(&md.stderr));
+    for needle in [
+        "# Отчёт по проекту",
+        "## Область применимости",
+        "main.pcapng",
+        "## Результат проверки",
+        "совпало",
+        "## Гипотезы",
+        "выполнилась на",
+        "это не доказательство",
+        "## Наблюдения",
+        "## Открытые вопросы",
+        "Что означает режим 3?",
+        "protoledger verify",
+    ] {
+        assert!(
+            md_text.contains(needle),
+            "в отчёте нет «{needle}»:\n{md_text}"
+        );
+    }
+    assert!(
+        !md_text.contains("<script>"),
+        "разметка в Markdown экранируется"
+    );
+
+    let html = run(&["report", root.to_str().unwrap(), "--format", "html"]);
+    let html_text = text(&html.stdout);
+    assert_eq!(html.status.code(), Some(0));
+    assert!(html_text.contains("Content-Security-Policy"));
+    assert!(!html_text.contains("<script"), "в отчёте нет скриптов");
+    assert!(html_text.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(!html_text.contains("http://") && !html_text.contains("https://"));
+}
+
+#[test]
+fn report_is_deterministic_and_goes_to_a_file() {
+    let root = project_with_run("report-file");
+    let target = root.parent().unwrap().join("report.html");
+    let a = run(&[
+        "report",
+        root.to_str().unwrap(),
+        "--format",
+        "html",
+        "--out",
+        target.to_str().unwrap(),
+    ]);
+    assert_eq!(a.status.code(), Some(0), "{}", text(&a.stderr));
+    assert!(a.stdout.is_empty());
+    let b = run(&["report", root.to_str().unwrap(), "--format", "html"]);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), text(&b.stdout));
+}
+
+#[test]
+fn report_flags_a_stale_run_and_rejects_bad_input() {
+    let root = project_with_run("report-stale");
+    let mut project = Project::open(&root).unwrap();
+    let yaml = std::fs::read_to_string(repo("fixtures/stand/interpretation.yaml"))
+        .unwrap()
+        .replace("length + 7 == message.len", "length + 8 == message.len");
+    let digest = Interpretation::parse(&yaml).unwrap().digest();
+    project.save_interpretation(&yaml, &digest).unwrap();
+    drop(project);
+    let out = run(&["report", root.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("прогон устарел"),
+        "{}",
+        text(&out.stdout)
+    );
+
+    assert_eq!(
+        run(&["report", root.to_str().unwrap(), "--run", "run-0099"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(run(&["report", "нет-такого"]).status.code(), Some(2));
 }
