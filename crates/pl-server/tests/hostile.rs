@@ -54,6 +54,7 @@ async fn call(
     )
 }
 
+#[allow(clippy::let_and_return)] // временный Ref не должен пережить rx
 async fn import(state: &AppState, path: PathBuf) -> pl_app::Job {
     let (status, body) = call(
         state,
