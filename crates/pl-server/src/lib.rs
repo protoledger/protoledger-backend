@@ -4,6 +4,7 @@
 pub mod dev;
 mod encode;
 mod error;
+mod guard;
 mod jobs;
 mod json;
 mod project;
@@ -20,6 +21,10 @@ use pl_core::ProblemKind;
 use serde::Serialize;
 
 pub use error::ApiError;
+pub use guard::{Guard, TOKEN_HEADER};
+
+/// Лимит тела JSON-запроса (`plan/security.md` §6).
+const MAX_JSON_BODY: usize = 8 << 20;
 
 /// Общее состояние сервера.
 #[derive(Clone)]
@@ -27,6 +32,7 @@ pub struct AppState {
     pub jobs: JobRegistry,
     pub sources: SourceStore,
     pub session: Session,
+    pub guard: Guard,
     #[cfg(feature = "dev-tools")]
     pub dev: Option<dev::DevConfig>,
 }
@@ -37,9 +43,24 @@ impl AppState {
             jobs: JobRegistry::default(),
             sources: SourceStore::default(),
             session: Session::new(workspace),
+            guard: Guard::random(),
             #[cfg(feature = "dev-tools")]
             dev: None,
         }
+    }
+}
+
+impl AppState {
+    /// Состояние для запуска: в dev-режиме токен и разрешённый origin фронта заданы заранее.
+    pub fn from_config(config: &ServerConfig) -> Self {
+        #[allow(unused_mut)]
+        let mut state = Self::new(config.workspace.clone());
+        #[cfg(feature = "dev-tools")]
+        if let Some(dev) = &config.dev {
+            state.guard = Guard::with_token(dev.token.clone(), vec![dev.allowed_origin.clone()]);
+            state.dev = Some(dev.clone());
+        }
+        state
     }
 }
 
@@ -83,13 +104,19 @@ pub fn router(state: AppState) -> Router {
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());
+    let guard_state = state.clone();
     let app = Router::new()
         .nest("/api", api)
         .fallback(spa::serve_ui)
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_JSON_BODY))
         .with_state(state);
     #[cfg(feature = "dev-tools")]
     let app = app.merge(docs);
-    app
+    // Внешний слой: проверяет и API, и встроенный интерфейс (токен лежит в index.html).
+    app.layer(axum::middleware::from_fn_with_state(
+        guard_state,
+        guard::enforce,
+    ))
 }
 
 pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
@@ -99,16 +126,9 @@ pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
         workspace = %config.workspace.display(),
         "сервер запущен"
     );
-    axum::serve(
-        listener,
-        router(AppState {
-            #[cfg(feature = "dev-tools")]
-            dev: config.dev.clone(),
-            ..AppState::new(config.workspace.clone())
-        }),
-    )
-    .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await
+    axum::serve(listener, router(AppState::from_config(&config)))
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
 }

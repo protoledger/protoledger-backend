@@ -10,6 +10,8 @@ async fn call(state: &AppState, method: Method, path: &str) -> axum::response::R
     let request = Request::builder()
         .method(method)
         .uri(path)
+        .header(header::HOST, "localhost:8080")
+        .header("x-protoledger-token", state.guard.token())
         .body(Body::empty())
         .unwrap();
     pl_server::router(state.clone())
@@ -145,6 +147,8 @@ async fn post_json(
     let request = Request::builder()
         .method(Method::POST)
         .uri(path)
+        .header(header::HOST, "localhost:8080")
+        .header("x-protoledger-token", state.guard.token())
         .header(header::CONTENT_TYPE, content_type)
         .body(Body::from(body.to_owned()))
         .unwrap();

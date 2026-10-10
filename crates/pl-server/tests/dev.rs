@@ -8,10 +8,13 @@ use pl_server::dev::{DevConfig, OPENAPI_YAML};
 use tower::ServiceExt;
 
 async fn get(state: AppState, path: &str) -> (StatusCode, String) {
-    let response = pl_server::router(state)
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
-        .await
+    let token = state.guard.token().to_owned();
+    let request = Request::get(path)
+        .header("host", "localhost:8080")
+        .header("x-protoledger-token", token)
+        .body(Body::empty())
         .unwrap();
+    let response = pl_server::router(state).oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     (status, String::from_utf8_lossy(&bytes).into_owned())
