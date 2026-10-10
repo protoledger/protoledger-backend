@@ -23,6 +23,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/analysis/framing", post(framing))
         .route("/analysis/variability", post(variability))
+        .route("/analysis/correlations", post(correlations))
         .route("/exchanges", post(exchanges))
 }
 
@@ -148,4 +149,42 @@ async fn exchanges(
     })
     .await?;
     Ok(Json(page))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CorrelationsBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    framing: Option<Framing>,
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default)]
+    log_id: Option<String>,
+    #[serde(default)]
+    window_ms: Option<u64>,
+}
+
+async fn correlations(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<CorrelationsBody>,
+) -> Result<Json<pl_analysis::Correlations>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::message_correlations(
+            &state.session,
+            &state.sources,
+            &state.actions,
+            &pl_app::CorrelationRequest {
+                streams: body.streams,
+                framing: body.framing,
+                message_id: body.message_id,
+                log_id: body.log_id,
+                window_ms: body.window_ms,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
 }

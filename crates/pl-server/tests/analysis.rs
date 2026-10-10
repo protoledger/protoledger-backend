@@ -240,3 +240,103 @@ async fn exchanges_pair_requests_with_responses() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// Проект со стендом, журналом действий и интерпретацией («ключ ответов»).
+async fn with_log(name: &str) -> (AppState, String) {
+    let (state, _, ab, _) = setup(name).await;
+    let log = stand("main.actions.csv").to_string_lossy().into_owned();
+    let mapping =
+        json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": log, "mapping": mapping })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let yaml = std::fs::read_to_string(stand("interpretation.yaml")).unwrap();
+    call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+    (state, ab)
+}
+
+#[tokio::test]
+async fn correlations_link_message_bytes_with_action_parameters() {
+    let (state, ab) = with_log("corr").await;
+    let (status, c) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab.clone()], "messageId": "set_param_req" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    assert!(c["withAction"].as_u64().unwrap() >= 3, "{c}");
+    let hint = c["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["param"] == "params.value")
+        .unwrap_or_else(|| panic!("нет связи с params.value: {c}"));
+    assert!(
+        matches!(hint["type"].as_str(), Some("u32be" | "i32be")),
+        "{hint}"
+    );
+    assert_eq!(hint["scale"], 1);
+    assert_eq!(hint["sharePermille"], 1000);
+    assert!(hint["firstCounterexample"].is_null());
+
+    // Без фильтра по типу: байт типа сообщения — код действия.
+    let (_, all) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    assert!(!all["actions"].as_array().unwrap().is_empty(), "{all}");
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab.clone()], "logId": "log-9" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab], "windowMs": 9999999 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn correlations_need_an_action_log() {
+    let (state, _, ab, _) = setup("corr-nolog").await;
+    let (_, hints) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/framing",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    let framing = hints["length"][0]["framing"].clone();
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}

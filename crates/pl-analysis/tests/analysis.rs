@@ -370,3 +370,87 @@ fn signature_is_found_even_when_a_segment_holds_several_messages() {
     assert_eq!(sig.basis, "length_candidate");
     assert_eq!(sig.at_starts, sig.starts_total);
 }
+
+fn sample(i: usize, action: &str, value: i64, code: u8, wrong: bool) -> pl_analysis::CorrSample {
+    let shown = if wrong { value + 1 } else { value };
+    let mut bytes = vec![code, 0xAA];
+    bytes.extend_from_slice(&(shown as i16).to_le_bytes());
+    pl_analysis::CorrSample {
+        stream: "s".to_owned(),
+        start: (i * 10) as u64,
+        bytes,
+        params: [
+            ("params.value".to_owned(), value),
+            ("params.const".to_owned(), 7),
+        ]
+        .into(),
+        action: Some(action.to_owned()),
+    }
+}
+
+#[test]
+fn correlations_find_a_parameter_field_and_an_action_code() {
+    let samples: Vec<_> = (0..20)
+        .map(|i| {
+            let (action, code) = if i % 2 == 0 {
+                ("set", 0x10)
+            } else {
+                ("get", 0x20)
+            };
+            sample(i, action, 100 + i as i64 * 3, code, i == 7)
+        })
+        .collect();
+    let c = pl_analysis::correlate(&samples);
+    assert_eq!((c.samples, c.with_action), (20, 20));
+    let v = c.values.iter().find(|h| h.param == "params.value").unwrap();
+    assert_eq!((v.at, v.ty, v.scale), (2, "u16le", 1));
+    assert_eq!((v.matches, v.samples), (19, 20));
+    assert_eq!(v.share_permille, 950);
+    let counter = v.first_counterexample.as_ref().unwrap();
+    assert_eq!(
+        (counter.start, counter.got, counter.expected),
+        (70, 122, 121)
+    );
+    // Постоянный параметр ни с чем не связывается.
+    assert!(c.values.iter().all(|h| h.param != "params.const"));
+    let a = c.actions.iter().find(|h| h.at == 0).unwrap();
+    assert_eq!(a.purity_permille, 1000);
+    let codes: Vec<_> = a
+        .codes
+        .iter()
+        .map(|c| (c.action.as_str(), c.value))
+        .collect();
+    assert_eq!(codes, vec![("get", 0x20), ("set", 0x10)]);
+}
+
+#[test]
+fn correlations_support_fixed_point_scale_and_stay_quiet_on_noise() {
+    let mut rng = Lcg(5);
+    let samples: Vec<_> = (0..12)
+        .map(|i| {
+            let value = 3 + i as i64;
+            pl_analysis::CorrSample {
+                stream: "s".to_owned(),
+                start: i as u64,
+                bytes: ((value * 10) as u16).to_be_bytes().to_vec(),
+                params: [("params.v".to_owned(), value)].into(),
+                action: Some("a".to_owned()),
+            }
+        })
+        .collect();
+    let hit = &pl_analysis::correlate(&samples).values[0];
+    assert_eq!((hit.ty, hit.scale, hit.share_permille), ("u16be", 10, 1000));
+
+    let noise: Vec<_> = (0..30)
+        .map(|i| pl_analysis::CorrSample {
+            stream: "n".to_owned(),
+            start: i as u64,
+            bytes: payload(&mut rng, 16),
+            params: [("params.v".to_owned(), i as i64 * 7)].into(),
+            action: Some(if i % 2 == 0 { "x" } else { "y" }.to_owned()),
+        })
+        .collect();
+    let c = pl_analysis::correlate(&noise);
+    assert!(c.values.is_empty() && c.actions.is_empty(), "{c:?}");
+    assert_eq!(pl_analysis::correlate(&[]).samples, 0);
+}

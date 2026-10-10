@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.9
+  version: 0.1.10
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1400,6 +1400,65 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/correlations:
+    post:
+      tags: [analysis]
+      operationId: findCorrelations
+      summary: Связи байтов сообщений с действиями из журнала
+      description: |
+        Каждому сообщению указанных потоков подбирается действие из журнала (по порядку внутри окна `windowMs`
+        от времени первого кадра сообщения, по умолчанию 2000 мс; журнал — `logId` или все журналы проекта).
+        Дальше ищутся два вида связей. **`values`**: поле (смещение, тип: u8/i8/u16/i16/u32/i32, оба порядка байтов),
+        значение которого равно числовому параметру или результату действия (`params.value`, `result.applied`),
+        в том числе с фиксированной точкой (`scale`: 1, 10, 100, 1000). Показываются связи с долей совпадений не ниже
+        80 % и не меньше чем на пяти сообщениях; постоянный параметр ни с чем не связывается. **`actions`**: смещение,
+        где значение — код действия (у разных действий разные значения, у одного — почти всегда одно). Это подсказки:
+        совпадение на примерах не доказывает связь, у каждой есть число примеров и первый контрпример.
+        Границы сообщений — из `framing` либо из сохранённой интерпретации; `messageId` оставляет сообщения одного
+        типа (нужна интерпретация). Без журнала действий — `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CorrelationsRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab'], messageId: set_param_req }
+      responses:
+        '200':
+          description: Найденные связи
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Correlations' }
+              example:
+                samples: 6
+                withAction: 6
+                truncated: false
+                values:
+                  - param: params.value
+                    at: 8
+                    type: i32be
+                    scale: 1
+                    matches: 6
+                    samples: 6
+                    sharePermille: 1000
+                    firstCounterexample: null
+                    equivalent: []
+                actions:
+                  - at: 2
+                    type: u8
+                    purityPermille: 1000
+                    samples: 12
+                    codes:
+                      - { action: read_param, value: 1, count: 6, of: 6 }
+                      - { action: set_param, value: 2, count: 6, of: 6 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2522,6 +2581,69 @@ components:
               bigEndian: { type: boolean }
               steps: { type: integer }
               pairs: { type: integer }
+
+    CorrelationsRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
+        logId: { type: string, description: 'Журнал действий (log-0001); без значения — все' }
+        windowMs: { type: integer, minimum: 0, maximum: 600000, description: 'Окно подбора действия, мс (по умолчанию 2000)' }
+
+    CorrelationValue:
+      type: object
+      required: [param, at, type, scale, matches, samples, sharePermille, firstCounterexample, equivalent]
+      properties:
+        param: { type: string, description: 'params.<имя> или result.<имя> из журнала' }
+        at: { type: integer, minimum: 0 }
+        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le] }
+        scale: { type: integer, enum: [1, 10, 100, 1000], description: 'Прочитанное значение = параметр × scale' }
+        matches: { type: integer, minimum: 0 }
+        samples: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        firstCounterexample:
+          oneOf:
+            - type: object
+              required: [stream, start, got, expected]
+              properties:
+                stream: { type: string }
+                start: { type: integer, minimum: 0 }
+                got: { type: integer }
+                expected: { type: integer }
+            - { type: 'null' }
+        equivalent: { type: array, items: { type: string }, description: 'Другие чтения тех же байтов с теми же совпадениями, вида тип@смещение' }
+
+    CorrelationAction:
+      type: object
+      required: [at, type, purityPermille, samples, codes]
+      properties:
+        at: { type: integer, minimum: 0 }
+        type: { type: string, enum: [u8, u16be, u16le] }
+        purityPermille: { type: integer, minimum: 0, maximum: 1000 }
+        samples: { type: integer, minimum: 0 }
+        codes:
+          type: array
+          items:
+            type: object
+            required: [action, value, count, of]
+            properties:
+              action: { type: string }
+              value: { type: integer, minimum: 0 }
+              count: { type: integer, minimum: 0, description: 'Сообщений действия с этим значением' }
+              of: { type: integer, minimum: 0, description: 'Всех сообщений действия' }
+
+    Correlations:
+      type: object
+      required: [samples, withAction, truncated, values, actions]
+      properties:
+        samples: { type: integer, minimum: 0 }
+        withAction: { type: integer, minimum: 0, description: 'Сообщений, к которым подобрано действие' }
+        truncated: { type: boolean }
+        values: { type: array, items: { $ref: '#/components/schemas/CorrelationValue' } }
+        actions: { type: array, items: { $ref: '#/components/schemas/CorrelationAction' } }
 
     ExchangesRequest:
       type: object
