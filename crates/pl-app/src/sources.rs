@@ -205,11 +205,13 @@ fn blocking_failed() -> Problem {
 
 /// Запускает импорт записи по пути: копия в проект, затем разбор. Результат задачи —
 /// `{sourceSha256, importId}`. Без открытого проекта — `409`.
+/// `cleanup` — временная папка загрузки: удаляется после задачи при любом исходе.
 pub fn import_path(
     jobs: &JobRegistry,
     store: &SourceStore,
     session: &Session,
     path: PathBuf,
+    cleanup: Option<PathBuf>,
 ) -> Result<String, Problem> {
     if session.read().is_none() {
         return Err(Session::no_project());
@@ -233,7 +235,11 @@ pub fn import_path(
             let file = read_capture_file(&copy)?;
             analyze(file, record.name, record.id, policy, &ctx)
         });
-        let data = work.await.map_err(|_| blocking_failed())??;
+        let outcome = work.await;
+        if let Some(dir) = cleanup {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        let data = outcome.map_err(|_| blocking_failed())??;
         let result = serde_json::json!({
             "sourceSha256": data.sha256,
             "importId": data.import_id,

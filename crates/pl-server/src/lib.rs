@@ -10,6 +10,7 @@ mod json;
 mod project;
 mod sources;
 mod spa;
+mod upload;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -24,7 +25,7 @@ pub use error::ApiError;
 pub use guard::{Guard, TOKEN_HEADER};
 
 /// Лимит тела JSON-запроса (`plan/security.md` §6).
-const MAX_JSON_BODY: usize = 8 << 20;
+pub(crate) const MAX_JSON_BODY: usize = 8 << 20;
 
 /// Общее состояние сервера.
 #[derive(Clone)]
@@ -33,6 +34,8 @@ pub struct AppState {
     pub sources: SourceStore,
     pub session: Session,
     pub guard: Guard,
+    /// Предел размера загружаемой записи, байт.
+    pub max_upload: u64,
     #[cfg(feature = "dev-tools")]
     pub dev: Option<dev::DevConfig>,
 }
@@ -44,6 +47,7 @@ impl AppState {
             sources: SourceStore::default(),
             session: Session::new(workspace),
             guard: Guard::random(),
+            max_upload: pl_project::MAX_SOURCE_SIZE,
             #[cfg(feature = "dev-tools")]
             dev: None,
         }
