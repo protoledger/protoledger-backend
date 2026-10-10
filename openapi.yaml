@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.6
+  version: 0.1.7
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -30,6 +30,8 @@ tags:
     description: Журналы действий клиента и поиск обмена по действию
   - name: research
     description: Наблюдения, гипотезы и вопросы исследователя
+  - name: reports
+    description: Отчёт по проекту
   - name: jobs
     description: Долгие операции с прогрессом и отменой
 
@@ -1248,6 +1250,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NoProject' }
 
+  /api/reports:
+    post:
+      tags: [reports]
+      operationId: createReport
+      summary: Сформировать отчёт по проекту
+      description: |
+        Отчёт — основания выводов, область применимости (записи, их sha256, диагностика), результат прогона,
+        контрпримеры, гипотезы со статусом и результатом теста, наблюдения и открытые вопросы. Без `runId` берётся
+        последний сохранённый прогон. Устаревший прогон помечается в тексте. Текст приходит строкой в JSON, чтобы
+        браузер не показывал HTML как страницу: фронт сохраняет его файлом (`fileName`) или показывает как текст.
+        HTML отчёта самодостаточен: всё экранировано, скриптов и внешних ресурсов нет, CSP в `<meta>`.
+        Совпадает с командой `protoledger report`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportRequest' }
+            example: { format: md, runId: run-0002 }
+      responses:
+        '200':
+          description: Отчёт
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+              example:
+                format: md
+                fileName: report.md
+                content: "# Отчёт по проекту «demo»\n\nВерсия движка 0.1.0. ..."
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+
   /api/jobs:
     get:
       tags: [jobs]
@@ -2138,6 +2176,22 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Question' }
+
+    ReportRequest:
+      type: object
+      required: [format]
+      additionalProperties: false
+      properties:
+        format: { type: string, enum: [md, html] }
+        runId: { type: string, description: 'Прогон (run-0001); без значения — последний' }
+
+    Report:
+      type: object
+      required: [format, fileName, content]
+      properties:
+        format: { type: string, enum: [md, html] }
+        fileName: { type: string, description: 'Имя файла при сохранении' }
+        content: { type: string, description: 'Текст отчёта' }
 
     NewQuestion:
       type: object

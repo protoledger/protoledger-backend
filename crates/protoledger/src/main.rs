@@ -1,5 +1,6 @@
 mod apply;
 mod common;
+mod report;
 mod verify;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -41,7 +42,7 @@ enum Command {
     /// Перепроверить проект: источники целы, прогоны воспроизводятся (0 — совпало, 1 — отличия, 2 — ошибка)
     Verify(verify::VerifyArgs),
     /// Сформировать отчёт
-    Report,
+    Report(report::ReportArgs),
     /// Замерить время и память
     Bench,
 }
@@ -91,7 +92,8 @@ async fn main() -> ExitCode {
         }
         Command::Apply(args) => finish(apply::run(args)),
         Command::Verify(args) => finish(verify::run(args)),
-        Command::Report | Command::Bench => {
+        Command::Report(args) => finish(report::run(args)),
+        Command::Bench => {
             eprintln!("Команда пока не реализована.");
             ExitCode::from(2)
         }

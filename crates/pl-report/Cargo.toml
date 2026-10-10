@@ -1,0 +1,12 @@
+[package]
+name = "pl-report"
+description = "Отчёт по проекту: Markdown и HTML из готовых данных, всё экранировано"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }

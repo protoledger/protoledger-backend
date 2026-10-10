@@ -20,6 +20,7 @@ pl-interp = { version = "0.1.0", path = "../pl-interp" }
 pl-project = { version = "0.1.0", path = "../pl-project" }
 pl-reassembly = { path = "../pl-reassembly" }
 pl-verify = { version = "0.1.0", path = "../pl-verify" }
+pl-report = { version = "0.1.0", path = "../pl-report" }
 rust-embed = { version = "8.13.0", features = ["interpolate-folder-path"] }
 serde = "1.0.229"
 serde_json = "1.0.151"
