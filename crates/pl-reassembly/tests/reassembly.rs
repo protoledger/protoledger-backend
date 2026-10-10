@@ -209,6 +209,29 @@ fn connection_flags_and_close() {
 }
 
 #[test]
+fn flag_counts_match_flags_and_count_occurrences() {
+    for name in [
+        "normal",
+        "duplicates",
+        "gap-truncation",
+        "overlap-conflict",
+        "no-handshake",
+        "bad-checksum",
+        "port-reuse",
+    ] {
+        for c in build(name, Policy::default()).1 {
+            let keys: std::collections::BTreeSet<_> = c.flag_counts.keys().copied().collect();
+            assert_eq!(keys, c.flags, "{name}");
+            assert!(c.flag_counts.values().all(|n| *n >= 1), "{name}");
+        }
+    }
+    let (_, c) = build("duplicates", Policy::default());
+    assert!(c[0].flag_counts[&Flag::Retransmissions] >= 1);
+    let (_, c) = build("no-handshake", Policy::default());
+    assert_eq!(c[0].flag_counts[&Flag::NoSyn], 1);
+}
+
+#[test]
 fn overlap_policy_last_picks_later_bytes() {
     let (file, first) = build("overlap-conflict", Policy::default());
     let last_policy = Policy {
