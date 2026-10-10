@@ -18,6 +18,7 @@ sha2 = "0.11.0"
 tokio = { version = "1.53.2", features = ["rt", "sync", "macros"] }
 tokio-util = "0.7.20"
 tracing = "0.1.44"
+pl-interp = { version = "0.1.0", path = "../pl-interp" }
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "sync", "macros", "time"] }
