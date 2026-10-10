@@ -459,3 +459,65 @@ fn report_flags_a_stale_run_and_rejects_bad_input() {
     );
     assert_eq!(run(&["report", "нет-такого"]).status.code(), Some(2));
 }
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// R5: перенос проекта — копирование папки; на другой машине `verify` даёт тот же результат.
+#[test]
+fn a_copied_project_verifies_and_reports_the_same() {
+    let root = project_with_run("transfer");
+    let original = run(&["verify", root.to_str().unwrap()]);
+    assert_eq!(
+        original.status.code(),
+        Some(0),
+        "{}",
+        text(&original.stdout)
+    );
+
+    // Служебный кэш в перенос не входит: проект собирается заново.
+    let _ = std::fs::remove_dir_all(root.join(".cache"));
+    let elsewhere = temp("transfer-copy").join("перенесённый.protoledger");
+    copy_dir(&root, &elsewhere);
+
+    // В проекте нет абсолютных путей: ни временной папки, ни имени пользователя.
+    let dir = root
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    for file in ["project.yaml"] {
+        let body = std::fs::read_to_string(elsewhere.join(file))
+            .unwrap()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        assert!(!body.contains(&dir), "{file}: абсолютный путь");
+    }
+
+    let copied = run(&["verify", elsewhere.to_str().unwrap()]);
+    assert_eq!(copied.status.code(), Some(0), "{}", text(&copied.stdout));
+    let strip = |s: &str| {
+        s.lines()
+            .filter(|l| l.starts_with("run-"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(strip(&text(&original.stdout)), strip(&text(&copied.stdout)));
+
+    let a = run(&["report", root.to_str().unwrap(), "--format", "md"]);
+    let b = run(&["report", elsewhere.to_str().unwrap(), "--format", "md"]);
+    assert_eq!(
+        text(&a.stdout),
+        text(&b.stdout),
+        "отчёт не зависит от места"
+    );
+}
