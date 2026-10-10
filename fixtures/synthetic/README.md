@@ -19,6 +19,7 @@ cargo run -p pl-synth -- generate --out fixtures/synthetic --format pcap normal
 | `bad-checksum` | offloading: неверные TCP-суммы у всех кадров одного узла |
 | `port-reuse` | три соединения с одним 4-кортежем (после FIN, после RST) |
 | `background` | ARP, UDP, IPv6, фрагменты IPv4 — пропуск с диагностикой |
+| `interpretation.yaml` | описание границ сообщений синтетических записей (для `protoledger bench`) |
 | `mixed` | два параллельных соединения со всеми дефектами и фоном |
 
 ## Эталон `<имя>.expected.json`

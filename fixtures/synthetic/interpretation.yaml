@@ -1,0 +1,7 @@
+# Границы сообщений синтетических записей: [A5][тип][длина тела u16 BE][тело].
+format: protoledger/interpretation@1
+framing:
+  kind: length_prefixed
+  length: { at: 2, type: u16be, adjust: 4 }
+  status: rule
+messages: []

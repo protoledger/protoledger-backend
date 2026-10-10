@@ -454,3 +454,50 @@ fn mixed(ctx: &mut Ctx) -> Vec<Conn> {
     ctx.close(&mut a);
     vec![a, b]
 }
+
+/// Запись контрольного профиля для замеров: `connections` одновременных соединений, около `frames` кадров;
+/// размер файла — около `bytes` (но не больше, чем влезает в кадры по 1400 байт нагрузки) (на заголовки кадров и блоки pcapng закладывается по 90 байт на кадр). Соединения чередуются по обменам, как в живом захвате.
+pub fn profile(connections: usize, frames: usize, bytes: usize, seed: u64) -> Capture {
+    let connections = connections.clamp(1, 20_000);
+    let mut ctx = Ctx {
+        rng: Rng::new(seed),
+        cap: Capture::new(DEFAULT_SNAPLEN, seed),
+        skipped: Vec::new(),
+        bad: Vec::new(),
+        offloading: None,
+    };
+    // По 6 кадров на рукопожатие и закрытие, остальное — обмены по два кадра.
+    let exchanges = (frames / connections).saturating_sub(6).div_ceil(2).max(1);
+    let request_avg = 80usize;
+    let payload = bytes.saturating_sub(frames * 90);
+    let response_avg = (payload / connections / exchanges)
+        .saturating_sub(request_avg + 8)
+        .clamp(8, 1_400);
+    let mut conns: Vec<Conn> = (0..connections)
+        .map(|i| {
+            let client = Host::new((i / 200) as u8 % 200 + 20, (i % 200) as u8 + 10);
+            ctx.conn(client, Host::new(1, 1))
+        })
+        .collect();
+    for c in &mut conns {
+        ctx.handshake(c);
+    }
+    for round in 0..exchanges {
+        for c in &mut conns {
+            let n = (request_avg / 2 + ctx.rng.range(0, request_avg as u64) as usize).min(1_400);
+            let body = ctx.rng.bytes(n);
+            c.write(Dir::C2s, 1 + (round % 100) as u8, &body);
+            let s = c.send_all(Dir::C2s);
+            ctx.emit(c, &s);
+            let n = (response_avg / 2 + ctx.rng.range(0, response_avg as u64) as usize).min(1_400);
+            let body = ctx.rng.bytes(n);
+            c.write(Dir::S2c, 0x81 + (round % 100) as u8, &body);
+            let s = c.send_all(Dir::S2c);
+            ctx.emit(c, &s);
+        }
+    }
+    for c in &mut conns {
+        ctx.close(c);
+    }
+    ctx.cap
+}
