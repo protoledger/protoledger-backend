@@ -29,6 +29,7 @@ pub use research::{
 };
 pub use session::{OpenMode, ProjectInfo, Session, SettingsPatch};
 pub use sources::{
-    SourceData, SourceStore, analyze, import_path, read_capture_file, reload_sources,
+    SourceData, SourceStore, analyze, analyze_with, import_path, load_project_sources, policy_from,
+    read_capture_file, reload_sources,
 };
-pub use verify::{current_signature, start_verify};
+pub use verify::{current_signature, execute_run, start_verify};

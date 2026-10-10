@@ -80,6 +80,32 @@ fn targets<'a>(sources: &'a [Arc<SourceData>], corpus: &CorpusFilter) -> Vec<Str
     out
 }
 
+/// Прогон без задачи: интерпретация применяется к потокам корпуса, результат не сохраняется.
+pub fn execute_run(
+    interpretation: &Interpretation,
+    revision: Option<u32>,
+    sources: &[Arc<SourceData>],
+    corpus: &CorpusFilter,
+    settings_digest: String,
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<pl_verify::Run, Problem> {
+    let targets = targets(sources, corpus);
+    let mut used: Vec<String> = targets.iter().map(|t| t.source.clone()).collect();
+    used.sort();
+    used.dedup();
+    let inputs = RunInputs {
+        revision,
+        interpretation_digest: interpretation.digest(),
+        settings_digest,
+        sources: used,
+        corpus: corpus.clone(),
+        engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+    pl_verify::execute(interpretation, &targets, inputs, cancelled, progress)
+        .map_err(verify_problem)
+}
+
 /// Запускает прогон; результат задачи — `{runId}`.
 pub fn start_verify(
     jobs: &JobRegistry,
@@ -123,30 +149,19 @@ pub fn start_verify(
     jobs.spawn(JobKind::Verify, move |ctx| async move {
         let work = tokio::task::spawn_blocking(move || -> Result<String, Problem> {
             let sources = store.list();
-            let targets = targets(&sources, &corpus);
             let current = current_signature(&session, &store).ok_or_else(Session::no_project)?;
-            let mut used: Vec<String> = targets.iter().map(|t| t.source.clone()).collect();
-            used.sort();
-            used.dedup();
-            let inputs = RunInputs {
-                revision: Some(rev),
-                interpretation_digest: interpretation.digest(),
-                settings_digest: current.settings_digest,
-                sources: used,
-                corpus: corpus.clone(),
-                engine_version: env!("CARGO_PKG_VERSION").to_owned(),
-            };
             let cancelled = || ctx.is_cancelled();
-            let mut run = pl_verify::execute(
+            let mut run = execute_run(
                 &interpretation,
-                &targets,
-                inputs,
+                Some(rev),
+                &sources,
+                &corpus,
+                current.settings_digest,
                 &cancelled,
                 &mut |done, total| {
-                    ctx.progress(ProgressStage::Verifying, done, total, ProgressUnit::Streams);
+                    ctx.progress(ProgressStage::Verifying, done, total, ProgressUnit::Streams)
                 },
-            )
-            .map_err(verify_problem)?;
+            )?;
 
             ctx.progress(ProgressStage::Saving, 0, 0, ProgressUnit::Bytes);
             let mut guard = session.write();
