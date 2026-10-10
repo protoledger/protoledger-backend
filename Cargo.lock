@@ -917,6 +917,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-stand"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "etherparse",
+ "pcap-parser",
+ "pl-capture",
+ "pl-reassembly",
+ "pl-synth",
+]
+
+[[package]]
 name = "pl-synth"
 version = "0.1.0"
 dependencies = [

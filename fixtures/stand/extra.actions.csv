@@ -1,0 +1,12 @@
+time,action,params,result
+2026-10-01T00:00:00.456164Z,read_param,param=setpoint,value=0
+2026-10-01T00:00:01.560788Z,set_param,param=setpoint;value=70000,ok;applied=70000
+2026-10-01T00:00:02.166140Z,get_measurement,channel=1,samples=8;min=7000;max=7085
+2026-10-01T00:00:04.571430Z,set_param,param=setpoint;value=-5,ok;applied=-5
+2026-10-01T00:00:05.175544Z,get_measurement,channel=1,samples=8;min=0;max=85
+2026-10-01T00:00:07.582069Z,set_param,param=setpoint;value=123456,ok;applied=123456
+2026-10-01T00:00:08.387805Z,read_param,param=setpoint,value=123456
+2026-10-01T00:00:08.387805Z,get_measurement,channel=2,samples=300;min=12345;max=12444
+2026-10-01T00:00:10.292323Z,set_param,param=mode;value=1,ok;applied=1
+2026-10-01T00:00:10.996736Z,get_measurement,channel=3,samples=30000;min=12295;max=12394
+2026-10-01T00:00:12.579494Z,read_param,param=gain,value=1

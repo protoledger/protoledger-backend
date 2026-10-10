@@ -1,0 +1,17 @@
+time,action,params,result
+2026-10-01T00:00:00.356179Z,read_param,param=gain,value=1
+2026-10-01T00:00:00.356179Z,read_param,param=mode,value=0
+2026-10-01T00:00:01.261358Z,read_param,param=setpoint,value=0
+2026-10-01T00:00:02.768393Z,set_param,param=setpoint;value=21,ok;applied=21
+2026-10-01T00:00:03.474642Z,get_measurement,channel=1,samples=8;min=2;max=87
+2026-10-01T00:00:05.981217Z,set_param,param=setpoint;value=37,ok;applied=37
+2026-10-01T00:00:06.687083Z,get_measurement,channel=1,samples=8;min=3;max=88
+2026-10-01T00:00:09.192766Z,set_param,param=setpoint;value=1000,ok;applied=1000
+2026-10-01T00:00:09.895770Z,get_measurement,channel=2,samples=300;min=100;max=199
+2026-10-01T00:00:11.699414Z,read_param,param=setpoint,value=1000
+2026-10-01T00:00:13.902893Z,set_param,param=gain;value=300,error=out_of_range;kept=1
+2026-10-01T00:00:15.107281Z,set_param,param=gain;value=5,ok;applied=5
+2026-10-01T00:00:15.107281Z,set_param,param=mode;value=2,ok;applied=2
+2026-10-01T00:00:16.013470Z,get_measurement,channel=1,samples=8;min=0;max=425
+2026-10-01T00:00:16.013470Z,get_measurement,channel=2,samples=300;min=0;max=495
+2026-10-01T00:00:18.017345Z,get_measurement,channel=3,samples=30000;min=0;max=495
