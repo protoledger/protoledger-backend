@@ -1,0 +1,15 @@
+[package]
+name = "pl-project"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pl-core = { path = "../pl-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde-saphyr = "1.3.0"
+sha2 = "0.11.0"
+thiserror = "2.0.21"
