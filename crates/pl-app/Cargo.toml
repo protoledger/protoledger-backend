@@ -21,6 +21,7 @@ tracing = "0.1.44"
 pl-interp = { version = "0.1.0", path = "../pl-interp" }
 pl-verify = { version = "0.1.0", path = "../pl-verify" }
 pl-actions = { version = "0.1.0", path = "../pl-actions" }
+serde-saphyr = "1.3.0"
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "sync", "macros", "time"] }
