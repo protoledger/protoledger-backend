@@ -1,6 +1,7 @@
 //! Сценарии движка поверх библиотечных крейтов: реестр долгих задач, импорт записей, сессия с проектом.
 
 mod actions;
+mod analysis;
 mod hypothesis;
 mod interp;
 mod jobs;
@@ -13,6 +14,10 @@ mod verify;
 pub use actions::{
     ActionLogStore, Exchange, FrameHit, LoadedLog, MessageHit, all_sources, current_interpretation,
     find_exchange, import_action_log, reload_action_logs,
+};
+pub use analysis::{
+    ExchangeView, MAX_REQUEST_STREAMS, MessageRef, VariabilityRequest, connection_exchanges,
+    framing_hints, message_variability,
 };
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,

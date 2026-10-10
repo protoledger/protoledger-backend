@@ -1,6 +1,7 @@
 //! HTTP-сервер движка: REST `/api`, встроенный интерфейс.
 
 mod actions;
+mod analysis;
 #[cfg(feature = "dev-tools")]
 pub mod dev;
 mod encode;
@@ -117,6 +118,7 @@ pub fn router(state: AppState) -> Router {
         .merge(actions::routes())
         .merge(research::routes())
         .merge(reports::routes())
+        .merge(analysis::routes())
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());

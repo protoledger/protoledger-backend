@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pl-report", "crates/pl-actions", "crates/pl-verify", "crates/pl-interp", "crates/pl-hostile", "crates/pl-stand", "crates/pl-project", "crates/pl-app", "crates/pl-capture", "crates/pl-core", "crates/pl-reassembly", "crates/pl-server", "crates/pl-synth", "crates/protoledger"]
+members = ["crates/pl-analysis", "crates/pl-report", "crates/pl-actions", "crates/pl-verify", "crates/pl-interp", "crates/pl-hostile", "crates/pl-stand", "crates/pl-project", "crates/pl-app", "crates/pl-capture", "crates/pl-core", "crates/pl-reassembly", "crates/pl-server", "crates/pl-synth", "crates/protoledger"]
 
 [workspace.package]
 version = "0.1.0"
