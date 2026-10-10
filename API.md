@@ -112,6 +112,10 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 6. Клик по участку потока → `frames[].frameNo` → `GET /api/frames/<sha256>/7` — заголовки, байты кадра, `payload` внутри кадра и `streamRange` обратно в поток.
 7. Что не разобрано в записи: `GET /api/sources/<sha256>/diagnostics`.
 
+### Открытие существующего проекта
+
+`POST /api/project` с `mode: open` сбрасывает записи прежнего проекта и запускает фоновую задачу, которая заново разбирает записи из `sources/`. Они появляются в `GET /api/sources` по мере готовности; ход виден в `GET /api/jobs`. Пока задачи идут, сменить проект нельзя (`409`).
+
 ### Повторный импорт того же файла
 
 `POST /api/sources` с тем же файлом создаёт новый импорт (`importId` растёт), записи не склеиваются.

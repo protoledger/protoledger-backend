@@ -25,17 +25,24 @@ async fn open_project(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<OpenProjectRequest>,
 ) -> Result<Json<ProjectInfo>, ApiError> {
-    // Файловые операции короткие, но блокирующие: не держим рантайм.
-    tokio::task::spawn_blocking(move || {
-        state.session.open(&state.jobs, &request.path, request.mode)
-    })
-    .await
-    .map_err(|_| {
-        ApiError::new(
-            pl_core::ProblemKind::Internal,
-            "Не удалось открыть проект, повторите.",
-        )
-    })?
-    .map(Json)
-    .map_err(ApiError)
+    let opened = {
+        let state = state.clone();
+        // Файловые операции короткие, но блокирующие: не держим рантайм.
+        tokio::task::spawn_blocking(move || {
+            state.session.open(&state.jobs, &request.path, request.mode)
+        })
+        .await
+    };
+    let info = opened
+        .map_err(|_| {
+            ApiError::new(
+                pl_core::ProblemKind::Internal,
+                "Не удалось открыть проект, повторите.",
+            )
+        })?
+        .map_err(ApiError)?;
+    // Записи прежнего проекта не должны остаться видны; записи нового разбираются фоновой задачей.
+    state.sources.clear();
+    pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
+    Ok(Json(info))
 }

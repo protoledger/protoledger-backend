@@ -9,4 +9,6 @@ pub use jobs::{
     ProgressStage, ProgressUnit,
 };
 pub use session::{OpenMode, ProjectInfo, Session};
-pub use sources::{SourceData, SourceStore, analyze, import_path, read_capture_file};
+pub use sources::{
+    SourceData, SourceStore, analyze, import_path, read_capture_file, reload_sources,
+};

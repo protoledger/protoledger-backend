@@ -6,7 +6,9 @@ use pl_core::{Limit, Problem, ProblemKind};
 use pl_reassembly::{Connection, Policy, ReassemblyError};
 use sha2::{Digest, Sha256};
 
-use crate::{JobContext, JobKind, JobRegistry, ProgressStage, ProgressUnit};
+use pl_project::Project;
+
+use crate::{JobContext, JobKind, JobRegistry, ProgressStage, ProgressUnit, Session};
 
 /// Разобранная запись: файл целиком в памяти, индекс кадров и соединения.
 #[derive(Debug)]
@@ -33,7 +35,6 @@ impl SourceData {
 #[derive(Default)]
 struct Inner {
     sources: Vec<Arc<SourceData>>,
-    imports: u64,
 }
 
 /// Записи текущей сессии в порядке импорта.
@@ -52,10 +53,9 @@ impl SourceStore {
         self.inner.write().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub fn next_import_id(&self) -> String {
-        let mut inner = self.write();
-        inner.imports += 1;
-        format!("imp-{:04}", inner.imports)
+    /// Забывает все записи (при смене проекта).
+    pub fn clear(&self) {
+        self.write().sources.clear();
     }
 
     /// Повторный импорт той же записи заменяет её данные и `importId`, места в списке не меняет.
@@ -180,33 +180,60 @@ pub fn read_capture_file(path: &Path) -> Result<Vec<u8>, Problem> {
     std::fs::read(path).map_err(unreadable)
 }
 
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "запись".into())
+fn policy_of(project: &Project) -> Policy {
+    let settings = project.manifest().settings;
+    Policy {
+        // «flag» собирает как «first»: неоднозначность и так видна в карте потока.
+        overlap: match settings.overlap_policy {
+            pl_project::OverlapPolicy::Last => pl_reassembly::OverlapPolicy::Last,
+            _ => pl_reassembly::OverlapPolicy::First,
+        },
+        checksum: match settings.checksum_policy {
+            pl_project::ChecksumPolicy::Ignore => pl_reassembly::ChecksumPolicy::Ignore,
+            pl_project::ChecksumPolicy::Warn => pl_reassembly::ChecksumPolicy::Warn,
+            pl_project::ChecksumPolicy::Drop => pl_reassembly::ChecksumPolicy::Drop,
+        },
+    }
 }
 
-/// Запускает импорт записи по пути; возвращает id задачи. Результат задачи —
-/// `{sourceSha256, importId}`.
+fn blocking_failed() -> Problem {
+    Problem::new(
+        ProblemKind::Internal,
+        "Разбор записи завершился сбоем. Сервер работает, повторите операцию.",
+    )
+}
+
+/// Запускает импорт записи по пути: копия в проект, затем разбор. Результат задачи —
+/// `{sourceSha256, importId}`. Без открытого проекта — `409`.
 pub fn import_path(
     jobs: &JobRegistry,
     store: &SourceStore,
+    session: &Session,
     path: PathBuf,
-    policy: Policy,
 ) -> Result<String, Problem> {
-    let store = store.clone();
+    if session.read().is_none() {
+        return Err(Session::no_project());
+    }
+    let (store, session) = (store.clone(), session.clone());
     jobs.spawn(JobKind::Import, move |ctx| async move {
-        let import_id = store.next_import_id();
         let work = tokio::task::spawn_blocking(move || {
-            let file = read_capture_file(&path)?;
-            analyze(file, file_name(&path), import_id, policy, &ctx)
+            let (record, copy, policy) = {
+                // Блокировка проекта держится на время копирования: манифест меняется атомарно.
+                let mut guard = session.write();
+                let project = guard.as_mut().ok_or_else(Session::no_project)?;
+                let cancelled = || ctx.is_cancelled();
+                let record = project
+                    .add_source(&path, &cancelled, &mut |done| {
+                        ctx.progress(ProgressStage::Reading, done, 0, ProgressUnit::Bytes);
+                    })
+                    .map_err(Problem::from)?;
+                let copy = project.source_path(&record.sha256).map_err(Problem::from)?;
+                (record, copy, policy_of(project))
+            };
+            let file = read_capture_file(&copy)?;
+            analyze(file, record.name, record.id, policy, &ctx)
         });
-        let data = work.await.map_err(|_| {
-            Problem::new(
-                ProblemKind::Internal,
-                "Разбор записи завершился сбоем. Сервер работает, повторите импорт.",
-            )
-        })??;
+        let data = work.await.map_err(|_| blocking_failed())??;
         let result = serde_json::json!({
             "sourceSha256": data.sha256,
             "importId": data.import_id,
@@ -214,4 +241,56 @@ pub fn import_path(
         store.insert(data);
         Ok(result)
     })
+}
+
+/// После открытия проекта заново разбирает его записи из копий в `sources/`.
+/// Записи появляются в списке по мере готовности; повреждённые и пропавшие пропускаются.
+pub fn reload_sources(
+    jobs: &JobRegistry,
+    store: &SourceStore,
+    session: &Session,
+) -> Result<Option<String>, Problem> {
+    let plan: Vec<_> = match session.read().as_ref() {
+        Some(project) => {
+            let policy = policy_of(project);
+            project
+                .sources()
+                .into_iter()
+                .filter_map(|s| {
+                    let copy = project.source_path(&s.sha256).ok()?;
+                    Some((s, copy, policy))
+                })
+                .collect()
+        }
+        None => return Err(Session::no_project()),
+    };
+    if plan.is_empty() {
+        return Ok(None);
+    }
+    let store = store.clone();
+    jobs.spawn(JobKind::Import, move |ctx| async move {
+        let work = tokio::task::spawn_blocking(move || {
+            for (source, copy, policy) in plan {
+                if ctx.is_cancelled() {
+                    break;
+                }
+                let file = match read_capture_file(&copy) {
+                    Ok(file) => file,
+                    Err(problem) => {
+                        tracing::warn!(import = %source.import_id, "запись проекта недоступна: {:?}", problem.detail);
+                        continue;
+                    }
+                };
+                match analyze(file, source.name, source.import_id, policy, &ctx) {
+                    // Копия подменена: хеш не совпал, такую запись не показываем (T11).
+                    Ok(data) if data.sha256 == source.sha256 => store.insert(data),
+                    Ok(_) => tracing::warn!("копия записи не совпала с sha256"),
+                    Err(problem) => tracing::warn!("запись не разобрана: {:?}", problem.detail),
+                }
+            }
+        });
+        work.await.map_err(|_| blocking_failed())?;
+        Ok(serde_json::Value::Null)
+    })
+    .map(Some)
 }
