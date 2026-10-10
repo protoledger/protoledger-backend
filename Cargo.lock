@@ -1036,6 +1036,7 @@ dependencies = [
  "clap",
  "pl-actions",
  "pl-app",
+ "pl-capture",
  "pl-core",
  "pl-interp",
  "pl-project",
