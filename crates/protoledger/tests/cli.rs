@@ -496,12 +496,10 @@ fn a_copied_project_verifies_and_reports_the_same() {
         .unwrap()
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/");
-    for file in ["project.yaml"] {
-        let body = std::fs::read_to_string(elsewhere.join(file))
-            .unwrap()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        assert!(!body.contains(&dir), "{file}: абсолютный путь");
-    }
+    let manifest = std::fs::read_to_string(elsewhere.join("project.yaml"))
+        .unwrap()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    assert!(!manifest.contains(&dir), "в манифесте абсолютный путь");
 
     let copied = run(&["verify", elsewhere.to_str().unwrap()]);
     assert_eq!(copied.status.code(), Some(0), "{}", text(&copied.stdout));
