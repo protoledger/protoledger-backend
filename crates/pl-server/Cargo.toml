@@ -1,0 +1,24 @@
+[package]
+name = "pl-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+axum = "0.8.9"
+mime_guess = "2.0.5"
+pl-core = { path = "../pl-core" }
+rust-embed = { version = "8.13.0", features = ["interpolate-folder-path"] }
+serde = "1.0.229"
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["macros", "rt"] }
+tower = "0.5.3"
