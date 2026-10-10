@@ -572,6 +572,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pl-reassembly"
+version = "0.1.0"
+dependencies = [
+ "pl-capture",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "pl-server"
 version = "0.1.0"
 dependencies = [
