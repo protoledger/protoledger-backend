@@ -13,3 +13,6 @@ clap = { version = "4.6.7", features = ["derive"] }
 pl-server = { path = "../pl-server" }
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = "0.3.23"
+
+[features]
+dev-tools = ["pl-server/dev-tools"]

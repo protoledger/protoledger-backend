@@ -28,6 +28,19 @@
 Токен движок кладёт во встроенный `index.html`: `<meta name="protoledger-token" content="…">`. Клиент добавляет его в каждый запрос в одном месте. CORS-заголовков нет. В dev-режиме токен задаётся `PROTOLEDGER_DEV_TOKEN`.
 `EventSource` не умеет заголовков, поэтому SSE читается через `fetch` со стримом.
 
+## Документация и dev-режим
+
+Только в dev-сборке (cargo-feature `dev-tools`, ADR 0011); в релизной сборке этого кода нет.
+
+```bash
+PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tools -- serve --dev
+```
+
+- Swagger UI — http://localhost:8080/api/docs, «Try it out» сам подставляет `X-Protoledger-Token`.
+- Контракт — http://localhost:8080/api/docs/openapi.yaml, то же даёт `protoledger openapi`.
+- `--dev`: токен берётся из `PROTOLEDGER_DEV_TOKEN` (от 8 символов: латиница, цифры, `-`, `_`), разрешён origin `http://localhost:3000` (dev-сервер фронта). Без `--dev` послаблений нет.
+- Релизный бинарник проверяет `scripts/check-release-clean.sh`.
+
 ## Эндпоинты
 
 | Метод | Путь | Что делает | Ответ |

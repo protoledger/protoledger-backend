@@ -1,5 +1,7 @@
 //! HTTP-сервер движка: REST `/api`, встроенный интерфейс.
 
+#[cfg(feature = "dev-tools")]
+pub mod dev;
 mod error;
 mod jobs;
 mod spa;
@@ -19,12 +21,16 @@ pub use error::ApiError;
 #[derive(Clone, Default)]
 pub struct AppState {
     pub jobs: JobRegistry,
+    #[cfg(feature = "dev-tools")]
+    pub dev: Option<dev::DevConfig>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub addr: SocketAddr,
     pub workspace: PathBuf,
+    #[cfg(feature = "dev-tools")]
+    pub dev: Option<dev::DevConfig>,
 }
 
 #[derive(Serialize)]
@@ -49,10 +55,15 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .merge(jobs::routes())
         .fallback(api_not_found);
-    Router::new()
+    #[cfg(feature = "dev-tools")]
+    let docs = dev::docs_routes(state.dev.as_ref());
+    let app = Router::new()
         .nest("/api", api)
         .fallback(spa::serve_ui)
-        .with_state(state)
+        .with_state(state);
+    #[cfg(feature = "dev-tools")]
+    let app = app.merge(docs);
+    app
 }
 
 pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
@@ -62,9 +73,16 @@ pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
         workspace = %config.workspace.display(),
         "сервер запущен"
     );
-    axum::serve(listener, router(AppState::default()))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await
+    axum::serve(
+        listener,
+        router(AppState {
+            #[cfg(feature = "dev-tools")]
+            dev: config.dev.clone(),
+            ..AppState::default()
+        }),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
 }

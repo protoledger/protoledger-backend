@@ -5,7 +5,9 @@
 ## Разработка
 
 ```bash
-cargo run -- serve --port 8080
+cargo run -p protoledger -- serve --port 8080
+# с Swagger UI и dev-режимом для фронта
+PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tools -- serve --dev
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
