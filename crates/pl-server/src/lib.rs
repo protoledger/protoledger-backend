@@ -9,6 +9,7 @@ mod interpretation;
 mod jobs;
 mod json;
 mod project;
+mod runs;
 mod sources;
 mod spa;
 mod upload;
@@ -107,6 +108,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sources::routes())
         .merge(project::routes())
         .merge(interpretation::routes())
+        .merge(runs::routes())
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());

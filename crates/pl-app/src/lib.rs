@@ -4,6 +4,7 @@ mod interp;
 mod jobs;
 mod session;
 mod sources;
+mod verify;
 
 pub use interp::{StreamApplied, apply_to_source, stream_input};
 pub use jobs::{
@@ -14,3 +15,4 @@ pub use session::{OpenMode, ProjectInfo, Session, SettingsPatch};
 pub use sources::{
     SourceData, SourceStore, analyze, import_path, read_capture_file, reload_sources,
 };
+pub use verify::{current_signature, start_verify};

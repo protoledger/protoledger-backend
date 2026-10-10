@@ -66,6 +66,7 @@ fn inputs(it: &Interpretation) -> RunInputs {
         interpretation_digest: it.digest(),
         settings_digest: digest_of(&"settings"),
         sources: vec!["a".repeat(64)],
+        corpus: pl_verify::CorpusFilter::default(),
         engine_version: "test".into(),
     }
 }

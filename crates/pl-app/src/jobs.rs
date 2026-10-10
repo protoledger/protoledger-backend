@@ -14,6 +14,7 @@ pub const MAX_CONCURRENT_JOBS: usize = 2;
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
     Import,
+    Verify,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -38,6 +39,7 @@ impl JobState {
 pub enum ProgressStage {
     Reading,
     Reassembling,
+    Verifying,
     Saving,
     Done,
 }
@@ -47,6 +49,7 @@ pub enum ProgressStage {
 pub enum ProgressUnit {
     Frames,
     Bytes,
+    Streams,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

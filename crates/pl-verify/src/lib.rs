@@ -106,6 +106,48 @@ pub struct Summary {
     pub counterexamples_truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectionFilter {
+    AToB,
+    BToA,
+}
+
+/// Фильтры корпуса: что именно проверялось. Показываются рядом с результатом, чтобы сводка не скрывала состав.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CorpusFilter {
+    /// Записи (sha256); без значения — все.
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
+    #[serde(default)]
+    pub direction: Option<DirectionFilter>,
+    /// Порт любой из сторон.
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+impl CorpusFilter {
+    /// Входит ли поток записи `source` в корпус: `direction_index` 0 — a→b, 1 — b→a.
+    pub fn accepts(
+        &self,
+        source: &str,
+        direction_index: usize,
+        src_port: u16,
+        dst_port: u16,
+    ) -> bool {
+        self.sources
+            .as_ref()
+            .is_none_or(|s| s.iter().any(|x| x == source))
+            && match self.direction {
+                None => true,
+                Some(DirectionFilter::AToB) => direction_index == 0,
+                Some(DirectionFilter::BToA) => direction_index == 1,
+            }
+            && self.port.is_none_or(|p| p == src_port || p == dst_port)
+    }
+}
+
 /// Условия, подписывающие прогон: от них зависит, актуален ли результат.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +157,7 @@ pub struct RunInputs {
     pub settings_digest: String,
     /// sha256 записей корпуса, по возрастанию.
     pub sources: Vec<String>,
+    pub corpus: CorpusFilter,
     pub engine_version: String,
 }
 

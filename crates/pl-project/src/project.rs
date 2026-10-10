@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::ProjectError;
 use crate::manifest::{
-    FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, Settings, SourceFormat,
+    FORMAT_VERSION, ImportRecord, InterpretationRevision, Manifest, RunRef, Settings, SourceFormat,
 };
 
 /// Размер файла записи, `plan/security.md` §6.
@@ -16,6 +16,10 @@ pub const MAX_SOURCE_SIZE: u64 = 1 << 30;
 pub const MAX_MANIFEST_SIZE: u64 = 4 << 20;
 /// Размер файла интерпретации (`plan/security.md` §6).
 pub const MAX_INTERPRETATION_SIZE: usize = 4 << 20;
+/// Размер файла прогона: таблица сообщений всего корпуса.
+pub const MAX_RUN_SIZE: usize = 256 << 20;
+const MAX_RUNS: usize = 100_000;
+const RUNS_DIR: &str = "runs";
 const MAX_REVISIONS: usize = 100_000;
 const MAX_IMPORTS: usize = 100_000;
 const MAX_NAME_CHARS: usize = 255;
@@ -282,6 +286,17 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), ProjectError> {
             )));
         }
     }
+    if manifest.runs.len() > MAX_RUNS
+        || manifest
+            .runs
+            .iter()
+            .enumerate()
+            .any(|(i, r)| r.id != format!("run-{:04}", i + 1))
+    {
+        return Err(ProjectError::InvalidManifest(
+            "прогоны: идентификаторы идут подряд вида run-0001".to_owned(),
+        ));
+    }
     let mut seen = std::collections::BTreeSet::new();
     for record in &manifest.imports {
         if !is_valid_sha256(&record.sha256) {
@@ -366,6 +381,7 @@ impl Project {
             settings: Settings::default(),
             imports: Vec::new(),
             interpretations: Vec::new(),
+            runs: Vec::new(),
         };
         save_manifest(path, &manifest)?;
         Ok(Self {
@@ -402,6 +418,60 @@ impl Project {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    pub fn run_ids(&self) -> Vec<&str> {
+        self.manifest.runs.iter().map(|r| r.id.as_str()).collect()
+    }
+
+    /// Идентификатор следующего прогона.
+    pub fn next_run_id(&self) -> String {
+        format!("run-{:04}", self.manifest.runs.len() + 1)
+    }
+
+    /// Сохраняет прогон; `id` должен быть выданным `next_run_id`. Прогон неизменен.
+    pub fn save_run(&mut self, id: &str, json: &str) -> Result<(), ProjectError> {
+        if id != self.next_run_id() {
+            return Err(ProjectError::UnknownRun(id.chars().take(32).collect()));
+        }
+        if json.len() > MAX_RUN_SIZE {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_run_size",
+                value: MAX_RUN_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        let dir = self.root.join(RUNS_DIR);
+        if !dir.is_dir() {
+            fs::create_dir(&dir).map_err(ProjectError::io("создание папки прогонов"))?;
+            restrict_dir(&dir)?;
+        }
+        write_atomic(&dir, &dir.join(format!("{id}.json")), json.as_bytes())?;
+        let mut updated = self.manifest.clone();
+        updated.runs.push(RunRef { id: id.to_owned() });
+        save_manifest(&self.root, &updated)?;
+        self.manifest = updated;
+        Ok(())
+    }
+
+    /// Текст прогона; путь строится из идентификатора, проверенного по манифесту.
+    pub fn read_run(&self, id: &str) -> Result<String, ProjectError> {
+        if !self.manifest.runs.iter().any(|r| r.id == id) {
+            return Err(ProjectError::UnknownRun(id.chars().take(32).collect()));
+        }
+        let path = self.root.join(RUNS_DIR).join(format!("{id}.json"));
+        let meta = fs::symlink_metadata(&path).map_err(ProjectError::io("чтение прогона"))?;
+        if !meta.is_file() {
+            return Err(ProjectError::NotRegularFile);
+        }
+        if meta.len() > MAX_RUN_SIZE as u64 {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_run_size",
+                value: MAX_RUN_SIZE as u64,
+                unit: "bytes",
+            });
+        }
+        fs::read_to_string(&path).map_err(ProjectError::io("чтение прогона"))
     }
 
     pub fn interpretation_revisions(&self) -> &[InterpretationRevision] {
@@ -1126,6 +1196,52 @@ mod tests {
             Err(ProjectError::UnknownRevision(7))
         ));
         assert!(project.interpretation_revisions().is_empty());
+    }
+
+    #[test]
+    fn runs_are_saved_in_order_and_read_back() {
+        let dir = TestDir::new();
+        let mut project = new_project(&dir);
+        assert_eq!(project.next_run_id(), "run-0001");
+        project.save_run("run-0001", "{\"a\":1}").unwrap();
+        // Номер занят: перезаписать прогон нельзя.
+        assert!(matches!(
+            project.save_run("run-0001", "{}"),
+            Err(ProjectError::UnknownRun(_))
+        ));
+        assert!(matches!(
+            project.save_run("run-0007", "{}"),
+            Err(ProjectError::UnknownRun(_))
+        ));
+        project.save_run("run-0002", "{\"a\":2}").unwrap();
+        assert_eq!(project.run_ids(), ["run-0001", "run-0002"]);
+        assert_eq!(project.read_run("run-0001").unwrap(), "{\"a\":1}");
+        for bad in ["run-0003", "../project", "run-0001/../x", ""] {
+            assert!(
+                matches!(project.read_run(bad), Err(ProjectError::UnknownRun(_))),
+                "{bad}"
+            );
+        }
+        let reopened = Project::open(project.root()).unwrap();
+        assert_eq!(reopened.run_ids().len(), 2);
+        let huge = "x".repeat(MAX_RUN_SIZE + 1);
+        assert!(matches!(
+            project.save_run("run-0003", &huge),
+            Err(ProjectError::LimitExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn broken_run_ids_in_manifest_are_rejected() {
+        let dir = TestDir::new();
+        let root = write_manifest(
+            &dir,
+            "formatVersion: 1\nengineVersion: 1\nname: x\nruns:\n  - { id: \"../../etc\" }\n",
+        );
+        assert!(matches!(
+            Project::open(&root),
+            Err(ProjectError::InvalidManifest(_))
+        ));
     }
 
     #[test]
