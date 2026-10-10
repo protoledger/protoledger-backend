@@ -12,6 +12,7 @@ axum = { version = "0.8.9", features = ["multipart"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
 mime_guess = "2.0.5"
+pl-actions = { version = "0.1.0", path = "../pl-actions" }
 pl-app = { version = "0.1.0", path = "../pl-app" }
 pl-capture = { path = "../pl-capture" }
 pl-core = { path = "../pl-core" }

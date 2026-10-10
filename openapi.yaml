@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.4
+  version: 0.1.5
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -26,6 +26,8 @@ tags:
     description: Описание протокола (интерпретация) и его применение к потокам
   - name: runs
     description: Прогоны проверки интерпретации на корпусе
+  - name: actions
+    description: Журналы действий клиента и поиск обмена по действию
   - name: jobs
     description: Долгие операции с прогрессом и отменой
 
@@ -477,6 +479,158 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NoProject' }
 
+  /api/action-logs:
+    get:
+      tags: [actions]
+      operationId: listActionLogs
+      summary: Журналы действий проекта
+      responses:
+        '200':
+          description: Журналы в порядке импорта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionLogList' }
+              example:
+                items:
+                  - id: log-0001
+                    sha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                    name: main.actions.csv
+                    rows: 16
+                    skipped: 0
+                    errors: []
+                    mapping: { time: time, action: action, params: params, result: result, timeFormat: rfc3339, paramsFormat: kv, resultFormat: kv, utcOffsetMinutes: 0, clockOffsetMs: 0 }
+                    firstTime: '2026-10-01T00:00:00.356179000Z'
+                    lastTime: '2026-10-01T00:00:21.842006000Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [actions]
+      operationId: importActionLog
+      summary: Импортировать журнал действий
+      description: |
+        JSON `{path, mapping}` (файл на диске) или `multipart/form-data` с полями `file` и `mapping` (JSON).
+        Формат журнала заранее неизвестен, поэтому колонки сопоставляются явно: `time`, `action`, необязательные
+        `params` и `result`; время — `rfc3339` (без пояса — по `utcOffsetMinutes`) или Unix в секундах,
+        миллисекундах, микросекундах, наносекундах; `clockOffsetMs` — поправка на сдвиг часов клиента относительно
+        часов записи; параметры — `ключ=значение;…` или JSON. Строки, которые не разобрались, перечислены в
+        `errors` (до 100), а не теряются молча; если разобрана меньше половины — `422`. Файл копируется в проект
+        и хранится неизменным; повторный импорт — новая запись списка.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportActionLogRequest' }
+            example:
+              path: /workspace/main.actions.csv
+              mapping: { time: time, action: action, params: params, result: result }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, mapping]
+              properties:
+                file: { type: string, format: binary, description: CSV журнала }
+                mapping: { type: string, description: JSON сопоставления колонок }
+      responses:
+        '200':
+          description: Журнал разобран и сохранён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionLog' }
+              example:
+                id: log-0001
+                sha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                name: main.actions.csv
+                rows: 16
+                skipped: 0
+                errors: []
+                mapping: { time: time, action: action, params: params, result: result, timeFormat: rfc3339, paramsFormat: kv, resultFormat: kv, utcOffsetMinutes: 0, clockOffsetMs: 0 }
+                firstTime: '2026-10-01T00:00:00.356179000Z'
+                lastTime: '2026-10-01T00:00:21.842006000Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/action-logs/{id}/actions:
+    get:
+      tags: [actions]
+      operationId: listActions
+      summary: Действия журнала
+      parameters:
+        - { $ref: '#/components/parameters/ActionLogId' }
+        - { name: from, in: query, description: "Не раньше (RFC 3339)", schema: { type: string } }
+        - { name: to, in: query, description: "Не позже (RFC 3339)", schema: { type: string } }
+        - { name: action, in: query, description: Только это действие, schema: { type: string } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Страница действий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionPage' }
+              example:
+                items:
+                  - line: 5
+                    time: '2026-10-01T00:00:02.768393000Z'
+                    action: set_param
+                    params: { param: setpoint, value: 21 }
+                    result: { status: ok, applied: 21 }
+                    resultRaw: ok;applied=21
+                total: 16
+                limit: 50
+                offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/action-logs/{id}/actions/{line}/exchange:
+    get:
+      tags: [actions]
+      operationId: findExchange
+      summary: Найти обмен для действия
+      description: |
+        Кадры и сообщения всех записей проекта во временном окне вокруг действия: от `before` мс до и до `after` мс
+        после (по умолчанию 500 и 5000, не больше 600000). Всегда возвращает кадры с данными потоков; если сохранена
+        интерпретация — ещё и сообщения (с категориями), чьи кадры попали в окно. Запрос и ответ различаются по
+        направлению потока (`ab`, `ba`). Время действия — по журналу с учётом поправки на часы.
+      parameters:
+        - { $ref: '#/components/parameters/ActionLogId' }
+        - { name: line, in: path, required: true, description: "Номер строки действия в файле журнала", schema: { type: integer, minimum: 1 } }
+        - { name: before, in: query, description: "Окно до действия, мс", schema: { type: integer, minimum: 0, maximum: 600000, default: 500 } }
+        - { name: after, in: query, description: "Окно после действия, мс", schema: { type: integer, minimum: 0, maximum: 600000, default: 5000 } }
+      responses:
+        '200':
+          description: Обмен в окне времени
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Exchange' }
+              example:
+                action:
+                  line: 5
+                  time: '2026-10-01T00:00:02.768393000Z'
+                  action: set_param
+                  params: { param: setpoint, value: 21 }
+                  result: { status: ok, applied: 21 }
+                  resultRaw: ok;applied=21
+                window: { from: '2026-10-01T00:00:02.268393000Z', to: '2026-10-01T00:00:07.768393000Z' }
+                interpretationApplied: true
+                frames:
+                  - { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', frameNo: 30, time: '2026-10-01T00:00:02.768513000Z', start: 46, end: 58, duplicate: false }
+                messages:
+                  - { source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, stream: 'd05c6bf0:c0001:ab', start: 46, end: 58, category: matched, messageId: set_param_req, firstTime: '2026-10-01T00:00:02.768513000Z', lastTime: '2026-10-01T00:00:02.768513000Z' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
   /api/sources:
     get:
       tags: [sources]
@@ -891,6 +1045,12 @@ components:
       required: true
       description: Идентификатор прогона
       schema: { type: string, example: run-0001 }
+    ActionLogId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор журнала
+      schema: { type: string, example: log-0001 }
     JobId:
       name: id
       in: path
@@ -1359,6 +1519,135 @@ components:
         total: { type: integer }
         limit: { type: integer }
         offset: { type: integer }
+
+    ActionLogMapping:
+      type: object
+      required: [time, action]
+      additionalProperties: false
+      properties:
+        time: { type: string, description: Колонка со временем }
+        action: { type: string, description: Колонка с названием действия }
+        params: { type: [string, 'null'], description: Колонка с параметрами }
+        result: { type: [string, 'null'], description: Колонка с результатом }
+        timeFormat: { type: string, enum: [rfc3339, unix_seconds, unix_millis, unix_micros, unix_nanos], default: rfc3339 }
+        paramsFormat: { type: string, enum: [kv, json], default: kv }
+        resultFormat: { type: string, enum: [kv, json], default: kv }
+        delimiter: { type: [string, 'null'], description: 'Разделитель, по умолчанию запятая; tab — табуляция' }
+        utcOffsetMinutes: { type: integer, default: 0, description: Пояс для времени без указания пояса }
+        clockOffsetMs: { type: integer, default: 0, description: "Поправка на сдвиг часов клиента, мс" }
+
+    ImportActionLogRequest:
+      type: object
+      required: [path, mapping]
+      additionalProperties: false
+      properties:
+        path: { type: string, description: Путь к файлу журнала на диске }
+        mapping: { $ref: '#/components/schemas/ActionLogMapping' }
+
+    ActionLogRowError:
+      type: object
+      required: [line, why]
+      properties:
+        line: { type: integer, minimum: 1 }
+        why: { type: string }
+
+    ActionLog:
+      type: object
+      required: [id, sha256, name, rows, skipped, errors, mapping, firstTime, lastTime]
+      properties:
+        id: { type: string }
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        name: { type: string }
+        rows: { type: integer, minimum: 0, description: Разобрано действий }
+        skipped: { type: integer, minimum: 0, description: Строк не разобрано }
+        errors:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ActionLogRowError' }
+        mapping: { $ref: '#/components/schemas/ActionLogMapping' }
+        firstTime: { type: [string, 'null'], format: date-time }
+        lastTime: { type: [string, 'null'], format: date-time }
+
+    ActionLogList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ActionLog' }
+
+    Action:
+      type: object
+      required: [line, time, action, params, result, resultRaw]
+      properties:
+        line: { type: integer, minimum: 1, description: Номер строки файла журнала (идентичность действия вместе с журналом) }
+        time: { type: string, format: date-time }
+        action: { type: string }
+        params:
+          type: object
+          additionalProperties:
+            oneOf: [{ type: integer }, { type: string }]
+        result:
+          type: object
+          description: Пары из колонки результата; слово без значения — status
+          additionalProperties:
+            oneOf: [{ type: integer }, { type: string }]
+        resultRaw: { type: string }
+
+    ActionPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Action' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    ExchangeFrame:
+      type: object
+      required: [source, stream, frameNo, time, start, end, duplicate]
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        stream: { type: string }
+        frameNo: { type: integer, minimum: 1 }
+        time: { type: string, format: date-time }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        duplicate: { type: boolean }
+
+    ExchangeMessage:
+      type: object
+      required: [source, stream, start, end, category, messageId, firstTime, lastTime]
+      properties:
+        source: { $ref: '#/components/schemas/Sha256' }
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        category: { $ref: '#/components/schemas/ResultCategory' }
+        messageId: { type: [string, 'null'] }
+        firstTime: { type: string, format: date-time }
+        lastTime: { type: string, format: date-time }
+
+    Exchange:
+      type: object
+      required: [action, window, interpretationApplied, frames, messages]
+      properties:
+        action: { $ref: '#/components/schemas/Action' }
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        interpretationApplied: { type: boolean }
+        frames:
+          type: array
+          items: { $ref: '#/components/schemas/ExchangeFrame' }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ExchangeMessage' }
 
     ProjectSettingsPatch:
       type: object

@@ -30,6 +30,8 @@ pub enum ProjectError {
     UnknownRevision(u32),
     #[error("прогон {0} не найден в проекте")]
     UnknownRun(String),
+    #[error("журнал действий {0} не найден в проекте")]
+    UnknownActionLog(String),
     #[error("операция отменена")]
     Cancelled,
     #[error("ошибка ввода-вывода при операции «{op}»: {source}")]
@@ -99,6 +101,10 @@ impl From<ProjectError> for Problem {
             ProjectError::UnknownRun(id) => Problem::new(
                 ProblemKind::NotFound,
                 format!("Прогона {id} в проекте нет."),
+            ),
+            ProjectError::UnknownActionLog(id) => Problem::new(
+                ProblemKind::NotFound,
+                format!("Журнала действий {id} в проекте нет."),
             ),
             ProjectError::Cancelled => Problem::new(ProblemKind::Conflict, "Операция отменена."),
             ProjectError::Io { op, .. } => Problem::new(

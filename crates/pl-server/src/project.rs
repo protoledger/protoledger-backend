@@ -45,6 +45,8 @@ async fn open_project(
         .map_err(ApiError)?;
     // Записи прежнего проекта не должны остаться видны; записи нового разбираются фоновой задачей.
     state.sources.clear();
+    // Журналы действий небольшие: заново разбираются сразу, без задачи.
+    pl_app::reload_action_logs(&state.session, &state.actions);
     pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
     Ok(Json(info))
 }

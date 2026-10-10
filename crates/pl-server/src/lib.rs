@@ -1,5 +1,6 @@
 //! HTTP-сервер движка: REST `/api`, встроенный интерфейс.
 
+mod actions;
 #[cfg(feature = "dev-tools")]
 pub mod dev;
 mod encode;
@@ -19,7 +20,7 @@ use std::path::PathBuf;
 
 use axum::routing::get;
 use axum::{Json, Router};
-use pl_app::{JobRegistry, Session, SourceStore};
+use pl_app::{ActionLogStore, JobRegistry, Session, SourceStore};
 use pl_core::ProblemKind;
 use serde::Serialize;
 
@@ -34,6 +35,7 @@ pub(crate) const MAX_JSON_BODY: usize = 8 << 20;
 pub struct AppState {
     pub jobs: JobRegistry,
     pub sources: SourceStore,
+    pub actions: ActionLogStore,
     pub session: Session,
     pub guard: Guard,
     /// Предел размера загружаемой записи, байт.
@@ -47,6 +49,7 @@ impl AppState {
         Self {
             jobs: JobRegistry::default(),
             sources: SourceStore::default(),
+            actions: ActionLogStore::default(),
             session: Session::new(workspace),
             guard: Guard::random(),
             max_upload: pl_project::MAX_SOURCE_SIZE,
@@ -109,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         .merge(project::routes())
         .merge(interpretation::routes())
         .merge(runs::routes())
+        .merge(actions::routes())
         .fallback(api_not_found);
     #[cfg(feature = "dev-tools")]
     let docs = dev::docs_routes(state.dev.as_ref());
