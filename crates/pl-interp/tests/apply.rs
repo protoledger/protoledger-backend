@@ -49,6 +49,7 @@ fn meta() -> StreamMeta {
         dst_ip: "10.0.1.1".to_owned(),
         src_port: 49320,
         dst_port: 4710,
+        start_available: true,
     }
 }
 
@@ -309,5 +310,157 @@ fn hostile_streams_never_panic() {
         for m in &r.messages {
             assert!(m.start <= m.end && m.end <= bytes.len() as u64);
         }
+    }
+}
+
+/// Протокол с сигнатурой и группой: `a6 5c | длина тела u8 | число n | n × (время u16, флаг u8)`.
+const GROUPS: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 2, type: u8, adjust: 3 }, sync: "a65c", status: rule }
+messages:
+  - id: batch
+    fields:
+      - { name: sig, at: 0, type: bytes, len: 2, expect: "a65c", status: rule }
+      - { name: body, at: 2, type: u8, status: rule }
+      - { name: n, at: 3, type: u8, status: rule }
+      - name: items
+        at: 4
+        type: bytes
+        status: rule
+        repeat:
+          count: "n"
+          fields:
+            - { name: time, at: 0, type: u16be, status: rule }
+            - { name: flag, at: 2, type: u8, status: hypothesis, hypothesis: H1 }
+hypotheses:
+  - { id: H1, statement: "flag — признак" }
+checks:
+  - { id: C1, expr: "body == n * 3 + 1", description: "длина тела не сходится с числом элементов" }
+  - { id: C2, expr: "items.0.time < 1000", description: "первое время слишком велико" }
+"#;
+
+fn batch(items: &[(u16, u8)]) -> Vec<u8> {
+    let mut m = vec![0xa6, 0x5c, (items.len() * 3 + 1) as u8, items.len() as u8];
+    for (t, f) in items {
+        m.extend_from_slice(&t.to_be_bytes());
+        m.push(*f);
+    }
+    m
+}
+
+fn groups() -> Interpretation {
+    Interpretation::parse(GROUPS).unwrap()
+}
+
+#[test]
+fn repeat_group_decodes_every_item_by_name() {
+    let bytes = batch(&[(100, 1), (200, 0), (300, 1)]);
+    let r = apply(&groups(), &whole(&bytes), &|| false).unwrap();
+    let m = &r.messages[0];
+    assert_eq!(m.category, Category::Matched, "{:?}", m.violations);
+    assert_eq!(m.unknown_bytes, 0);
+    let value = |name: &str| {
+        m.fields
+            .iter()
+            .find(|f| f.name == name)
+            .and_then(|f| f.value.clone())
+    };
+    assert_eq!(value("items.0.time"), Some(Value::Int(100)));
+    assert_eq!(value("items.2.time"), Some(Value::Int(300)));
+    assert_eq!(value("items.1.flag"), Some(Value::Int(0)));
+    let group = m.fields.iter().find(|f| f.name == "items").unwrap();
+    assert_eq!(
+        (group.at, group.len, group.state),
+        (4, 9, FieldState::Decoded)
+    );
+    let flag = m.fields.iter().find(|f| f.name == "items.1.flag").unwrap();
+    assert_eq!((flag.at, flag.status), (4 + 3 + 2, Status::Hypothesis));
+}
+
+#[test]
+fn repeat_group_beyond_the_message_is_a_violation() {
+    // Число элементов 5, а в теле только 2.
+    let mut bytes = batch(&[(1, 1), (2, 2)]);
+    bytes[3] = 5;
+    let r = apply(&groups(), &whole(&bytes), &|| false).unwrap();
+    let m = &r.messages[0];
+    assert_eq!(m.category, Category::Violated);
+    assert!(
+        m.violations
+            .iter()
+            .any(|v| v.kind == ViolationKind::FieldRange && v.id == "items")
+    );
+}
+
+#[test]
+fn sync_skips_the_tail_of_a_message_whose_start_was_not_captured() {
+    let mut bytes = batch(&[(7, 1), (8, 0)]).split_off(3);
+    let second = batch(&[(9, 1)]);
+    bytes.extend_from_slice(&second);
+    let mut input = whole(&bytes);
+    input.meta.start_available = false;
+    let r = apply(&groups(), &input, &|| false).unwrap();
+    let cats: Vec<_> = r.messages.iter().map(|m| (m.start, m.category)).collect();
+    // Хвост без начала — неполное сообщение, дальше разбор идёт по сигнатуре.
+    assert_eq!(
+        cats,
+        vec![
+            (0, Category::Incomplete),
+            (bytes.len() as u64 - second.len() as u64, Category::Matched)
+        ]
+    );
+}
+
+#[test]
+fn sync_continues_after_a_gap_over_the_length_field() {
+    let a = batch(&[(1, 1)]);
+    let b = batch(&[(2, 0), (3, 1)]);
+    let c = batch(&[(4, 1)]);
+    let bytes = [a.clone(), b.clone(), c.clone()].concat();
+    let (b0, c0) = (a.len() as u64, (a.len() + b.len()) as u64);
+    // Дыра закрывает сигнатуру и длину второго сообщения.
+    let input = with_regions(
+        &bytes,
+        &[
+            (0, b0, None),
+            (b0, b0 + 3, Some("gap")),
+            (b0 + 3, bytes.len() as u64, None),
+        ],
+    );
+    let r = apply(&groups(), &input, &|| false).unwrap();
+    let cats: Vec<_> = r.messages.iter().map(|m| (m.start, m.category)).collect();
+    assert_eq!(
+        cats,
+        vec![
+            (0, Category::Matched),
+            (b0, Category::Incomplete),
+            (c0, Category::Matched)
+        ]
+    );
+}
+
+#[test]
+fn repeat_and_sync_are_validated() {
+    let bad = [
+        // repeat только у bytes
+        GROUPS.replace(
+            "        type: bytes\n        status: rule\n        repeat:",
+            "        type: u8\n        status: rule\n        repeat:",
+        ),
+        // у элемента нужен постоянный размер
+        GROUPS.replace(
+            "{ name: flag, at: 2, type: u8,",
+            "{ name: flag, at: 2, type: string, len: \"n\",",
+        ),
+        // число повторений — по ранее объявленным полям
+        GROUPS.replace("count: \"n\"", "count: \"later\""),
+        // сигнатура — hex
+        GROUPS.replace("sync: \"a65c\"", "sync: \"zz\""),
+    ];
+    for (i, text) in bad.iter().enumerate() {
+        assert!(
+            Interpretation::parse(text).is_err(),
+            "случай {i} должен быть отклонён"
+        );
     }
 }

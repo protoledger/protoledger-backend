@@ -29,6 +29,8 @@ pub struct StreamMeta {
     pub dst_ip: String,
     pub src_port: u16,
     pub dst_port: u16,
+    /// Начало потока записано (виден SYN); иначе первые байты могут быть серединой сообщения.
+    pub start_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +132,7 @@ pub(crate) mod tests {
             dst_ip: "10.0.1.1".to_owned(),
             src_port: 49320,
             dst_port: 4710,
+            start_available: true,
         }
     }
 

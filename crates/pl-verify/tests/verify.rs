@@ -42,6 +42,7 @@ fn input(bytes: &[u8]) -> StreamInput<'_> {
             dst_ip: "10.0.0.2".into(),
             src_port: 1000,
             dst_port: 2000,
+            start_available: true,
         },
         length: bytes.len() as u64,
         regions: vec![Region {
