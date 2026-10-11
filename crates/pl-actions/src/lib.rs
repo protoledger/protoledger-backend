@@ -396,23 +396,57 @@ fn pairs(raw: &str, format: PairsFormat, bare_as_status: bool) -> Option<BTreeMa
             let serde_json::Value::Object(map) = serde_json::from_str(raw).ok()? else {
                 return None;
             };
-            Some(
-                map.into_iter()
-                    .map(|(k, v)| {
-                        let p = match v {
-                            serde_json::Value::Number(n) => n.as_i64().map_or_else(
-                                || Param::Text(n.to_string()),
-                                |i| Param::Int(i128::from(i)),
-                            ),
-                            serde_json::Value::String(s) => Param::Text(s),
-                            other => Param::Text(other.to_string()),
-                        };
-                        (k, p)
-                    })
-                    .collect(),
-            )
+            let mut out = BTreeMap::new();
+            for (k, v) in map {
+                flatten(k, v, 0, &mut out)?;
+            }
+            Some(out)
         }
     }
+}
+
+/// Вложенность JSON в ячейке журнала и число значений из одной ячейки.
+const MAX_JSON_DEPTH: usize = 16;
+const MAX_JSON_VALUES: usize = 1024;
+
+/// Разворачивает вложенный JSON в имена через точку: `configuration.period_ms`,
+/// `measurements.0.temperature_c`. Логические — 1 и 0 (сравниваются с байтовыми флагами),
+/// дробные — точная десятичная запись текстом (для `dec(x, n)` в выражениях).
+fn flatten(
+    key: String,
+    value: serde_json::Value,
+    depth: usize,
+    out: &mut BTreeMap<String, Param>,
+) -> Option<()> {
+    if depth > MAX_JSON_DEPTH || out.len() >= MAX_JSON_VALUES {
+        return None;
+    }
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                flatten(format!("{key}.{k}"), v, depth + 1, out)?;
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (i, v) in items.into_iter().enumerate() {
+                flatten(format!("{key}.{i}"), v, depth + 1, out)?;
+            }
+        }
+        serde_json::Value::Number(n) => {
+            let p = n
+                .as_i64()
+                .map_or_else(|| Param::Text(n.to_string()), |i| Param::Int(i128::from(i)));
+            out.insert(key, p);
+        }
+        serde_json::Value::Bool(b) => {
+            out.insert(key, Param::Int(i128::from(b)));
+        }
+        serde_json::Value::String(s) => {
+            out.insert(key, Param::Text(s));
+        }
+        serde_json::Value::Null => {}
+    }
+    Some(())
 }
 
 // ---------------------------------------------------------------- разбор
@@ -759,6 +793,29 @@ mod tests {
             parse(csv.as_bytes(), &missing),
             Err(LogError::MissingColumn(..))
         ));
+    }
+
+    #[test]
+    fn nested_json_is_flattened_with_exact_decimals_and_bools() {
+        let raw = r#"{"status":"ok","configuration":{"enabled":true,"period_ms":1000,"threshold_c":-2.5,"label":"Точка-1"},"measurements":[{"device_time_ms":100,"temperature_c":18.5,"alarm":false}],"none":null}"#;
+        let p = pairs(raw, PairsFormat::Json, true).unwrap();
+        assert_eq!(p["status"], Param::Text("ok".into()));
+        assert_eq!(p["configuration.enabled"], Param::Int(1));
+        assert_eq!(p["configuration.period_ms"], Param::Int(1000));
+        assert_eq!(p["configuration.threshold_c"], Param::Text("-2.5".into()));
+        assert_eq!(p["configuration.label"], Param::Text("Точка-1".into()));
+        assert_eq!(
+            p["measurements.0.temperature_c"],
+            Param::Text("18.5".into())
+        );
+        assert_eq!(p["measurements.0.alarm"], Param::Int(0));
+        assert!(!p.contains_key("none"));
+
+        let deep = format!("{{\"a\":{}1{}}}", "[".repeat(40), "]".repeat(40));
+        assert!(
+            pairs(&deep, PairsFormat::Json, true).is_none(),
+            "глубже предела — строка с ошибкой"
+        );
     }
 
     #[test]

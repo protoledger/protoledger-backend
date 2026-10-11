@@ -530,8 +530,63 @@ fn call(
             let to = int(&eval(to, ctx, steps)?, "sum8")?;
             ctx.sum8(from, to).map(Value::Int)
         }
+        "dec" => {
+            let [x, digits] = args else {
+                return Err(ExprError::Arguments("dec"));
+            };
+            let digits = int(&eval(digits, ctx, steps)?, "dec")?;
+            let digits = u32::try_from(digits)
+                .ok()
+                .filter(|d| *d <= MAX_DEC_DIGITS)
+                .ok_or(ExprError::Arguments("dec"))?;
+            match eval(x, ctx, steps)? {
+                Value::Int(i) => i
+                    .checked_mul(10i128.pow(digits))
+                    .map(Value::Int)
+                    .ok_or(ExprError::Overflow),
+                Value::Str(s) => decimal(&s, digits)
+                    .map(Value::Int)
+                    .ok_or(ExprError::Arguments("dec")),
+                _ => Err(ExprError::Type("dec")),
+            }
+        }
         _ => Err(ExprError::UnknownFunction(name.to_owned())),
     }
+}
+
+/// Сколько знаков после запятой допускает `dec`.
+const MAX_DEC_DIGITS: u32 = 9;
+
+/// Десятичная запись («-2.5», «18.25», «21») → целое в единицах 10^-digits, только если
+/// перевод точный: фиксированная точка протокола сравнивается без округления.
+fn decimal(s: &str, digits: u32) -> Option<i128> {
+    let s = s.trim();
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let (whole, frac) = s.split_once('.').unwrap_or((s, ""));
+    let digits_ok = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    if (whole.is_empty() && frac.is_empty()) || !digits_ok(whole) || !digits_ok(frac) {
+        return None;
+    }
+    let frac = frac.trim_end_matches('0');
+    let extra = digits.checked_sub(u32::try_from(frac.len()).ok()?)?;
+    let whole: i128 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
+    let frac: i128 = if frac.is_empty() {
+        0
+    } else {
+        frac.parse().ok()?
+    };
+    let scale = 10i128.checked_pow(digits)?;
+    let v = whole
+        .checked_mul(scale)?
+        .checked_add(frac.checked_mul(10i128.checked_pow(extra)?)?)?;
+    Some(if neg { -v } else { v })
 }
 
 #[cfg(test)]
@@ -559,11 +614,40 @@ mod tests {
             ("sig", Value::Bytes(vec![0x5a, 0xc3])),
             ("action.params.value", Value::Int(21)),
             ("proto", Value::Str("tcp".to_owned())),
+            ("action.params.threshold_c", Value::Str("-2.5".to_owned())),
+            (
+                "action.result.temperature_c",
+                Value::Str("18.25".to_owned()),
+            ),
         ]))
     }
 
     fn run(src: &str) -> Result<Value, ExprError> {
         Expr::parse(src)?.eval(&env())
+    }
+
+    #[test]
+    fn dec_is_exact_fixed_point() {
+        assert_eq!(
+            run("dec(action.params.threshold_c, 2)"),
+            Ok(Value::Int(-250))
+        );
+        assert_eq!(
+            run("dec(action.result.temperature_c, 2) == 1825"),
+            Ok(Value::Bool(true))
+        );
+        assert_eq!(run("dec(action.params.value, 2)"), Ok(Value::Int(2100)));
+        assert_eq!(run("dec(\"21.0\", 0)"), Ok(Value::Int(21)));
+        assert_eq!(run("dec(\".5\", 1)"), Ok(Value::Int(5)));
+        // Неточный перевод и мусор — ошибка, а не округление.
+        assert_eq!(
+            run("dec(action.result.temperature_c, 1)"),
+            Err(ExprError::Arguments("dec"))
+        );
+        assert_eq!(run("dec(\"1e5\", 2)"), Err(ExprError::Arguments("dec")));
+        assert_eq!(run("dec(\"-\", 2)"), Err(ExprError::Arguments("dec")));
+        assert_eq!(run("dec(1, 10)"), Err(ExprError::Arguments("dec")));
+        assert_eq!(run("dec(sig, 2)"), Err(ExprError::Type("dec")));
     }
 
     #[test]
