@@ -22,8 +22,11 @@ pub struct Expected {
     pub snaplen: u32,
     /// Кадры вне обязательной области (не Ethernet/IPv4/TCP или фрагменты): пропуск с диагностикой.
     pub skipped: Vec<Skipped>,
+    /// Кадры с повреждённой TCP-суммой.
     pub bad_checksum_frames: Vec<u32>,
-    /// Узел, у которого все TCP-суммы неверны (offloading при захвате на нём самом).
+    /// Кадры с частичной суммой offload (в поле только псевдозаголовок).
+    pub offload_frames: Vec<u32>,
+    /// Узел, на котором снята запись с checksum offload.
     pub offloading_host: Option<String>,
     pub connections: Vec<ConnExpected>,
 }

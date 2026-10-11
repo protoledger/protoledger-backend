@@ -80,7 +80,15 @@ async fn import(state: &AppState, name: &str) -> String {
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     wait_jobs(state).await;
     let (_, list) = call(state, Method::GET, "/api/sources", None).await;
-    list["items"][0]["sha256"].as_str().unwrap().to_owned()
+    let found = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == name);
+    found.expect("запись импортирована")["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 async fn patch(state: &AppState, body: Value) -> (StatusCode, Value) {
@@ -159,29 +167,35 @@ async fn overlap_policy_changes_what_is_accepted_but_ambiguity_stays_visible() {
 #[tokio::test(flavor = "multi_thread")]
 async fn checksum_policy_drop_removes_bad_segments() {
     let state = project_state("checksum");
-    let sha = import(&state, "bad-checksum.pcapng").await;
+    let corrupted = import(&state, "mixed.pcapng").await;
+    let offloaded = import(&state, "bad-checksum.pcapng").await;
+    // Байтов данных (длина base64 без выравнивания `=`).
     let total = |v: &[(String, Option<String>)]| {
         v.iter()
             .filter(|(s, _)| s == "data")
-            .map(|(_, d)| d.as_ref().map_or(0, String::len))
+            .filter_map(|(_, d)| d.as_ref())
+            .map(|d| d.len() / 4 * 3 - d.bytes().rev().take_while(|c| *c == b'=').count())
             .sum::<usize>()
     };
-    let warned = total(&segments(&state, &sha).await);
-    assert!(warned > 0);
+    let warned = total(&segments(&state, &corrupted).await);
+    let offload_warned = total(&segments(&state, &offloaded).await);
+    assert!(warned > 0 && offload_warned > 0);
 
     let (status, _) = patch(&state, json!({ "checksumPolicy": "drop" })).await;
     assert_eq!(status, StatusCode::OK);
-    let dropped = total(&segments(&state, &sha).await);
+    let dropped = total(&segments(&state, &corrupted).await);
     assert!(
         dropped < warned,
-        "при «drop» байты кадров с неверной суммой не попадают в поток"
+        "при «drop» байты кадров с повреждённой суммой не попадают в поток"
     );
+    // Частичные суммы offload — не повреждение: «drop» их не трогает.
+    assert_eq!(total(&segments(&state, &offloaded).await), offload_warned);
 
     // Диагностика называет узел с offloading.
     let (_, diag) = call(
         &state,
         Method::GET,
-        &format!("/api/sources/{sha}/diagnostics"),
+        &format!("/api/sources/{offloaded}/diagnostics"),
         None,
     )
     .await;
@@ -189,13 +203,10 @@ async fn checksum_policy_drop_removes_bad_segments() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|i| i["code"] == "bad_checksum")
+        .find(|i| i["code"] == "checksum_offload")
         .map(|i| i["detail"].as_str().unwrap().to_owned())
-        .expect("есть замечание про суммы");
-    assert!(
-        detail.contains("10.0.0.10") && detail.contains("offloading"),
-        "{detail}"
-    );
+        .expect("есть замечание про offload");
+    assert!(detail.contains("10.0.0.10"), "{detail}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

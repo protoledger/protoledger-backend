@@ -64,7 +64,7 @@ impl Wire {
             flags,
             window: WINDOW,
         };
-        let segment = net::tcp(src.ip, dst.ip, &header, payload, false);
+        let segment = net::tcp(src.ip, dst.ip, &header, payload, net::Sum::Valid);
         self.ident = self.ident.wrapping_add(1);
         let ip = net::ipv4(
             src.ip,

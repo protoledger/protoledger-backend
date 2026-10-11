@@ -1,6 +1,6 @@
 use crate::capture::{Capture, DEFAULT_SNAPLEN};
 use crate::expected::{self, Expected, FORMAT_VERSION, Policy, Skipped};
-use crate::net::{self, Fragment, Host, TcpHeader, tcp_flags};
+use crate::net::{self, Fragment, Host, Sum, TcpHeader, tcp_flags};
 use crate::rng::Rng;
 use crate::tcp::{Conn, Dir, Segment};
 
@@ -91,6 +91,7 @@ pub fn generate(sc: &Scenario, seed: u64) -> Generated {
         cap: Capture::new(sc.snaplen, seed),
         skipped: Vec::new(),
         bad: Vec::new(),
+        offload: Vec::new(),
         offloading: None,
     };
     let mut conns = (sc.build)(&mut ctx);
@@ -107,6 +108,7 @@ pub fn generate(sc: &Scenario, seed: u64) -> Generated {
         snaplen: sc.snaplen,
         skipped: ctx.skipped,
         bad_checksum_frames: ctx.bad,
+        offload_frames: ctx.offload,
         offloading_host: ctx.offloading.map(|h| h.ip.to_string()),
         connections: conns.iter().map(expected::connection).collect(),
     };
@@ -121,6 +123,7 @@ struct Ctx {
     cap: Capture,
     skipped: Vec<Skipped>,
     bad: Vec<u32>,
+    offload: Vec<u32>,
     offloading: Option<Host>,
 }
 
@@ -132,17 +135,18 @@ impl Ctx {
     }
 
     fn emit(&mut self, c: &mut Conn, seg: &Segment) -> u32 {
-        let bad = self.offloading == Some(c.sender(seg.dir));
-        let frame = c.emit(&mut self.cap, seg, bad);
-        if bad {
-            self.bad.push(frame);
+        let offload = self.offloading == Some(c.sender(seg.dir));
+        let sum = if offload { Sum::Partial } else { Sum::Valid };
+        let frame = c.emit(&mut self.cap, seg, sum);
+        if offload {
+            self.offload.push(frame);
         }
         frame
     }
 
     /// Кадр с неверной суммой не из-за offloading — повреждение по пути.
     fn emit_corrupted(&mut self, c: &mut Conn, seg: &Segment) -> u32 {
-        let frame = c.emit(&mut self.cap, seg, true);
+        let frame = c.emit(&mut self.cap, seg, Sum::Corrupt);
         self.bad.push(frame);
         frame
     }
@@ -353,7 +357,7 @@ fn fragmented_tcp(ctx: &mut Ctx, src: Host, dst: Host) -> [Vec<u8>; 2] {
         window: 64240,
     };
     let payload = ctx.rng.bytes(40);
-    let seg = net::tcp(src.ip, dst.ip, &h, &payload, false);
+    let seg = net::tcp(src.ip, dst.ip, &h, &payload, Sum::Valid);
     let (head, tail) = seg.split_at(32);
     let ident = ctx.rng.next_u32() as u16;
     let frag = |f: Fragment, part: &[u8]| {
@@ -464,6 +468,7 @@ pub fn profile(connections: usize, frames: usize, bytes: usize, seed: u64) -> Ca
         cap: Capture::new(DEFAULT_SNAPLEN, seed),
         skipped: Vec::new(),
         bad: Vec::new(),
+        offload: Vec::new(),
         offloading: None,
     };
     // По 6 кадров на рукопожатие и закрытие, остальное — обмены по два кадра.

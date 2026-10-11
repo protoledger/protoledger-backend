@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.11
+  version: 0.1.12
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -2810,7 +2810,7 @@ components:
           type: string
           description: |
             Стабильный код: `unsupported_link_type`, `non_ip`, `ipv6_skipped`, `non_tcp`, `ip_fragment`,
-            `truncated_frame`, `bad_ip_header`, `bad_tcp_header`, `bad_checksum`, `bad_block`, `limit_exceeded`
+            `truncated_frame`, `bad_ip_header`, `bad_tcp_header`, `bad_checksum`, `checksum_offload`, `bad_block`, `limit_exceeded`
         severity: { $ref: '#/components/schemas/Severity' }
         title: { type: string }
         detail: { type: string }
@@ -3004,8 +3004,8 @@ components:
         headerLength: { type: integer }
         checksum:
           type: string
-          enum: [ok, bad, unknown]
-          description: '`unknown` — кадр усечён, сумму проверить нельзя'
+          enum: [ok, bad, offload, unknown]
+          description: '`offload` — в поле только сумма псевдозаголовка (checksum offload при захвате на отправителе), байты верны; `unknown` — кадр усечён, сумму проверить нельзя'
 
     StreamRange:
       type: object

@@ -117,7 +117,12 @@ fn files_are_valid_for_independent_parser() {
 fn checksums_match_expected() {
     for sc in SCENARIOS {
         let g = generate(sc, SEED);
-        let bad = &g.expected.bad_checksum_frames;
+        let bad: Vec<u32> = [
+            &g.expected.bad_checksum_frames[..],
+            &g.expected.offload_frames[..],
+        ]
+        .concat();
+        let bad = &bad;
         for (i, p) in read_pcapng(&g.capture.to_pcapng()).iter().enumerate() {
             let frame = i as u32 + 1;
             if p.caplen < p.origlen {

@@ -124,14 +124,18 @@ pub struct TcpHeader {
     pub window: u16,
 }
 
-/// Сегмент TCP с заголовком 20 байт. `bad_checksum` — заведомо неверная сумма.
-pub fn tcp(
-    src: Ipv4Addr,
-    dst: Ipv4Addr,
-    h: &TcpHeader,
-    payload: &[u8],
-    bad_checksum: bool,
-) -> Vec<u8> {
+/// Что записать в поле TCP-суммы.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sum {
+    Valid,
+    /// Заведомо неверная сумма — повреждение по пути.
+    Corrupt,
+    /// Только сумма псевдозаголовка: так выглядит checksum offload при захвате на отправителе.
+    Partial,
+}
+
+/// Сегмент TCP с заголовком 20 байт.
+pub fn tcp(src: Ipv4Addr, dst: Ipv4Addr, h: &TcpHeader, payload: &[u8], sum: Sum) -> Vec<u8> {
     let mut s = Vec::with_capacity(20 + payload.len());
     s.extend_from_slice(&h.src_port.to_be_bytes());
     s.extend_from_slice(&h.dst_port.to_be_bytes());
@@ -141,13 +145,12 @@ pub fn tcp(
     s.extend_from_slice(&h.window.to_be_bytes());
     s.extend_from_slice(&[0, 0, 0, 0]);
     s.extend_from_slice(payload);
-    let mut cs = finish(sum16(
-        &s,
-        pseudo_header_sum(src, dst, IP_PROTO_TCP, s.len()),
-    ));
-    if bad_checksum {
-        cs = cs.wrapping_add(0x1111);
-    }
+    let pseudo = pseudo_header_sum(src, dst, IP_PROTO_TCP, s.len());
+    let cs = match sum {
+        Sum::Valid => finish(sum16(&s, pseudo)),
+        Sum::Corrupt => finish(sum16(&s, pseudo)).wrapping_add(0x1111),
+        Sum::Partial => !finish(pseudo),
+    };
     s[16..18].copy_from_slice(&cs.to_be_bytes());
     s
 }

@@ -94,6 +94,19 @@ fn synthetic_frames_and_diagnostics_match_expected() {
             bad.as_slice(),
             "{name}"
         );
+        let offload = frames_of(&exp["offloadFrames"]);
+        let got_offload: Vec<u32> = idx
+            .segments
+            .iter()
+            .filter(|s| s.checksum == Checksum::Offload)
+            .map(|s| s.frame)
+            .collect();
+        assert_eq!(got_offload, offload, "{name}");
+        assert_eq!(
+            idx.diagnostics.frames(DiagCode::ChecksumOffload),
+            offload.as_slice(),
+            "{name}"
+        );
         assert_eq!(idx.diagnostics.count(DiagCode::BadBlock), 0, "{name}");
     }
 }

@@ -33,6 +33,7 @@
     }
   ],
   "badChecksumFrames": [],
+  "offloadFrames": [],
   "offloadingHost": null,
   "connections": [
     {

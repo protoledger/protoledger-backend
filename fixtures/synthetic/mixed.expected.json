@@ -23,6 +23,7 @@
   "badChecksumFrames": [
     16
   ],
+  "offloadFrames": [],
   "offloadingHost": null,
   "connections": [
     {

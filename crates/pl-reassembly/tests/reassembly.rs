@@ -205,7 +205,13 @@ fn connection_flags_and_close() {
     assert!(flags("gap-truncation").is_superset(&[Flag::Gaps, Flag::Truncated].into()));
     assert!(flags("overlap-conflict").contains(&Flag::Ambiguous));
     assert!(flags("no-handshake").contains(&Flag::NoSyn));
-    assert!(flags("bad-checksum").contains(&Flag::BadChecksum));
+    // Частичные суммы offload — не повреждение: флага нет.
+    assert!(!flags("bad-checksum").contains(&Flag::BadChecksum));
+    assert!(
+        build("mixed", Policy::default()).1[1]
+            .flags
+            .contains(&Flag::BadChecksum)
+    );
 }
 
 #[test]
@@ -254,11 +260,15 @@ fn checksum_drop_removes_bad_segments() {
         checksum: ChecksumPolicy::Drop,
         ..Policy::default()
     };
+    // Offload — не повреждение: при `drop` данные клиента остаются.
     let (_, c) = build("bad-checksum", policy);
-    // Offloading: все данные клиента с неверной суммой — при `drop` их нет.
     let client = &c[0].streams[0];
-    assert_eq!(client.data_bytes(), 0);
-    assert_eq!(client.gap_bytes(), client.length);
+    assert_eq!(client.gap_bytes(), 0);
+    assert_eq!(client.data_bytes(), client.length);
+    // Настоящее повреждение (ответ сервера во втором соединении) при `drop` становится дырой.
+    let (_, c) = build("mixed", policy);
+    let (_, warn) = build("mixed", Policy::default());
+    assert!(c[1].streams[1].data_bytes() < warn[1].streams[1].data_bytes());
 }
 
 #[test]
@@ -361,7 +371,7 @@ fn checksum_report_tells_offloading_from_corruption() {
         offload.offloading_host.map(|h| h.to_string()).as_deref(),
         Some("10.0.0.10")
     );
-    assert!(offload.bad > 0 && offload.bad_hosts.len() == 1);
+    assert!(offload.offload > 0 && offload.bad == 0 && offload.bad_hosts.is_empty());
 
     let clean = report("normal");
     assert_eq!(clean.bad, 0);
