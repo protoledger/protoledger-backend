@@ -17,6 +17,66 @@ const MIN_SHARE: u32 = 800;
 const MAX_HINTS: usize = 12;
 const SCALES: [i64; 4] = [1, 10, 100, 1000];
 
+/// Точное десятичное значение параметра: `num / 10^exp` (журнал: «-2.5», «18.25»).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Decimal {
+    pub num: i64,
+    pub exp: u32,
+}
+
+impl From<i64> for Decimal {
+    fn from(num: i64) -> Self {
+        Self { num, exp: 0 }
+    }
+}
+
+impl Decimal {
+    /// Не больше трёх знаков после запятой (масштабы до 1000); лишние нули отбрасываются.
+    pub fn parse(text: &str) -> Option<Self> {
+        let t = text.trim();
+        let (neg, t) = match t.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, t),
+        };
+        let (whole, frac) = t.split_once('.').unwrap_or((t, ""));
+        let frac = frac.trim_end_matches('0');
+        let digits = |x: &str| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit());
+        if !digits(whole) || !(frac.is_empty() || digits(frac)) || frac.len() > 3 {
+            return None;
+        }
+        let num: i64 = format!("{whole}{frac}").parse().ok()?;
+        Some(Self {
+            num: if neg { -num } else { num },
+            exp: frac.len() as u32,
+        })
+    }
+
+    /// `self × scale == value` без округления.
+    fn times_equals(self, scale: i64, value: i64) -> bool {
+        let lhs = i128::from(self.num) * i128::from(scale);
+        let rhs = i128::from(value) * 10i128.pow(self.exp);
+        lhs == rhs
+    }
+}
+
+impl std::fmt::Display for Decimal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.exp == 0 {
+            return write!(f, "{}", self.num);
+        }
+        let p = 10i64.pow(self.exp);
+        let sign = if self.num < 0 { "-" } else { "" };
+        let a = self.num.unsigned_abs();
+        write!(
+            f,
+            "{sign}{}.{:0w$}",
+            a / p as u64,
+            a % p as u64,
+            w = self.exp as usize
+        )
+    }
+}
+
 /// Сообщение, к которому подобрано действие из журнала.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CorrSample {
@@ -24,7 +84,7 @@ pub struct CorrSample {
     pub start: u64,
     pub bytes: Vec<u8>,
     /// Числовые параметры и результат действия: `params.<имя>`, `result.<имя>`.
-    pub params: BTreeMap<String, i64>,
+    pub params: BTreeMap<String, Decimal>,
     /// Имя действия, если к сообщению подобрано действие.
     pub action: Option<String>,
 }
@@ -34,9 +94,11 @@ pub struct CorrSample {
 pub struct CorrCounter {
     pub stream: String,
     pub start: u64,
-    /// Прочитанное значение и значение параметра.
+    /// Прочитанное значение и значение параметра (целая часть, если он дробный).
     pub got: i64,
     pub expected: i64,
+    /// Значение параметра точно, как в журнале («-2.5»).
+    pub param_value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -193,19 +255,19 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
     let longest = samples.iter().map(|s| s.bytes.len()).max().unwrap_or(0);
     let mut found: Vec<Found> = Vec::new();
     for name in names {
-        let with: Vec<(usize, &CorrSample, i64)> = samples
+        let with: Vec<(usize, &CorrSample, Decimal)> = samples
             .iter()
             .enumerate()
             .filter_map(|(i, s)| s.params.get(name).map(|v| (i, s, *v)))
             .collect();
-        let distinct: BTreeSet<i64> = with.iter().map(|(_, _, v)| *v).collect();
+        let distinct: BTreeSet<Decimal> = with.iter().map(|(_, _, v)| *v).collect();
         // Постоянный параметр совпадёт с любым постоянным байтом: связь по нему ничего не говорит.
         if with.len() as u64 >= MIN_SAMPLES && distinct.len() < 2 {
             continue;
         }
         for at in 0..longest.min(MAX_OFFSET) {
             for ty in TYPES {
-                let readable: Vec<(usize, &CorrSample, i64, i64)> = with
+                let readable: Vec<(usize, &CorrSample, Decimal, i64)> = with
                     .iter()
                     .filter_map(|(i, s, p)| decode(&s.bytes, at, ty).map(|d| (*i, *s, *p, d)))
                     .collect();
@@ -218,7 +280,7 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                     let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
                     let mut counter: Option<CorrCounter> = None;
                     for (i, s, p, d) in &readable {
-                        if p.checked_mul(scale) == Some(*d) {
+                        if p.times_equals(scale, *d) {
                             matches += 1;
                             fingerprint = fnv(fingerprint, *i as u64);
                         } else if counter.is_none() {
@@ -226,7 +288,8 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                                 stream: s.stream.clone(),
                                 start: s.start,
                                 got: *d,
-                                expected: *p,
+                                expected: p.num / 10i64.pow(p.exp),
+                                param_value: p.to_string(),
                             });
                         }
                     }

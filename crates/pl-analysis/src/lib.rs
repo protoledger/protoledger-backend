@@ -20,8 +20,8 @@ mod framing;
 mod variability;
 
 pub use correlation::{
-    ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, MAX_CORR_SAMPLES, ValueHint,
-    correlate,
+    ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, Decimal, MAX_CORR_SAMPLES,
+    ValueHint, correlate,
 };
 pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
 pub use framing::{

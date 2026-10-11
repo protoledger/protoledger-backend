@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.14
+  version: 0.1.15
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -2617,7 +2617,8 @@ components:
                 stream: { type: string }
                 start: { type: integer, minimum: 0 }
                 got: { type: integer }
-                expected: { type: integer }
+                expected: { type: integer, description: 'Значение параметра; у дробного — целая часть' }
+                paramValue: { type: string, description: 'Значение параметра точно, как в журнале («-2.5»)' }
             - { type: 'null' }
         equivalent: { type: array, items: { type: string }, description: 'Другие чтения тех же байтов с теми же совпадениями, вида тип@смещение' }
 

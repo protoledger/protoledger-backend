@@ -441,18 +441,21 @@ pub fn message_correlations(
             };
             let mut params = std::collections::BTreeMap::new();
             if let Some(a) = action {
+                // Целые и точные дробные значения журнала («-2.5»): фиксированная точка в байтах.
+                let decimal = |v: &pl_actions::Param| match v {
+                    pl_actions::Param::Int(i) => {
+                        i64::try_from(*i).ok().map(pl_analysis::Decimal::from)
+                    }
+                    pl_actions::Param::Text(t) => pl_analysis::Decimal::parse(t),
+                };
                 for (k, v) in &a.params {
-                    if let pl_actions::Param::Int(i) = v
-                        && let Ok(i) = i64::try_from(*i)
-                    {
-                        params.insert(format!("params.{k}"), i);
+                    if let Some(d) = decimal(v) {
+                        params.insert(format!("params.{k}"), d);
                     }
                 }
                 for (k, v) in &a.result {
-                    if let pl_actions::Param::Int(i) = v
-                        && let Ok(i) = i64::try_from(*i)
-                    {
-                        params.insert(format!("result.{k}"), i);
+                    if let Some(d) = decimal(v) {
+                        params.insert(format!("result.{k}"), d);
                     }
                 }
             }
