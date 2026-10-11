@@ -241,6 +241,12 @@ pub fn import_path(
     if session.read().is_none() {
         return Err(Session::no_project());
     }
+    // Как у проекта: относительный путь — от каталога проектов (`--workspace`, в Docker — ./workspace).
+    let path = if path.is_relative() {
+        session.workspace().join(path)
+    } else {
+        path
+    };
     let (store, session) = (store.clone(), session.clone());
     jobs.spawn(JobKind::Import, move |ctx| async move {
         let work = tokio::task::spawn_blocking(move || {

@@ -344,3 +344,22 @@ async fn import_copies_into_project_and_survives_reopen() {
     let (status, _) = get(&fresh, "/api/connections").await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn relative_import_path_is_resolved_from_workspace() {
+    let state = project_state("relative");
+    let captures = state.session.workspace().join("captures");
+    std::fs::create_dir_all(&captures).unwrap();
+    std::fs::copy(fixture("normal.pcapng"), captures.join("normal.pcapng")).unwrap();
+    let (status, body) = send(
+        &state,
+        Method::POST,
+        "/api/sources",
+        Some(json!({ "path": "captures/normal.pcapng" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    wait_jobs(&state).await;
+    let (_, list) = get(&state, "/api/sources").await;
+    assert_eq!(list["items"][0]["name"], "normal.pcapng", "{list}");
+}
