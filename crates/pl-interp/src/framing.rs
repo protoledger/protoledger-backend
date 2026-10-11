@@ -127,6 +127,17 @@ impl Search<'_> {
     }
 }
 
+/// Следующая сигнатура начала сообщения не раньше `from`; дыры и неоднозначности перешагиваются.
+fn next_sync(search: &Search<'_>, pattern: &[u8], mut from: u64) -> Option<u64> {
+    loop {
+        match search.find(pattern, from) {
+            Find::At(i) => return Some(i),
+            Find::Unknown { end, .. } if end > from => from = end,
+            _ => return None,
+        }
+    }
+}
+
 pub fn frame(
     framing: &Framing,
     input: &StreamInput<'_>,
@@ -179,7 +190,40 @@ pub fn frame(
             };
             let at = u64::from(spec.at);
             let size = spec.ty.size() as u64;
+            let sync = framing
+                .sync
+                .as_deref()
+                .and_then(parse_hex)
+                .filter(|b| !b.is_empty());
+            // С сигнатурой разбор не останавливается на сбое: следующий кадр — с ближайшей сигнатуры.
+            let resync = |pos: u64| {
+                sync.as_deref()
+                    .and_then(|p| next_sync(&search, p, pos.saturating_add(1)))
+                    .unwrap_or(len)
+            };
             while pos < len {
+                if let Some(pattern) = sync.as_deref() {
+                    let problem = match input.read(pos, pattern.len() as u64) {
+                        Read::Bytes(b) if b.as_ref() == pattern => None,
+                        Read::Gap => Some(Problem::Unknown(Unknown::Gap)),
+                        Read::Ambiguous => Some(Problem::Unknown(Unknown::Ambiguous)),
+                        _ => Some(Problem::Unframed),
+                    };
+                    if problem.is_some() {
+                        let next =
+                            next_sync(&search, pattern, pos.saturating_add(1)).unwrap_or(len);
+                        push(
+                            &mut out,
+                            Frame {
+                                start: pos,
+                                end: next,
+                                problem,
+                            },
+                        )?;
+                        pos = next;
+                        continue;
+                    }
+                }
                 let rest = Frame {
                     start: pos,
                     end: len,
@@ -189,24 +233,36 @@ pub fn frame(
                 let value = match header {
                     Read::Bytes(b) => read_int(&b, spec.ty),
                     Read::Gap => {
+                        let end = if sync.is_some() { resync(pos) } else { len };
                         push(
                             &mut out,
                             Frame {
+                                start: pos,
+                                end,
                                 problem: Some(Problem::Unknown(Unknown::Gap)),
-                                ..rest
                             },
                         )?;
-                        break;
+                        if end >= len {
+                            break;
+                        }
+                        pos = end;
+                        continue;
                     }
                     Read::Ambiguous => {
+                        let end = if sync.is_some() { resync(pos) } else { len };
                         push(
                             &mut out,
                             Frame {
+                                start: pos,
+                                end,
                                 problem: Some(Problem::Unknown(Unknown::Ambiguous)),
-                                ..rest
                             },
                         )?;
-                        break;
+                        if end >= len {
+                            break;
+                        }
+                        pos = end;
+                        continue;
                     }
                     Read::OutOfRange => {
                         push(
@@ -220,34 +276,52 @@ pub fn frame(
                     }
                 };
                 let Some(total) = value.and_then(|v| v.checked_add(i128::from(spec.adjust))) else {
+                    let end = if sync.is_some() { resync(pos) } else { len };
                     push(
                         &mut out,
                         Frame {
+                            start: pos,
+                            end,
                             problem: Some(Problem::BadLength(i128::MAX)),
-                            ..rest
                         },
                     )?;
-                    break;
+                    if end >= len {
+                        break;
+                    }
+                    pos = end;
+                    continue;
                 };
                 if total < i128::from(at + size) {
+                    let end = if sync.is_some() { resync(pos) } else { len };
                     push(
                         &mut out,
                         Frame {
+                            start: pos,
+                            end,
                             problem: Some(Problem::BadLength(total)),
-                            ..rest
                         },
                     )?;
-                    break;
+                    if end >= len {
+                        break;
+                    }
+                    pos = end;
+                    continue;
                 }
                 if total > i128::from(MAX_MESSAGE_BYTES) {
+                    let end = if sync.is_some() { resync(pos) } else { len };
                     push(
                         &mut out,
                         Frame {
+                            start: pos,
+                            end,
                             problem: Some(Problem::TooLarge(total)),
-                            ..rest
                         },
                     )?;
-                    break;
+                    if end >= len {
+                        break;
+                    }
+                    pos = end;
+                    continue;
                 }
                 let end = pos + u64::try_from(total).unwrap_or(u64::MAX);
                 if end > len {
@@ -398,6 +472,7 @@ mod tests {
             length: Some(LengthSpec { at, ty, adjust }),
             size: None,
             bytes: None,
+            sync: None,
             status: Status::Rule,
         }
     }
@@ -408,6 +483,7 @@ mod tests {
             length: None,
             size,
             bytes: bytes.map(str::to_owned),
+            sync: None,
             status: Status::Rule,
         }
     }

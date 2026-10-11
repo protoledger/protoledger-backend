@@ -9,8 +9,8 @@ use crate::expr::{Context, Expr, ExprError, Value};
 use crate::framing::{self, Frame, FrameError, Problem, Unknown, read_int};
 use crate::input::{Read, StreamInput};
 use crate::schema::{
-    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MessageDef, Offset,
-    Status, parse_hex,
+    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MAX_REPEAT, MessageDef,
+    Offset, Repeat, Status, parse_hex,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -337,9 +337,7 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
                 ViolationKind::Framing,
                 "framing",
                 c.it.framing.status,
-                format!(
-                    "заявленная длина сообщения {n} байт больше предела; разбор потока остановлен"
-                ),
+                format!("заявленная длина сообщения {n} байт больше предела"),
             ));
             return result;
         }
@@ -349,14 +347,18 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
                 ViolationKind::Framing,
                 "framing",
                 c.it.framing.status,
-                format!(
-                    "поле длины даёт невозможную длину сообщения {n}; разбор потока остановлен"
-                ),
+                format!("поле длины даёт невозможную длину сообщения {n}"),
             ));
             return result;
         }
         Some(Problem::Unframed) => {
-            result.category = Category::Unmatched;
+            // Поток без начала (нет SYN): байты до первой сигнатуры — хвост сообщения, начало
+            // которого не записано, а не данные, которые описание не охватывает.
+            result.category = if frame.start == 0 && !input.meta.start_available {
+                Category::Incomplete
+            } else {
+                Category::Unmatched
+            };
             return result;
         }
         _ => {}
@@ -420,6 +422,20 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             continue;
         };
         fr.at = at;
+        if let Some(r) = &field.repeat {
+            group(
+                input,
+                &view,
+                frame,
+                field,
+                r,
+                fr,
+                &mut values,
+                &mut covered,
+                &mut result,
+            );
+            continue;
+        }
         let len = match (&field.len, fixed_len(field)) {
             (_, Some(n)) => Some(n),
             (Some(Len::Text(t)), _) if t == "to_end" => Some(view.end.saturating_sub(at)),
@@ -465,35 +481,16 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             result.fields.push(fr);
             continue;
         }
-        match input.read(at, len) {
-            Read::Bytes(bytes) => {
-                fr.state = FieldState::Decoded;
-                fr.value = decode(field.ty, &bytes);
-                covered.push((at, at + len));
-                if let Some(value) = &fr.value {
-                    if let Some(expect) = &field.expect
-                        && !expect_matches(field, expect, value)
-                    {
-                        result.violations.push(violation(
-                            ViolationKind::Expect,
-                            &field.name,
-                            field.status,
-                            format!("ожидалось {}, в данных {value}", expect_text(expect)),
-                        ));
-                    }
-                    values.insert(field.name.clone(), value.clone());
-                }
-            }
-            Read::Gap => {
-                fr.state = FieldState::Gap;
-                covered.push((at, at + len));
-            }
-            Read::Ambiguous => {
-                fr.state = FieldState::Ambiguous;
-                covered.push((at, at + len));
-            }
-            Read::OutOfRange => {}
-        }
+        let name = field.name.clone();
+        read_field(
+            input,
+            field,
+            &mut fr,
+            &name,
+            &mut values,
+            &mut covered,
+            &mut result,
+        );
         result.fields.push(fr);
     }
 
@@ -550,6 +547,127 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
         Category::Matched
     };
     result
+}
+
+/// Повторяющаяся группа: поле-обёртка с длиной всей группы, затем поля каждого элемента
+/// под именами `<группа>.<номер>.<поле>` (так же к ним обращаются проверки и тесты гипотез).
+#[allow(clippy::too_many_arguments)]
+fn group(
+    input: &StreamInput<'_>,
+    view: &View<'_, '_>,
+    frame: &Frame,
+    field: &FieldDef,
+    r: &Repeat,
+    mut fr: FieldResult,
+    values: &mut BTreeMap<String, Value>,
+    covered: &mut Vec<(u64, u64)>,
+    result: &mut MessageResult,
+) {
+    let count = match &r.count {
+        Len::Fixed(n) => Some(u64::from(*n)),
+        Len::Text(t) => Expr::parse(t)
+            .and_then(|e| e.eval_int(&CheckCtx { values, view }))
+            .ok()
+            .and_then(|n| u64::try_from(n).ok()),
+    };
+    let (Some(count), Some(size)) = (count, r.item_size()) else {
+        result.violations.push(violation(
+            ViolationKind::FieldRange,
+            &field.name,
+            field.status,
+            "число повторений вычислить не удалось".to_owned(),
+        ));
+        result.fields.push(fr);
+        return;
+    };
+    if count > MAX_REPEAT {
+        result.violations.push(violation(
+            ViolationKind::FieldRange,
+            &field.name,
+            field.status,
+            format!("повторений {count} больше предела {MAX_REPEAT}"),
+        ));
+        result.fields.push(fr);
+        return;
+    }
+    let at = fr.at;
+    fr.len = count * size;
+    if at.saturating_add(fr.len) > view.end {
+        if frame.problem.is_none() && field.status != Status::Unknown {
+            result.violations.push(violation(
+                ViolationKind::FieldRange,
+                &field.name,
+                field.status,
+                format!("{count} повторений по {size} байт выходят за границы сообщения"),
+            ));
+        }
+        result.fields.push(fr);
+        return;
+    }
+    fr.state = FieldState::Decoded;
+    result.fields.push(fr);
+    for i in 0..count {
+        let base = at + i * size;
+        for item in &r.fields {
+            let (Some(off), Some(len)) = (item.at.abs(), fixed_len(item)) else {
+                continue;
+            };
+            let name = format!("{}.{i}.{}", field.name, item.name);
+            let mut ir = FieldResult {
+                name: name.clone(),
+                at: base + u64::from(off),
+                len,
+                status: item.status,
+                hypothesis: item.hypothesis.clone(),
+                state: FieldState::OutOfMessage,
+                value: None,
+            };
+            read_field(input, item, &mut ir, &name, values, covered, result);
+            result.fields.push(ir);
+        }
+    }
+}
+
+/// Читает байты поля, декодирует и сверяет с `expect`.
+fn read_field(
+    input: &StreamInput<'_>,
+    field: &FieldDef,
+    fr: &mut FieldResult,
+    name: &str,
+    values: &mut BTreeMap<String, Value>,
+    covered: &mut Vec<(u64, u64)>,
+    result: &mut MessageResult,
+) {
+    let (at, len) = (fr.at, fr.len);
+    match input.read(at, len) {
+        Read::Bytes(bytes) => {
+            fr.state = FieldState::Decoded;
+            fr.value = decode(field.ty, &bytes);
+            covered.push((at, at + len));
+            if let Some(value) = &fr.value {
+                if let Some(expect) = &field.expect
+                    && !expect_matches(field, expect, value)
+                {
+                    result.violations.push(violation(
+                        ViolationKind::Expect,
+                        name,
+                        field.status,
+                        format!("ожидалось {}, в данных {value}", expect_text(expect)),
+                    ));
+                }
+                values.insert(name.to_owned(), value.clone());
+            }
+        }
+        Read::Gap => {
+            fr.state = FieldState::Gap;
+            covered.push((at, at + len));
+        }
+        Read::Ambiguous => {
+            fr.state = FieldState::Ambiguous;
+            covered.push((at, at + len));
+        }
+        Read::OutOfRange => {}
+    }
 }
 
 fn expect_text(e: &Expect) -> String {

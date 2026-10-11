@@ -12,6 +12,8 @@ pub const FORMAT: &str = "protoledger/interpretation@1";
 pub const MAX_FILE_BYTES: usize = 4 << 20;
 pub const MAX_MESSAGES: usize = 1_000;
 pub const MAX_FIELDS: usize = 1_000;
+/// Повторений одной группы полей в сообщении (`repeat`).
+pub const MAX_REPEAT: u64 = 4_096;
 pub const MAX_ITEMS: usize = 10_000;
 /// Предел размера одного сообщения (`plan/security.md` §6).
 pub const MAX_MESSAGE_BYTES: u64 = 16 << 20;
@@ -192,6 +194,10 @@ pub struct Framing {
     /// Разделитель (`delimiter`) или начало сообщения (`magic`), hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<String>,
+    /// Сигнатура начала сообщения для `length_prefixed`, hex: по ней разбор находит следующее
+    /// сообщение, если поток начался посреди сообщения или длину прочитать нельзя (дыра).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<String>,
     #[serde(default)]
     pub status: Status,
 }
@@ -236,6 +242,28 @@ pub struct FieldDef {
     pub hypothesis: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Группа полей, повторённая `count` раз подряд с этого места; у поля `type: bytes` без `len`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<Repeat>,
+}
+
+/// Повторяющаяся группа: элементы одного размера, поля элемента — со смещениями от его начала.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repeat {
+    /// Число повторений: число или выражение по ранее объявленным полям.
+    pub count: Len,
+    pub fields: Vec<FieldDef>,
+}
+
+impl Repeat {
+    /// Размер элемента — конец самого дальнего поля; `None`, если у поля нет постоянного размера.
+    pub fn item_size(&self) -> Option<u64> {
+        self.fields
+            .iter()
+            .map(|f| Some(u64::from(f.at.abs()?) + fixed_size(f)?))
+            .try_fold(0u64, |acc, end| end.map(|e| acc.max(e)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,6 +347,14 @@ pub enum Offset {
 }
 
 impl At {
+    /// Числовое смещение от начала (не `end-N`).
+    pub fn abs(&self) -> Option<u32> {
+        match self {
+            At::Abs(n) => Some(*n),
+            At::Text(_) => None,
+        }
+    }
+
     pub fn offset(&self) -> Option<Offset> {
         match self {
             At::Abs(n) => Some(Offset::FromStart(*n)),
@@ -426,10 +462,14 @@ impl Interpretation {
         let f = &self.framing;
         match f.kind {
             FramingKind::LengthPrefixed => {
-                let Some(length) = &f.length else {
+                if f.length.is_none() {
                     return invalid("framing.length_prefixed: нужно поле length {at, type}");
-                };
-                let _ = length;
+                }
+                if let Some(sync) = &f.sync
+                    && parse_hex(sync).is_none_or(|b| b.is_empty())
+                {
+                    return invalid("framing.sync: непустая hex-строка («a65c»)");
+                }
             }
             FramingKind::Fixed => match f.size {
                 Some(n) if n > 0 && u64::from(n) <= MAX_MESSAGE_BYTES => {}
@@ -445,6 +485,57 @@ impl Interpretation {
                     return invalid("framing: bytes — непустая hex-строка («0d0a»)");
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn validate_repeat(
+        &self,
+        m: &MessageDef,
+        f: &FieldDef,
+        r: &Repeat,
+        ctx: &str,
+        earlier: &BTreeSet<&str>,
+    ) -> Result<(), SchemaError> {
+        if f.ty != FieldType::Bytes {
+            return invalid(format!("{ctx}: repeat только у поля type: bytes"));
+        }
+        if r.fields.is_empty() || r.fields.len() > MAX_FIELDS {
+            return invalid(format!("{ctx}: в repeat от 1 до {MAX_FIELDS} полей"));
+        }
+        match &r.count {
+            Len::Fixed(n) if u64::from(*n) <= MAX_REPEAT => {}
+            Len::Fixed(_) => return invalid(format!("{ctx}: repeat.count больше {MAX_REPEAT}")),
+            Len::Text(text) => {
+                let earlier: BTreeSet<String> = earlier.iter().map(|s| (*s).to_owned()).collect();
+                self.check_expr(&format!("{ctx}, repeat.count"), text, |n| {
+                    earlier.contains(n) && n != f.name
+                })?;
+            }
+        }
+        let mut names = BTreeSet::new();
+        for item in &r.fields {
+            let ictx = format!("{ctx}, элемент «{}»", item.name);
+            if item.repeat.is_some() {
+                return invalid(format!("{ictx}: вложенный repeat не поддерживается"));
+            }
+            if item.at.abs().is_none() || !is_fixed_size(item) {
+                return invalid(format!(
+                    "{ictx}: у полей элемента — числовое смещение от начала элемента и постоянный размер"
+                ));
+            }
+            if item.name.is_empty() || !item.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return invalid(format!("{ictx}: имя — буквы, цифры и «_»"));
+            }
+            if !names.insert(item.name.as_str()) {
+                return invalid(format!("{ictx}: имя повторяется"));
+            }
+            self.validate_field(m, item, &ictx, &BTreeSet::new())?;
+        }
+        if r.item_size().is_none_or(|s| s == 0) {
+            return invalid(format!(
+                "{ctx}: размер элемента repeat вычислить не удалось"
+            ));
         }
         Ok(())
     }
@@ -520,6 +611,13 @@ impl Interpretation {
                     ));
                 }
             }
+            FieldType::Bytes if f.repeat.is_some() => {
+                if f.len.is_some() {
+                    return invalid(format!(
+                        "{ctx}: у repeat длина считается сама, len не нужна"
+                    ));
+                }
+            }
             FieldType::Bytes | FieldType::String => {
                 if f.len.is_none() {
                     return invalid(format!("{ctx}: для bytes и string нужна len"));
@@ -538,6 +636,9 @@ impl Interpretation {
             self.check_expr(&format!("{ctx}, len"), text, |n| {
                 earlier.contains(n) && n != f.name
             })?;
+        }
+        if let Some(r) = &f.repeat {
+            self.validate_repeat(m, f, r, ctx, earlier)?;
         }
         match f.status {
             Status::Hypothesis => match &f.hypothesis {
@@ -580,6 +681,17 @@ fn fits(ty: IntType, value: i128) -> bool {
 }
 
 /// Поле с известным размером: целое или bytes/string с числовой длиной.
+/// Постоянный размер поля в байтах: целые и bytes/string с числовой длиной.
+pub fn fixed_size(f: &FieldDef) -> Option<u64> {
+    match (f.ty.int(), &f.len) {
+        (Some(t), _) => Some(t.size() as u64),
+        (None, Some(Len::Fixed(n))) if matches!(f.ty, FieldType::Bytes | FieldType::String) => {
+            Some(u64::from(*n))
+        }
+        _ => None,
+    }
+}
+
 pub fn is_fixed_size(f: &FieldDef) -> bool {
     f.ty.int().is_some()
         || (matches!(f.ty, FieldType::Bytes | FieldType::String)

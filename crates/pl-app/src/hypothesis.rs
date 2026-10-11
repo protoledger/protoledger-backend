@@ -177,8 +177,36 @@ impl Times {
     }
 }
 
-/// Назначает действия сообщениям одного потока по порядку: пачка действий в один момент
-/// соответствует пачке сообщений в одном сегменте. Сообщение без действия в окне остаётся без него.
+/// Пары «сообщение → ответ встречного потока» по порядку: k-е сообщение — следующий по порядку
+/// ответ, отправленный не раньше него (запросы могут идти конвейером, ответы — пачкой).
+/// `unsure[j]` — у ответа j нет байтов или они неоднозначны: сколько сообщений скрыто в дыре,
+/// неизвестно, поэтому начиная с него пары не строятся (тест — неприменим, а не опровергнут).
+pub(crate) fn pair_responses(
+    stamps: &[u64],
+    partner: &[u64],
+    unsure: &[bool],
+) -> Vec<Option<usize>> {
+    let mut next = 0usize;
+    let mut lost = false;
+    stamps
+        .iter()
+        .map(|ts| {
+            while partner.get(next).is_some_and(|p| p < ts) {
+                lost |= unsure.get(next).copied().unwrap_or(false);
+                next += 1;
+            }
+            lost |= unsure.get(next).copied().unwrap_or(false);
+            let found = (!lost && next < partner.len()).then_some(next);
+            next += 1;
+            found
+        })
+        .collect()
+}
+
+/// Назначает действия сообщениям одного потока: сообщению — ближайшее предшествующее
+/// неиспользованное действие в окне; у пачки действий с одним временем (несколько действий
+/// в одном сегменте) — по порядку строк журнала. Действие, сообщение которого не записано
+/// (дыра), остаётся без пары и не сдвигает остальные.
 pub(crate) fn assign<'a>(
     first_ts: &[u64],
     actions: &[&'a Action],
@@ -186,31 +214,28 @@ pub(crate) fn assign<'a>(
 ) -> Vec<Option<&'a Action>> {
     let mut used = vec![false; actions.len()];
     let mut out = Vec::with_capacity(first_ts.len());
-    let mut from = 0usize;
     for ts in first_ts {
-        let mut found = None;
-        let mut i = from;
-        while let Some(a) = actions.get(i) {
-            if a.ts_ns > ts.saturating_add(TOLERANCE_NS) {
-                break;
-            }
-            if !used.get(i).copied().unwrap_or(true) && ts.saturating_sub(a.ts_ns) <= window_ns {
-                found = Some(i);
-                break;
-            }
-            i += 1;
+        let end = actions.partition_point(|a| a.ts_ns <= ts.saturating_add(TOLERANCE_NS));
+        let in_window = |i: usize| {
+            !used.get(i).copied().unwrap_or(true)
+                && actions
+                    .get(i)
+                    .is_some_and(|a| ts.saturating_sub(a.ts_ns) <= window_ns)
+        };
+        let latest = (0..end)
+            .rev()
+            .filter(|&i| in_window(i))
+            .filter_map(|i| actions.get(i).map(|a| a.ts_ns))
+            .next();
+        let found = latest.and_then(|t| {
+            (0..end).find(|&i| in_window(i) && actions.get(i).is_some_and(|a| a.ts_ns == t))
+        });
+        if let Some(i) = found
+            && let Some(u) = used.get_mut(i)
+        {
+            *u = true;
         }
-        if let Some(i) = found {
-            if let Some(u) = used.get_mut(i) {
-                *u = true;
-            }
-            while used.get(from).copied().unwrap_or(false) {
-                from += 1;
-            }
-            out.push(actions.get(i).copied());
-        } else {
-            out.push(None);
-        }
+        out.push(found.and_then(|i| actions.get(i).copied()));
     }
     out
 }
@@ -287,13 +312,24 @@ pub fn test_hypothesis(
                 let Some(result) = results.get(i) else {
                     continue;
                 };
+                // Сообщение целиком в дыре времени не имеет: оно остаётся в списке (порядок ответов
+                // важен для пар) со временем предыдущего сообщения и без действия журнала.
+                let mut last = 0u64;
                 let framed: Vec<(&MessageResult, u64)> = result
                     .messages
                     .iter()
-                    .filter_map(|m| times.first_ts(m.start, m.end).map(|t| (m, t)))
+                    .map(|m| {
+                        let t = times.first_ts(m.start, m.end);
+                        last = t.unwrap_or(last);
+                        (m, last)
+                    })
                     .collect();
-                let stamps: Vec<u64> = framed.iter().map(|(_, t)| *t).collect();
-                let assigned = assign(&stamps, &actions, window_ns);
+                let timed: Vec<u64> = result
+                    .messages
+                    .iter()
+                    .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
+                    .collect();
+                let assigned = assign(&timed, &actions, window_ns);
                 per_stream.push(
                     framed
                         .into_iter()
@@ -309,15 +345,61 @@ pub fn test_hypothesis(
             }
             for (i, msgs) in per_stream.iter().enumerate() {
                 let partner = per_stream.get(1 - i);
+                let stamps: Vec<u64> = msgs.iter().map(|m| m.first_ts).collect();
+                let partner_stamps: Vec<u64> =
+                    partner.map_or_else(Vec::new, |p| p.iter().map(|m| m.first_ts).collect());
+                let partner_unsure: Vec<bool> = partner.map_or_else(Vec::new, |p| {
+                    p.iter()
+                        // Граница неизвестна (тип не определить: заголовок в дыре) — сколько ответов
+                        // скрыто, неизвестно. Неполное сообщение с целым заголовком счёт не сбивает.
+                        .map(|m| {
+                            m.result.message_id.is_none()
+                                && matches!(
+                                    m.result.category,
+                                    pl_interp::Category::Incomplete
+                                        | pl_interp::Category::Ambiguous
+                                )
+                        })
+                        .collect()
+                });
+                // Ответы ищутся только для стороны, которая начинает обмен (её первое сообщение раньше);
+                // сообщения без времени (целиком в дыре, время 0) не в счёт.
+                let first_real = |v: &[u64]| v.iter().find(|t| **t > 0).copied();
+                let initiates = match (first_real(&stamps), first_real(&partner_stamps)) {
+                    (Some(own), Some(other)) => own <= other,
+                    _ => false,
+                };
+                let pairs = if initiates {
+                    pair_responses(&stamps, &partner_stamps, &partner_unsure)
+                } else {
+                    vec![None; stamps.len()]
+                };
                 for (k, m) in msgs.iter().enumerate() {
                     if m.result.message_id.is_none() {
                         continue;
                     }
-                    // Парный ответ: сообщение встречного потока с тем же порядковым номером, отправленное
-                    // не раньше запроса. Пачка запросов в одном сегменте получает ответы по порядку.
-                    let response = partner
-                        .and_then(|p| p.get(k))
-                        .filter(|r| r.first_ts >= m.first_ts)
+                    // Байтов нет или они неоднозначны: такое сообщение гипотезу ни подтверждает,
+                    // ни опровергает.
+                    if matches!(
+                        m.result.category,
+                        pl_interp::Category::Incomplete | pl_interp::Category::Ambiguous
+                    ) {
+                        evidence.not_applicable += 1;
+                        continue;
+                    }
+                    // Парный ответ — по времени (pair_responses); ответ без байтов или с неоднозначными
+                    // байтами парой не считается.
+                    let response = pairs
+                        .get(k)
+                        .copied()
+                        .flatten()
+                        .and_then(|j| partner.and_then(|p| p.get(j)))
+                        .filter(|r| {
+                            !matches!(
+                                r.result.category,
+                                pl_interp::Category::Incomplete | pl_interp::Category::Ambiguous
+                            )
+                        })
                         .map(|r| &r.fields);
                     let ctx = Ctx {
                         fields: &m.fields,
@@ -416,6 +498,35 @@ mod tests {
             lines,
             [Some(2), Some(3), None, Some(4)],
             "пачка из двух — по порядку; без действия в окне — пусто"
+        );
+    }
+
+    #[test]
+    fn missing_message_does_not_shift_the_following_actions() {
+        // Ответ на первое действие не записан (дыра): второе сообщение — второму действию.
+        let (a1, a2, a3) = (action(2, 1000), action(3, 1100), action(4, 1200));
+        let actions = [&a1, &a2, &a3];
+        let got = assign(&[1_105_000_000, 1_205_000_000], &actions, 2_000_000_000);
+        let lines: Vec<Option<u64>> = got.iter().map(|a| a.map(|x| x.line)).collect();
+        assert_eq!(lines, [Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn responses_pair_in_order_not_earlier_than_the_request() {
+        // Конвейер: запросы в 6 и 14, оба ответа в 18; пачка запросов в 30 и ответы 31, 31.
+        assert_eq!(
+            pair_responses(&[6, 14, 30, 30], &[18, 18, 31, 31], &[false; 4]),
+            [Some(0), Some(1), Some(2), Some(3)]
+        );
+        // Ответ, пришедший раньше запроса, — не его ответ.
+        assert_eq!(
+            pair_responses(&[10, 20], &[5, 12, 25], &[false; 3]),
+            [Some(1), Some(2)]
+        );
+        // После неполного ответа счёт неизвестен: дальше пар нет.
+        assert_eq!(
+            pair_responses(&[1, 2, 3], &[1, 2, 3], &[false, true, false]),
+            [Some(0), None, None]
         );
     }
 

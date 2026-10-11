@@ -58,6 +58,7 @@ pub fn stream_input<'a>(
             dst_ip: dst.ip().to_string(),
             src_port: src.port(),
             dst_port: dst.port(),
+            start_available: stream.start_available,
         },
         length: stream.length,
         regions,
