@@ -24,6 +24,9 @@ pub mod tcp_flags {
 pub enum Checksum {
     Ok,
     Bad,
+    /// В поле — только сумма псевдозаголовка: сумму досчитывает сетевая карта после
+    /// точки захвата (checksum offload). Байты не повреждены.
+    Offload,
     /// Кадр усечён — проверить нельзя.
     Unknown,
 }
@@ -255,14 +258,25 @@ pub fn decode(frame: &[u8], original_len: u32, linktype: Option<i32>) -> Decoded
         ph.extend_from_slice(&dst_ip.octets());
         ph.extend_from_slice(&[0, IP_PROTO_TCP]);
         ph.extend_from_slice(&(tcp_declared as u16).to_be_bytes());
-        if verifies(seg, sum16(&ph, 0)) {
+        let pseudo = sum16(&ph, 0);
+        let field = be16(seg, 16).unwrap_or(0);
+        if verifies(seg, pseudo) {
             Checksum::Ok
+        } else if field == fold(pseudo) || field == !fold(pseudo) {
+            Checksum::Offload
         } else {
             Checksum::Bad
         }
     };
-    if checksum == Checksum::Bad && !d.issues.contains(&DiagCode::BadChecksum) {
-        d.issues.push(DiagCode::BadChecksum);
+    let issue = match checksum {
+        Checksum::Bad => Some(DiagCode::BadChecksum),
+        Checksum::Offload => Some(DiagCode::ChecksumOffload),
+        Checksum::Ok | Checksum::Unknown => None,
+    };
+    if let Some(code) = issue
+        && !d.issues.contains(&code)
+    {
+        d.issues.push(code);
     }
 
     let payload_len = (tcp_declared - hl) as u32;
@@ -301,7 +315,7 @@ mod tests {
             flags: tcp_flags::PSH | tcp_flags::ACK,
             window: 100,
         };
-        let seg = net::tcp(a.ip, b.ip, &h, payload, false);
+        let seg = net::tcp(a.ip, b.ip, &h, payload, net::Sum::Valid);
         let ip = net::ipv4(a.ip, b.ip, 6, 1, Fragment::default(), &seg);
         net::ethernet(b.mac, a.mac, net::ETHERTYPE_IPV4, &ip)
     }

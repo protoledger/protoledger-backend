@@ -11,7 +11,8 @@
   "frames": 12,
   "snaplen": 65535,
   "skipped": [],
-  "badChecksumFrames": [
+  "badChecksumFrames": [],
+  "offloadFrames": [
     1,
     3,
     4,

@@ -53,7 +53,7 @@ pub fn tcp_frame_from(src: Ipv4Addr, sport: u16, seq: u32, flags: u8, payload: &
         flags,
         window: 1000,
     };
-    let segment = net::tcp(src, SERVER.ip, &h, payload, false);
+    let segment = net::tcp(src, SERVER.ip, &h, payload, net::Sum::Valid);
     let ip = net::ipv4(
         src,
         SERVER.ip,

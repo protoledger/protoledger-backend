@@ -169,7 +169,7 @@ impl Conn {
         self.send(dir, usize::MAX)
     }
 
-    pub(crate) fn frame(&self, seg: &Segment, bad_checksum: bool) -> Vec<u8> {
+    pub(crate) fn frame(&self, seg: &Segment, sum: net::Sum) -> Vec<u8> {
         let (src, dst, sport, dport) = match seg.dir {
             Dir::C2s => (self.client, self.server, self.client_port, self.server_port),
             Dir::S2c => (self.server, self.client, self.server_port, self.client_port),
@@ -182,7 +182,7 @@ impl Conn {
             flags: seg.flags,
             window: WINDOW,
         };
-        let tcp = net::tcp(src.ip, dst.ip, &h, &seg.payload, bad_checksum);
+        let tcp = net::tcp(src.ip, dst.ip, &h, &seg.payload, sum);
         let ident = (seg.seq as u16) ^ sport;
         let ip = net::ipv4(
             src.ip,
@@ -196,8 +196,8 @@ impl Conn {
     }
 
     /// Кладёт сегмент в запись и запоминает, какие байты нагрузки реально захвачены.
-    pub(crate) fn emit(&mut self, cap: &mut Capture, seg: &Segment, bad_checksum: bool) -> u32 {
-        let frame = cap.push(self.frame(seg, bad_checksum));
+    pub(crate) fn emit(&mut self, cap: &mut Capture, seg: &Segment, sum: net::Sum) -> u32 {
+        let frame = cap.push(self.frame(seg, sum));
         let room = (cap.snaplen as usize).saturating_sub(HEADERS_LEN);
         let i = seg.dir.idx();
         if seg.flags & tcp_flags::SYN != 0 {

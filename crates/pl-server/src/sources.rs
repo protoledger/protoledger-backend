@@ -198,6 +198,14 @@ fn source(state: &AppState, sha256: &str) -> Result<Arc<SourceData>, ApiError> {
         .ok_or_else(|| not_found("Такой записи в проекте нет."))
 }
 
+fn hosts_phrase(n: usize) -> String {
+    match n {
+        1 => "одного узла".to_owned(),
+        n if n % 10 == 1 && n % 100 != 11 => format!("{n} узла"),
+        n => format!("{n} узлов"),
+    }
+}
+
 fn severity(s: Severity) -> &'static str {
     match s {
         Severity::Info => "info",
@@ -247,12 +255,15 @@ async fn diagnostics(
             severity: severity(code.severity()),
             title: code.title(),
             detail: match (code, checksums.offloading_host) {
-                (DiagCode::BadChecksum, Some(host)) => format!(
+                (DiagCode::ChecksumOffload, Some(host)) => format!(
+                    "В поле TCP-суммы у кадров от {host} только сумма псевдозаголовка: запись снята на этом узле, сумму досчитывает сетевая карта после точки захвата. Байты не повреждены и учитываются."
+                ),
+                (DiagCode::BadChecksum, Some(host)) if checksums.offload == 0 => format!(
                     "Неверные суммы только у кадров от {host}, у остальных узлов суммы верны: похоже на offloading при захвате на этом узле. Байты учтены по политике проекта."
                 ),
-                (DiagCode::BadChecksum, None) => format!(
-                    "Неверные суммы у кадров от {} узл. и не у всех кадров узла: похоже на повреждение по пути, а не на offloading. Поведение определяет политика проекта (игнорировать, предупреждать, отбрасывать).",
-                    checksums.bad_hosts.len()
+                (DiagCode::BadChecksum, _) => format!(
+                    "Неверные суммы у кадров от {}: похоже на повреждение по пути, а не на offloading. Поведение определяет политика проекта (игнорировать, предупреждать, отбрасывать).",
+                    hosts_phrase(checksums.bad_hosts.len())
                 ),
                 _ => code.detail().to_owned(),
             },
@@ -730,6 +741,7 @@ async fn frame(
             checksum: match t.checksum {
                 Checksum::Ok => "ok",
                 Checksum::Bad => "bad",
+                Checksum::Offload => "offload",
                 Checksum::Unknown => "unknown",
             },
         }),

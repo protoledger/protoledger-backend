@@ -12,6 +12,7 @@
   "snaplen": 160,
   "skipped": [],
   "badChecksumFrames": [],
+  "offloadFrames": [],
   "offloadingHost": null,
   "connections": [
     {

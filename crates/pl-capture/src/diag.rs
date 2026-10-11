@@ -15,6 +15,7 @@ pub enum DiagCode {
     BadIpHeader,
     BadTcpHeader,
     BadChecksum,
+    ChecksumOffload,
     BadBlock,
 }
 
@@ -37,15 +38,18 @@ impl DiagCode {
             Self::BadIpHeader => "bad_ip_header",
             Self::BadTcpHeader => "bad_tcp_header",
             Self::BadChecksum => "bad_checksum",
+            Self::ChecksumOffload => "checksum_offload",
             Self::BadBlock => "bad_block",
         }
     }
 
     pub fn severity(self) -> Severity {
         match self {
-            Self::NonIp | Self::NonTcp | Self::Ipv6Skipped | Self::UnsupportedLinkType => {
-                Severity::Info
-            }
+            Self::NonIp
+            | Self::NonTcp
+            | Self::Ipv6Skipped
+            | Self::UnsupportedLinkType
+            | Self::ChecksumOffload => Severity::Info,
             Self::IpFragment | Self::TruncatedFrame | Self::BadChecksum => Severity::Warning,
             Self::BadIpHeader | Self::BadTcpHeader | Self::BadBlock => Severity::Error,
         }
@@ -62,6 +66,7 @@ impl DiagCode {
             Self::BadIpHeader => "Некорректный заголовок IPv4",
             Self::BadTcpHeader => "Некорректный заголовок TCP",
             Self::BadChecksum => "Неверная контрольная сумма",
+            Self::ChecksumOffload => "Частичная сумма (checksum offload)",
             Self::BadBlock => "Повреждённый блок записи",
         }
     }
@@ -84,6 +89,9 @@ impl DiagCode {
             Self::BadTcpHeader => "Заголовок TCP не разбирается; кадр пропущен.",
             Self::BadChecksum => {
                 "Сумма не совпала; при захвате на отправителе это часто offloading, байты учтены."
+            }
+            Self::ChecksumOffload => {
+                "В поле TCP-суммы только сумма псевдозаголовка: её досчитывает сетевая карта после точки захвата. Байты не повреждены и учитываются."
             }
             Self::BadBlock => "Запись повреждена или обрезана; разобрано то, что было до сбоя.",
         }

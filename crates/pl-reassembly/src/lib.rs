@@ -161,40 +161,51 @@ impl Epoch<'_> {
 /// Итог по контрольным суммам записи: отличает offloading от повреждения по пути.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChecksumReport {
-    /// Сегментов с неверной суммой.
+    /// Сегментов с неверной суммой (повреждение).
     pub bad: u64,
     /// Узлы, от которых есть сегменты с неверной суммой.
     pub bad_hosts: BTreeSet<Ipv4Addr>,
-    /// Узел, у которого неверны суммы всех (не менее двух) его сегментов, при том что
-    /// у остальных узлов все суммы верны: запись снята на нём самом, и сумму ещё не посчитала сетевая карта.
+    /// Сегментов с частичной суммой offload.
+    pub offload: u64,
+    /// Узел, на котором снята запись с checksum offload: у его сегментов в поле суммы
+    /// только псевдозаголовок, либо (для других вариантов offload) неверны все суммы
+    /// только этого узла, а у остальных узлов суммы верны.
     pub offloading_host: Option<Ipv4Addr>,
 }
 
 pub fn checksum_report(idx: &CaptureIndex) -> ChecksumReport {
-    let mut per_host: BTreeMap<Ipv4Addr, (u64, u64)> = BTreeMap::new();
+    // (верных, неверных, offload) по узлу-отправителю.
+    let mut per_host: BTreeMap<Ipv4Addr, (u64, u64, u64)> = BTreeMap::new();
     for s in &idx.segments {
         let entry = per_host.entry(*s.src.ip()).or_default();
         match s.checksum {
             Checksum::Ok => entry.0 += 1,
             Checksum::Bad => entry.1 += 1,
-            _ => {}
+            Checksum::Offload => entry.2 += 1,
+            Checksum::Unknown => {}
         }
     }
-    let bad_hosts: BTreeSet<Ipv4Addr> = per_host
-        .iter()
-        .filter(|(_, (_, bad))| *bad > 0)
-        .map(|(host, _)| *host)
-        .collect();
-    let offloading_host = match bad_hosts.iter().next() {
-        Some(host) if bad_hosts.len() == 1 => per_host
+    let hosts_with = |pick: fn(&(u64, u64, u64)) -> u64| -> BTreeSet<Ipv4Addr> {
+        per_host
+            .iter()
+            .filter(|(_, c)| pick(c) > 0)
+            .map(|(host, _)| *host)
+            .collect()
+    };
+    let bad_hosts = hosts_with(|c| c.1);
+    let offload_hosts = hosts_with(|c| c.2);
+    let offloading_host = match (offload_hosts.iter().next(), bad_hosts.iter().next()) {
+        (Some(host), _) if offload_hosts.len() == 1 => Some(*host),
+        (None, Some(host)) if bad_hosts.len() == 1 => per_host
             .get(host)
-            .filter(|(ok, bad)| *ok == 0 && *bad >= 2)
+            .filter(|(ok, bad, _)| *ok == 0 && *bad >= 2)
             .map(|_| *host),
         _ => None,
     };
     ChecksumReport {
-        bad: per_host.values().map(|(_, bad)| bad).sum(),
+        bad: per_host.values().map(|c| c.1).sum(),
         bad_hosts,
+        offload: per_host.values().map(|c| c.2).sum(),
         offloading_host,
     }
 }
