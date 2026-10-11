@@ -260,6 +260,11 @@ pub fn test_hypothesis(
     };
 
     for data in sources {
+        let actions: Vec<&Action> = actions
+            .iter()
+            .copied()
+            .filter(|a| a.belongs_to(&data.name))
+            .collect();
         for connection in &data.connections {
             let id = connection.id(&data.sha256);
             let mut results = Vec::new();
@@ -396,6 +401,7 @@ mod tests {
             params: BTreeMap::new(),
             result: BTreeMap::new(),
             result_raw: String::new(),
+            source: None,
         }
     }
 

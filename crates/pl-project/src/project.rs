@@ -1393,6 +1393,7 @@ mod tests {
             delimiter: None,
             utc_offset_minutes: 0,
             clock_offset_ms: 0,
+            source: None,
         };
         let csv = b"time,action\n2026-10-01T00:00:00Z,x\n";
         let a = project

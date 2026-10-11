@@ -245,6 +245,9 @@ struct ActionDto {
     params: BTreeMap<String, Param>,
     result: BTreeMap<String, Param>,
     result_raw: String,
+    /// Запись, к которой относится действие (колонка `source` сопоставления).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 fn action_dto(a: &Action) -> ActionDto {
@@ -255,6 +258,7 @@ fn action_dto(a: &Action) -> ActionDto {
         params: a.params.clone(),
         result: a.result.clone(),
         result_raw: a.result_raw.clone(),
+        source: a.source.clone(),
     }
 }
 
@@ -402,14 +406,15 @@ async fn exchange(
         .clone();
     let from = action.ts_ns.saturating_sub(before * 1_000_000);
     let to = action.ts_ns.saturating_add(after * 1_000_000);
+    let owner = action.clone();
     let found = tokio::task::spawn_blocking(move || {
         let interpretation = pl_app::current_interpretation(&state.session);
-        let found = pl_app::find_exchange(
-            &pl_app::all_sources(&state.sources),
-            interpretation.as_ref(),
-            from,
-            to,
-        );
+        // Журнал на несколько записей: обмен ищем только в записи этого действия.
+        let sources: Vec<_> = pl_app::all_sources(&state.sources)
+            .into_iter()
+            .filter(|d| owner.belongs_to(&d.name))
+            .collect();
+        let found = pl_app::find_exchange(&sources, interpretation.as_ref(), from, to);
         (found, interpretation.is_some())
     })
     .await

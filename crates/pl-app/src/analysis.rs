@@ -426,7 +426,12 @@ pub fn message_correlations(
             .iter()
             .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
             .collect();
-        let assigned = crate::hypothesis::assign(&first_ts, &actions, window_ns);
+        let own: Vec<&pl_actions::Action> = actions
+            .iter()
+            .copied()
+            .filter(|a| a.belongs_to(&data.name))
+            .collect();
+        let assigned = crate::hypothesis::assign(&first_ts, &own, window_ns);
         for (m, action) in messages.iter().zip(assigned) {
             if samples.len() > pl_analysis::MAX_CORR_SAMPLES {
                 break;
