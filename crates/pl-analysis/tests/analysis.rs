@@ -380,8 +380,8 @@ fn sample(i: usize, action: &str, value: i64, code: u8, wrong: bool) -> pl_analy
         start: (i * 10) as u64,
         bytes,
         params: [
-            ("params.value".to_owned(), value),
-            ("params.const".to_owned(), 7),
+            ("params.value".to_owned(), value.into()),
+            ("params.const".to_owned(), 7.into()),
         ]
         .into(),
         action: Some(action.to_owned()),
@@ -433,7 +433,7 @@ fn correlations_support_fixed_point_scale_and_stay_quiet_on_noise() {
                 stream: "s".to_owned(),
                 start: i as u64,
                 bytes: ((value * 10) as u16).to_be_bytes().to_vec(),
-                params: [("params.v".to_owned(), value)].into(),
+                params: [("params.v".to_owned(), value.into())].into(),
                 action: Some("a".to_owned()),
             }
         })
@@ -446,11 +446,59 @@ fn correlations_support_fixed_point_scale_and_stay_quiet_on_noise() {
             stream: "n".to_owned(),
             start: i as u64,
             bytes: payload(&mut rng, 16),
-            params: [("params.v".to_owned(), i as i64 * 7)].into(),
+            params: [("params.v".to_owned(), (i as i64 * 7).into())].into(),
             action: Some(if i % 2 == 0 { "x" } else { "y" }.to_owned()),
         })
         .collect();
     let c = pl_analysis::correlate(&noise);
     assert!(c.values.is_empty() && c.actions.is_empty(), "{c:?}");
     assert_eq!(pl_analysis::correlate(&[]).samples, 0);
+}
+
+#[test]
+fn fractional_parameter_matches_fixed_point_field_exactly() {
+    // Порог в журнале «-2.5», «21», «0.25», в байтах — i16 в сотых долях.
+    let thresholds = ["-2.5", "21", "0.25", "19", "-0.75", "37.5", "100"];
+    let samples: Vec<_> = thresholds
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let d = pl_analysis::Decimal::parse(t).unwrap();
+            let centi = (d.num * 100 / 10i64.pow(d.exp)) as i16;
+            let mut bytes = vec![0xa6, 0x5c, i as u8];
+            bytes.extend_from_slice(&centi.to_be_bytes());
+            pl_analysis::CorrSample {
+                stream: "s".to_owned(),
+                start: i as u64,
+                bytes,
+                params: [("params.threshold_c".to_owned(), d)].into(),
+                action: Some("set".to_owned()),
+            }
+        })
+        .collect();
+    let hit = pl_analysis::correlate(&samples)
+        .values
+        .into_iter()
+        .find(|h| h.param == "params.threshold_c")
+        .unwrap();
+    assert_eq!((hit.at, hit.ty, hit.scale), (3, "i16be", 100));
+    assert_eq!((hit.matches, hit.samples), (7, 7));
+}
+
+#[test]
+fn decimal_parse_is_exact() {
+    use pl_analysis::Decimal;
+    assert_eq!(Decimal::parse("-2.5"), Some(Decimal { num: -25, exp: 1 }));
+    assert_eq!(Decimal::parse("21.0"), Some(Decimal { num: 21, exp: 0 }));
+    assert_eq!(
+        Decimal::parse("18.25").map(|d| d.to_string()).as_deref(),
+        Some("18.25")
+    );
+    assert_eq!(
+        Decimal::parse("-0.05").map(|d| d.to_string()).as_deref(),
+        Some("-0.05")
+    );
+    for bad in ["", "-", "1e5", "1.2345", "abc", ".5"] {
+        assert_eq!(Decimal::parse(bad), None, "{bad}");
+    }
 }

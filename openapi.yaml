@@ -2617,7 +2617,8 @@ components:
                 stream: { type: string }
                 start: { type: integer, minimum: 0 }
                 got: { type: integer }
-                expected: { type: integer }
+                expected: { type: integer, description: 'Значение параметра; у дробного — целая часть' }
+                paramValue: { type: string, description: 'Значение параметра точно, как в журнале («-2.5»)' }
             - { type: 'null' }
         equivalent: { type: array, items: { type: string }, description: 'Другие чтения тех же байтов с теми же совпадениями, вида тип@смещение' }
 
