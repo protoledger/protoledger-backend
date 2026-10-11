@@ -99,6 +99,9 @@ pub struct Mapping {
     /// Поправка на сдвиг часов клиента относительно часов записи, мс: прибавляется ко времени журнала.
     #[serde(default)]
     pub clock_offset_ms: i64,
+    /// Колонка с именем или путём записи, к которой относится действие: журнал на несколько записей.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -128,6 +131,22 @@ pub struct Action {
     pub result: BTreeMap<String, Param>,
     /// Результат как в файле (если не разбирается на пары).
     pub result_raw: String,
+    /// Запись, к которой относится действие (колонка `source` сопоставления); `None` — к любой.
+    pub source: Option<String>,
+}
+
+impl Action {
+    /// Относится ли действие к записи с таким именем файла. Сравниваются имена файлов
+    /// без пути и регистра: в журнале обычно путь, в проекте — имя исходного файла.
+    pub fn belongs_to(&self, source_name: &str) -> bool {
+        self.source
+            .as_deref()
+            .is_none_or(|s| file_name(s).eq_ignore_ascii_case(file_name(source_name)))
+    }
+}
+
+fn file_name(path: &str) -> &str {
+    path.trim().rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,6 +453,7 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
     let (c_time, c_action) = (column(&mapping.time)?, column(&mapping.action)?);
     let c_params = mapping.params.as_deref().map(column).transpose()?;
     let c_result = mapping.result.as_deref().map(column).transpose()?;
+    let c_source = mapping.source.as_deref().map(column).transpose()?;
     let offset_ns = i128::from(mapping.clock_offset_ms) * 1_000_000;
 
     let mut log = ParsedLog {
@@ -488,6 +508,9 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
             params,
             result,
             result_raw,
+            source: c_source
+                .map(|c| get(c).trim().to_owned())
+                .filter(|s| !s.is_empty()),
         });
     }
     if total > 0 && (log.actions.len() as u64) * 2 < total {
@@ -520,6 +543,7 @@ mod tests {
             delimiter: None,
             utc_offset_minutes: 0,
             clock_offset_ms: 0,
+            source: None,
         }
     }
 
@@ -695,6 +719,45 @@ mod tests {
         assert!(matches!(
             parse(b"time,action\n", &bad),
             Err(LogError::Mapping(_))
+        ));
+    }
+
+    #[test]
+    fn source_column_binds_actions_to_their_capture() {
+        let csv = concat!(
+            "capture,time,action\n",
+            "research/03_combined.pcap,2026-10-01T00:00:00Z,read\n",
+            r"diagnostics\01_retx.PCAP,2026-10-01T00:00:00Z,read",
+            "\n,2026-10-01T00:00:00Z,read\n",
+        );
+        let m = Mapping {
+            params: None,
+            result: None,
+            source: Some("capture".into()),
+            ..mapping()
+        };
+        let log = parse(csv.as_bytes(), &m).unwrap();
+        let [a, b, c] = log.actions.as_slice() else {
+            panic!("три действия");
+        };
+        assert_eq!(a.source.as_deref(), Some("research/03_combined.pcap"));
+        assert!(a.belongs_to("03_combined.pcap") && !a.belongs_to("01_retx.pcap"));
+        assert!(
+            b.belongs_to("01_retx.pcap"),
+            "регистр и обратный слэш не мешают"
+        );
+        assert!(
+            c.source.is_none() && c.belongs_to("что угодно"),
+            "пустая ячейка — к любой записи"
+        );
+
+        let missing = Mapping {
+            source: Some("file".into()),
+            ..m
+        };
+        assert!(matches!(
+            parse(csv.as_bytes(), &missing),
+            Err(LogError::MissingColumn(..))
         ));
     }
 

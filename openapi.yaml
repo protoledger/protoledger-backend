@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.12
+  version: 0.1.13
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -2126,6 +2126,7 @@ components:
         delimiter: { type: [string, 'null'], description: 'Разделитель, по умолчанию запятая; tab — табуляция' }
         utcOffsetMinutes: { type: integer, default: 0, description: Пояс для времени без указания пояса }
         clockOffsetMs: { type: integer, default: 0, description: "Поправка на сдвиг часов клиента, мс" }
+        source: { type: [string, 'null'], description: 'Колонка с именем или путём записи: журнал на несколько записей, действия сопоставляются только со своей записью (по имени файла, без учёта регистра)' }
 
     ImportActionLogRequest:
       type: object
@@ -2184,6 +2185,7 @@ components:
           additionalProperties:
             oneOf: [{ type: integer }, { type: string }]
         resultRaw: { type: string }
+        source: { type: [string, 'null'], description: 'Запись действия из колонки source сопоставления' }
 
     ActionPage:
       type: object
