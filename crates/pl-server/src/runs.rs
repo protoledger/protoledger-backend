@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::json::ApiJson;
 use crate::{ApiError, AppState};
 
-const DEFAULT_LIMIT: u64 = 100;
+const DEFAULT_LIMIT: u64 = 50;
 const MAX_LIMIT: u64 = 500;
 
 pub fn routes() -> Router<AppState> {
