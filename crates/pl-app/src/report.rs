@@ -300,6 +300,69 @@ pub fn collect(
         })
         .collect();
 
+    // Итоги тестов берутся из прогона: тот же корпус и те же журналы, что в разделе «Результат».
+    let interpretation_hypotheses = interpretation
+        .as_ref()
+        .map(|it| {
+            it.hypotheses
+                .iter()
+                .map(|h| {
+                    let outcome = run
+                        .as_ref()
+                        .and_then(|r| r.hypotheses.iter().find(|o| o.id == h.id));
+                    let verdict = outcome.map(|o| match o.verdict {
+                        pl_verify::HypothesisVerdict::Untested => "untested",
+                        pl_verify::HypothesisVerdict::NoCounterexample => "no_counterexample",
+                        pl_verify::HypothesisVerdict::Refuted => "refuted",
+                    });
+                    HypothesisInfo {
+                        id: h.id.clone(),
+                        statement: h.statement.clone(),
+                        status: match verdict {
+                            Some("refuted") => "refuted",
+                            Some("no_counterexample") => "supported",
+                            _ => "proposed",
+                        }
+                        .to_owned(),
+                        basis: h.basis.clone(),
+                        test: h.test.clone(),
+                        superseded_by: None,
+                        note: None,
+                        result: outcome.zip(verdict).map(|(o, verdict)| HypothesisTestInfo {
+                            verdict: verdict.to_owned(),
+                            applicable: o.applicable,
+                            held: o.held,
+                            counterexamples_total: o.counterexamples,
+                            counterexamples: run
+                                .iter()
+                                .flat_map(|r| &r.counterexamples)
+                                .filter(|c| {
+                                    c.violations.iter().any(|v| {
+                                        v.kind == pl_interp::ViolationKind::Hypothesis
+                                            && v.id == h.id
+                                    })
+                                })
+                                .map(|c| {
+                                    format!(
+                                        "{} [{}, {}): {}",
+                                        c.anchor.stream,
+                                        c.anchor.start,
+                                        c.anchor.end,
+                                        c.violations
+                                            .iter()
+                                            .map(|v| v.detail.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join("; ")
+                                    )
+                                })
+                                .collect(),
+                        }),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(ReportData {
         project: project_name,
         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -316,6 +379,7 @@ pub fn collect(
         }),
         run: run.map(|r| run_info(&r, stale)),
         observations,
+        interpretation_hypotheses,
         hypotheses,
         questions,
     })

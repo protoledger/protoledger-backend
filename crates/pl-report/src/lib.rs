@@ -132,6 +132,10 @@ pub struct ReportData {
     pub interpretation: Option<InterpretationInfo>,
     pub run: Option<RunInfo>,
     pub observations: Vec<ObservationInfo>,
+    /// Гипотезы описания протокола с итогом тестов из прогона.
+    #[serde(default)]
+    pub interpretation_hypotheses: Vec<HypothesisInfo>,
+    /// Гипотезы исследования (с основаниями-наблюдениями).
     pub hypotheses: Vec<HypothesisInfo>,
     pub questions: Vec<QuestionInfo>,
 }
@@ -385,8 +389,37 @@ fn build(d: &ReportData) -> Vec<Block> {
     }
 
     out.push(Heading(2, "Гипотезы".to_owned()));
-    if d.hypotheses.is_empty() {
+    if d.hypotheses.is_empty() && d.interpretation_hypotheses.is_empty() {
         out.push(Para("Гипотез нет.".to_owned()));
+    }
+    if !d.interpretation_hypotheses.is_empty() {
+        out.push(Para(match &d.run {
+            Some(r) => format!(
+                "Гипотезы описания протокола и итог их тестов в прогоне {} на журналах действий проекта:",
+                r.id
+            ),
+            None => "Гипотезы описания протокола (прогона ещё не было, тесты не запускались):"
+                .to_owned(),
+        }));
+        for h in &d.interpretation_hypotheses {
+            out.push(Heading(3, format!("{}. {}", h.id, h.statement)));
+            let mut lines = vec![
+                format!("Статус: {}.", status_title(&h.status)),
+                format!("Проверка: {}.", hypothesis_result(h)),
+            ];
+            if let Some(test) = &h.test {
+                lines.push(format!("Тест: {test}"));
+            }
+            if let Some(r) = &h.result {
+                for c in r.counterexamples.iter().take(3) {
+                    lines.push(format!("Контрпример: {c}"));
+                }
+            }
+            out.push(List(lines));
+        }
+        if !d.hypotheses.is_empty() {
+            out.push(Para("Гипотезы исследования:".to_owned()));
+        }
     }
     for h in &d.hypotheses {
         out.push(Heading(3, format!("{}. {}", h.id, h.statement)));
@@ -704,5 +737,36 @@ mod tests {
         let md = markdown(&data);
         assert!(md.contains("не доказана"));
         assert!(md.contains("выполнилась на 9 из 9"));
+    }
+
+    #[test]
+    fn interpretation_hypotheses_show_the_run_result() {
+        let data = ReportData {
+            run: Some(RunInfo {
+                id: "run-0002".to_owned(),
+                ..RunInfo::default()
+            }),
+            interpretation_hypotheses: vec![HypothesisInfo {
+                id: "H6".to_owned(),
+                statement: "порог — i16 в сотых долях".to_owned(),
+                status: "refuted".to_owned(),
+                test: Some("threshold == dec(action.params.threshold, 2)".to_owned()),
+                result: Some(HypothesisTestInfo {
+                    verdict: "refuted".to_owned(),
+                    applicable: 6,
+                    held: 4,
+                    counterexamples_total: 2,
+                    counterexamples: vec!["s:c0001:ab [8, 23): threshold = 65286".to_owned()],
+                }),
+                ..HypothesisInfo::default()
+            }],
+            ..ReportData::default()
+        };
+        let md = markdown(&data);
+        assert!(md.contains("в прогоне run-0002"), "{md}");
+        assert!(md.contains("H6. порог"));
+        assert!(md.contains("опровергнута тестом: контрпримеров 2 из 6"));
+        assert!(md.contains("threshold = 65286"));
+        assert!(!md.contains("Гипотез нет."));
     }
 }
