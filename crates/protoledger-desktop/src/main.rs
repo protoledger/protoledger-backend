@@ -15,10 +15,13 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 type Server = Mutex<Option<JoinHandle<std::io::Result<()>>>>;
 
+/// Журнал последнего запуска — рядом с проектами: в релизной сборке под Windows консоли нет.
+const LOG_FILE: &str = "protoledger.log";
+
 fn main() {
-    tracing_subscriber::fmt().with_target(false).init();
     if let Err(err) = run() {
         tracing::error!("приложение завершилось с ошибкой: {err}");
+        eprintln!("protoledger: {err}");
         std::process::exit(1);
     }
 }
@@ -38,6 +41,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             move |app| {
                 let workspace = app.path().document_dir()?.join("protoledger");
                 std::fs::create_dir_all(&workspace)?;
+                let log = std::fs::File::create(workspace.join(LOG_FILE))?;
+                tracing_subscriber::fmt()
+                    .with_target(false)
+                    .with_ansi(false)
+                    .with_writer(Mutex::new(log))
+                    .init();
+                tracing::info!(version = env!("CARGO_PKG_VERSION"), %origin, "приложение запущено");
                 let state = pl_server::AppState::new(workspace);
                 let server = tauri::async_runtime::spawn(async move {
                     let listener = tokio::net::TcpListener::from_std(listener)?;
@@ -66,8 +76,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let done = tauri::async_runtime::block_on(async move {
                     tokio::time::timeout(SHUTDOWN_GRACE, server).await
                 });
-                if done.is_err() {
-                    tracing::warn!("сервер не остановился за {SHUTDOWN_GRACE:?}");
+                match done {
+                    Ok(_) => tracing::info!("окно закрыто, сервер остановлен"),
+                    Err(_) => tracing::warn!("сервер не остановился за {SHUTDOWN_GRACE:?}"),
                 }
             }
         }
