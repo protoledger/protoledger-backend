@@ -90,8 +90,15 @@ fn finds_a_little_endian_field_that_excludes_the_header() {
     };
     let hints = find_framing(&[stream("x", 50, 3, build)], &never);
     let top = hints.length.first().unwrap();
-    assert_eq!((top.at, top.width, top.big_endian), (1, 4, false));
+    // Тела короче 64 КиБ: старшие байты всегда нули, поэтому u16le и u32le дают одни границы.
+    // Первым идёт двухбайтовый вариант, настоящий четырёхбайтовый — среди равнозначных.
+    assert_eq!((top.at, top.width, top.big_endian), (1, 2, false));
     assert_eq!(top.adjust, 5);
+    assert!(
+        top.equivalent
+            .iter()
+            .any(|f| f.at == 1 && f.ty == "u32le" && f.adjust == 5)
+    );
     assert_eq!(top.score_permille, 1000);
     assert_eq!(
         hints.signatures.first().map(|s| s.bytes.as_str()),
@@ -501,4 +508,27 @@ fn decimal_parse_is_exact() {
     for bad in ["", "-", "1e5", "1.2345", "abc", ".5"] {
         assert_eq!(Decimal::parse(bad), None, "{bad}");
     }
+}
+
+#[test]
+fn among_equal_candidates_the_two_byte_field_comes_first() {
+    // Заголовок: номер u16, два нулевых байта, длина остатка u16be, адрес, код.
+    // Нули перед длиной делают u32be со смещения 2 неотличимым от u16be со смещения 4.
+    let build = |body: &[u8]| {
+        let mut m = vec![0x00, body.first().copied().unwrap_or(0), 0x00, 0x00];
+        m.extend_from_slice(&(body.len() as u16 + 2).to_be_bytes());
+        m.extend_from_slice(&[0x01, 0x03]);
+        m.extend_from_slice(body);
+        m
+    };
+    let hints = find_framing(&[stream("x", 50, 3, build)], &never);
+    let top = hints.length.first().unwrap();
+    assert_eq!(
+        (top.at, top.width, top.big_endian, top.adjust),
+        (4, 2, true, 6)
+    );
+    assert!(top.equivalent.iter().any(|f| f.at == 2 && f.ty == "u32be"));
+    // Нулевой байт по смещению 2 как «длина 3» тоже проходит весь поток, деля каждое сообщение
+    // надвое; такой разбор не должен обойти настоящий.
+    assert_eq!(top.messages, 50);
 }
