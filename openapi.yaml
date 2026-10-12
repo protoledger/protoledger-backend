@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.24
+  version: 0.1.25
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -3240,7 +3240,9 @@ components:
       properties:
         param: { type: string, description: 'params.<имя> или result.<имя> из журнала' }
         at: { type: integer, minimum: 0 }
-        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le] }
+        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le, bcd, f32be, f32le, f64be, f64le], description: 'Тип поля в описании; у bcd длина — size' }
+        size: { type: integer, minimum: 1, maximum: 8, description: 'Размер поля в байтах' }
+        mask: { type: integer, minimum: 1, maximum: 255, description: 'Битовое поле байта: значение — биты маски, сдвинутые к младшему' }
         scale: { type: integer, enum: [1, 10, 100, 1000], description: 'Прочитанное значение = параметр × scale' }
         matches: { type: integer, minimum: 0 }
         samples: { type: integer, minimum: 0 }

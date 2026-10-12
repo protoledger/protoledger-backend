@@ -532,3 +532,93 @@ fn among_equal_candidates_the_two_byte_field_comes_first() {
     // надвое; такой разбор не должен обойти настоящий.
     assert_eq!(top.messages, 50);
 }
+
+/// Сообщения с параметрами журнала; `build(значение, номер)` собирает байты.
+fn linked(values: &[&str], build: impl Fn(&str, usize) -> Vec<u8>) -> Vec<pl_analysis::CorrSample> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| pl_analysis::CorrSample {
+            stream: "s".to_owned(),
+            start: i as u64 * 16,
+            bytes: build(v, i),
+            params: [(
+                "params.x".to_owned(),
+                pl_analysis::Decimal::parse(v).unwrap(),
+            )]
+            .into_iter()
+            .collect(),
+            action: Some("set".to_owned()),
+        })
+        .collect()
+}
+
+#[test]
+fn correlations_read_floats_as_their_shortest_decimal() {
+    let values = [
+        "21.5", "-2.5", "18.25", "0.1", "21.3", "100", "7.125", "-40",
+    ];
+    let samples = linked(&values, |v, i| {
+        let mut m = vec![0xa5, i as u8];
+        m.extend_from_slice(&v.parse::<f32>().unwrap().to_le_bytes());
+        m
+    });
+    let c = pl_analysis::correlate(&samples);
+    let hint = c.values.first().unwrap();
+    assert_eq!(
+        (hint.at, hint.ty, hint.size, hint.scale),
+        (2, "f32le", 4, 1),
+        "{:?}",
+        c.values
+    );
+    assert_eq!((hint.matches, hint.samples), (8, 8));
+    assert!(hint.mask.is_none());
+}
+
+#[test]
+fn correlations_find_binary_coded_decimals_with_a_scale() {
+    // 12.34 передаётся как BCD 12 34: цифры в полубайтах, масштаб 100.
+    let values = ["12.34", "5.01", "99.99", "0.5", "42", "17.2", "8.08"];
+    let samples = linked(&values, |v, i| {
+        let cents = (v.parse::<f64>().unwrap() * 100.0).round() as u32;
+        let digit = |n: u32| (n % 10) as u8;
+        vec![
+            i as u8 | 0xc0,
+            (digit(cents / 1000) << 4) | digit(cents / 100),
+            (digit(cents / 10) << 4) | digit(cents),
+        ]
+    });
+    let c = pl_analysis::correlate(&samples);
+    let hint = c
+        .values
+        .iter()
+        .find(|h| h.ty == "bcd")
+        .unwrap_or_else(|| panic!("{:?}", c.values));
+    assert_eq!((hint.at, hint.size, hint.scale), (1, 2, 100));
+    assert_eq!(hint.share_permille, 1000);
+}
+
+#[test]
+fn correlations_find_a_flag_inside_a_byte_only_with_enough_examples() {
+    // Флаг — бит 3 байта, остальные биты заняты другим: целиком байт с параметром не совпадает.
+    let flags: Vec<&str> = (0..24)
+        .map(|i| if i % 3 == 0 { "1" } else { "0" })
+        .collect();
+    let build = |v: &str, i: usize| {
+        let other = ((i * 37 + 5) as u8) & 0xf7;
+        vec![0x10, other | (u8::from(v == "1") << 3), (i * 11) as u8]
+    };
+    let c = pl_analysis::correlate(&linked(&flags, build));
+    let hint = c.values.first().unwrap();
+    assert_eq!((hint.at, hint.ty, hint.mask), (1, "u8", Some(0x08)));
+    assert_eq!((hint.matches, hint.samples), (24, 24));
+
+    // На десяти примерах один бит совпадает и случайно: подсказки нет.
+    let few = linked(&flags[..10], build);
+    assert!(
+        pl_analysis::correlate(&few)
+            .values
+            .iter()
+            .all(|h| h.mask.is_none())
+    );
+}

@@ -65,6 +65,7 @@ struct Field {
     ty: String,
     len: Option<String>,
     expect: Option<String>,
+    mask: Option<u64>,
     hypothesis: usize,
     /// Байты от начала сообщения, если место и размер известны: по ним отсекаются пересечения.
     span: Option<(u64, u64)>,
@@ -257,6 +258,9 @@ fn render(
             if let Some(expect) = &f.expect {
                 line.push_str(&format!(", expect: {expect}"));
             }
+            if let Some(mask) = f.mask {
+                line.push_str(&format!(", mask: 0x{mask:02x}"));
+            }
             line.push_str(&format!(
                 ", status: hypothesis, hypothesis: H{} }}\n",
                 f.hypothesis
@@ -383,6 +387,7 @@ pub fn draft_interpretation(
             ty: length_ty.to_owned(),
             len: None,
             expect: None,
+            mask: None,
             hypothesis: length_hyp,
             span: Some((length_at, length_at + length_size)),
         });
@@ -399,6 +404,7 @@ pub fn draft_interpretation(
                 ty: "bytes".to_owned(),
                 len: Some(size.to_string()),
                 expect: Some(quoted(bytes)),
+                mask: None,
                 hypothesis,
                 span: Some((0, size)),
             });
@@ -453,6 +459,7 @@ pub fn draft_interpretation(
                 ty: "u8".to_owned(),
                 len: None,
                 expect: None,
+                mask: None,
                 hypothesis,
                 span: Some((u64::from(at), u64::from(at) + 1)),
             });
@@ -553,6 +560,7 @@ pub fn draft_interpretation(
                             ty: h.ty.clone(),
                             len: None,
                             expect: None,
+                            mask: None,
                             hypothesis,
                             span: Some((u64::from(h.at), u64::from(h.at) + u64::from(size))),
                         });
@@ -599,6 +607,7 @@ pub fn draft_interpretation(
                         ty: h.ty.clone(),
                         len: None,
                         expect: None,
+                        mask: None,
                         hypothesis,
                         span: Some((at, at + width)),
                     });
@@ -609,6 +618,7 @@ pub fn draft_interpretation(
                             ty: "string".to_owned(),
                             len: Some(quoted(&len_name)),
                             expect: None,
+                            mask: None,
                             hypothesis,
                             span: Some((at + width, at + width + 1)),
                         });
@@ -644,10 +654,14 @@ pub fn draft_interpretation(
             .filter(|v| v.share_permille >= MIN_LINK_SHARE && expression_name(&v.param))
         {
             // Гипотеза заводится только для поля, которое встаёт на свободное место.
-            let (at, ty) = narrowest(v.at, v.ty, &v.equivalent);
-            let Some(size) = type_size(&ty) else {
-                continue;
+            let plain = v.mask.is_none() && type_size(v.ty).is_some();
+            let (at, ty) = if plain {
+                narrowest(v.at, v.ty, &v.equivalent)
+            } else {
+                (v.at, v.ty.to_owned())
             };
+            let size = type_size(&ty).unwrap_or(u64::from(v.size));
+            let float = ty.starts_with('f');
             let at = u64::from(at);
             if !m.free("", Some((at, at + size))) {
                 continue;
@@ -660,7 +674,10 @@ pub fn draft_interpretation(
                 _ => continue,
             };
             let name = field_name(&v.param, &m.names());
-            let test = if digits == 0 {
+            let test = if float {
+                // Число с плавающей точкой читается десятичной записью: обе стороны — через dec.
+                format!("dec({name}, 3) == dec(action.{}, 3)", v.param)
+            } else if digits == 0 {
                 format!("{name} == action.{}", v.param)
             } else {
                 format!("{name} == dec(action.{}, {digits})", v.param)
@@ -693,9 +710,10 @@ pub fn draft_interpretation(
             if m.add(Field {
                 name: name.clone(),
                 at: at.to_string(),
+                len: (ty == "bcd").then(|| v.size.to_string()),
                 ty,
-                len: None,
                 expect: None,
+                mask: v.mask,
                 hypothesis,
                 span: Some((at, at + size)),
             }) {
@@ -755,6 +773,7 @@ pub fn draft_interpretation(
                     ty: h.ty.clone(),
                     len: None,
                     expect: None,
+                    mask: None,
                     hypothesis,
                     span: h
                         .at
