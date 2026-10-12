@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::checksum::Algorithm;
 use crate::expr::{Context, Expr, ExprError, Value};
 use crate::framing::{self, Frame, FrameError, Problem, Unknown, read_int};
 use crate::input::{Read, StreamInput};
@@ -156,8 +157,8 @@ impl Context for StreamCtx<'_> {
         }
     }
 
-    fn sum8(&self, _: i128, _: i128) -> Result<i128, ExprError> {
-        Err(ExprError::UnknownFunction("sum8".to_owned()))
+    fn checksum(&self, a: &Algorithm, _: i128, _: i128) -> Result<i128, ExprError> {
+        Err(ExprError::UnknownFunction(a.name.to_owned()))
     }
 }
 
@@ -245,8 +246,8 @@ impl Context for WhenCtx<'_, '_> {
         }
     }
 
-    fn sum8(&self, _: i128, _: i128) -> Result<i128, ExprError> {
-        Err(ExprError::UnknownFunction("sum8".to_owned()))
+    fn checksum(&self, a: &Algorithm, _: i128, _: i128) -> Result<i128, ExprError> {
+        Err(ExprError::UnknownFunction(a.name.to_owned()))
     }
 }
 
@@ -277,16 +278,16 @@ impl Context for CheckCtx<'_, '_> {
         }
     }
 
-    fn sum8(&self, from: i128, to: i128) -> Result<i128, ExprError> {
+    fn checksum(&self, a: &Algorithm, from: i128, to: i128) -> Result<i128, ExprError> {
         let len = i128::from(self.view.len());
         if from < 0 || to < from || to > len {
-            return Err(ExprError::Arguments("sum8"));
+            return Err(ExprError::Arguments(a.name));
         }
         let (Ok(from), Ok(span)) = (u64::try_from(from), u64::try_from(to - from)) else {
-            return Err(ExprError::Arguments("sum8"));
+            return Err(ExprError::Arguments(a.name));
         };
         match self.view.input.read(self.view.start + from, span) {
-            Read::Bytes(b) => Ok(b.iter().fold(0i128, |acc, x| (acc + i128::from(*x)) % 256)),
+            Read::Bytes(b) => Ok(i128::from(a.compute(&b))),
             _ => Err(ExprError::UnknownName("байты сообщения".to_owned())),
         }
     }

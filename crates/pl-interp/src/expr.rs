@@ -4,6 +4,8 @@
 //! и глубина ограничены, арифметика проверяемая, неизвестное имя — отдельная ошибка, а не ноль.
 
 use std::collections::BTreeSet;
+
+use crate::checksum::Algorithm;
 use std::fmt;
 
 /// Предел шагов вычисления выражения.
@@ -109,8 +111,9 @@ pub struct Expr {
 pub trait Context {
     /// `None` — имени нет: выражение к этим данным неприменимо.
     fn get(&self, name: &str) -> Option<Value>;
-    /// Сумма байтов сообщения `[from, to)` по модулю 256.
-    fn sum8(&self, from: i128, to: i128) -> Result<i128, ExprError>;
+    /// Контрольная сумма байтов сообщения `[from, to)`. Там, где байтов сообщения нет,
+    /// функция неизвестна.
+    fn checksum(&self, algorithm: &Algorithm, from: i128, to: i128) -> Result<i128, ExprError>;
 }
 
 // ---------------------------------------------------------------- разбор
@@ -522,14 +525,6 @@ fn call(
     steps: &mut Steps,
 ) -> Result<Value, ExprError> {
     match name {
-        "sum8" => {
-            let [from, to] = args else {
-                return Err(ExprError::Arguments("sum8"));
-            };
-            let from = int(&eval(from, ctx, steps)?, "sum8")?;
-            let to = int(&eval(to, ctx, steps)?, "sum8")?;
-            ctx.sum8(from, to).map(Value::Int)
-        }
         "dec" => {
             let [x, digits] = args else {
                 return Err(ExprError::Arguments("dec"));
@@ -550,7 +545,17 @@ fn call(
                 _ => Err(ExprError::Type("dec")),
             }
         }
-        _ => Err(ExprError::UnknownFunction(name.to_owned())),
+        _ => {
+            let Some(algorithm) = Algorithm::by_name(name) else {
+                return Err(ExprError::UnknownFunction(name.to_owned()));
+            };
+            let [from, to] = args else {
+                return Err(ExprError::Arguments(algorithm.name));
+            };
+            let from = int(&eval(from, ctx, steps)?, algorithm.name)?;
+            let to = int(&eval(to, ctx, steps)?, algorithm.name)?;
+            ctx.checksum(algorithm, from, to).map(Value::Int)
+        }
     }
 }
 
@@ -602,8 +607,8 @@ mod tests {
             self.0.get(name).cloned()
         }
 
-        fn sum8(&self, from: i128, to: i128) -> Result<i128, ExprError> {
-            Ok((from + to) % 256)
+        fn checksum(&self, a: &Algorithm, from: i128, to: i128) -> Result<i128, ExprError> {
+            Ok((from + to) % (1 << (u32::from(a.width) * 8)))
         }
     }
 

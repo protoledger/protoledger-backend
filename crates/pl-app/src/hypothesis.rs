@@ -11,7 +11,7 @@ use std::sync::Arc;
 use pl_actions::{Action, Param};
 use pl_core::{Problem, ProblemKind};
 use pl_interp::expr::Context;
-use pl_interp::{Expr, ExprError, Interpretation, MessageResult, Value};
+use pl_interp::{Algorithm, Expr, ExprError, Interpretation, MessageResult, Value};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -125,8 +125,8 @@ impl Context for Ctx<'_> {
         }
     }
 
-    fn sum8(&self, _: i128, _: i128) -> Result<i128, ExprError> {
-        Err(ExprError::UnknownFunction("sum8".to_owned()))
+    fn checksum(&self, a: &Algorithm, _: i128, _: i128) -> Result<i128, ExprError> {
+        Err(ExprError::UnknownFunction(a.name.to_owned()))
     }
 }
 
