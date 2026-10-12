@@ -30,7 +30,7 @@ use serde::Serialize;
 pub use error::ApiError;
 pub use guard::{Guard, TOKEN_HEADER};
 
-/// Лимит тела JSON-запроса (`plan/security.md` §6).
+/// Лимит тела JSON-запроса.
 pub(crate) const MAX_JSON_BODY: usize = 8 << 20;
 
 /// Общее состояние сервера.

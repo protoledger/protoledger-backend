@@ -1,4 +1,4 @@
-//! Схема `protoledger/interpretation@1` (ADR 0005): разбор YAML, проверка, digest.
+//! Схема `protoledger/interpretation@1`: разбор YAML, проверка, digest.
 
 use std::collections::BTreeSet;
 
@@ -8,14 +8,14 @@ use sha2::{Digest, Sha256};
 use crate::expr::Expr;
 
 pub const FORMAT: &str = "protoledger/interpretation@1";
-/// Размер файла интерпретации (`plan/security.md` §6).
+/// Размер файла интерпретации.
 pub const MAX_FILE_BYTES: usize = 4 << 20;
 pub const MAX_MESSAGES: usize = 1_000;
 pub const MAX_FIELDS: usize = 1_000;
 /// Повторений одной группы полей в сообщении (`repeat`).
 pub const MAX_REPEAT: u64 = 4_096;
 pub const MAX_ITEMS: usize = 10_000;
-/// Предел размера одного сообщения (`plan/security.md` §6).
+/// Предел размера одного сообщения.
 pub const MAX_MESSAGE_BYTES: u64 = 16 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

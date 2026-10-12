@@ -65,7 +65,7 @@ impl ProblemKind {
     }
 }
 
-/// Превышенный защитный предел (`plan/security.md` §6).
+/// Превышенный защитный предел.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Limit {
     pub name: &'static str,
