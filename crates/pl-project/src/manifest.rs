@@ -19,7 +19,7 @@ impl SourceFormat {
     }
 }
 
-/// Какие байты брать при перекрытии с различающимся содержимым (ADR 0006).
+/// Какие байты брать при перекрытии с различающимся содержимым.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlapPolicy {

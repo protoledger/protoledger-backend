@@ -2,7 +2,7 @@ use pl_capture::TcpSegment;
 
 use crate::{OverlapPolicy, ReassemblyError};
 
-/// Сегментов (с данными) в одном направлении (`plan/security.md` §6).
+/// Сегментов (с данными) в одном направлении.
 pub const MAX_SEGMENTS_PER_STREAM: usize = 1_000_000;
 /// Записанных байтов одного направления.
 pub const MAX_STREAM_BYTES: u64 = 512 << 20;

@@ -3,7 +3,7 @@
 use crate::input::{Read, RegionKind, StreamInput};
 use crate::schema::{Framing, FramingKind, IntType, MAX_MESSAGE_BYTES, parse_hex};
 
-/// Предел числа сообщений в одном потоке (`plan/security.md` §6: 100 тыс. сообщений в профиле).
+/// Предел числа сообщений в одном потоке (100 тыс. сообщений в профиле).
 pub const MAX_MESSAGES_PER_STREAM: usize = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

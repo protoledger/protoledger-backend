@@ -21,7 +21,7 @@ pub use stream::{
     Bytes, FrameRef, FrameSpan, MAX_SEGMENTS_PER_STREAM, MAX_STREAM_BYTES, Piece, PieceKind, Stream,
 };
 
-/// Соединений в одной записи (`plan/security.md` §6).
+/// Соединений в одной записи.
 pub const MAX_CONNECTIONS: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

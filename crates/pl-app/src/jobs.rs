@@ -7,7 +7,7 @@ use serde::Serialize;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// Предел одновременных долгих задач (`plan/security.md` §6).
+/// Предел одновременных долгих задач.
 pub const MAX_CONCURRENT_JOBS: usize = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

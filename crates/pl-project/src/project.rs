@@ -11,11 +11,11 @@ use crate::manifest::{
     Settings, SourceFormat,
 };
 
-/// Размер файла записи, `plan/security.md` §6.
+/// Размер файла записи.
 pub const MAX_SOURCE_SIZE: u64 = 1 << 30;
 /// Размер `project.yaml`: манифест — небольшой текст, больше — признак подмены.
 pub const MAX_MANIFEST_SIZE: u64 = 4 << 20;
-/// Размер файла интерпретации (`plan/security.md` §6).
+/// Размер файла интерпретации.
 pub const MAX_INTERPRETATION_SIZE: usize = 4 << 20;
 /// Размер документа исследования (наблюдения, гипотезы, вопросы).
 pub const MAX_DOC_SIZE: usize = 4 << 20;
@@ -161,7 +161,7 @@ fn restrict_dir(path: &Path) -> Result<(), ProjectError> {
 
 #[cfg(not(unix))]
 fn restrict_dir(_path: &Path) -> Result<(), ProjectError> {
-    // Windows: папка в профиле пользователя, права наследуются (plan/security.md T31).
+    // Windows: папка в профиле пользователя, права наследуются.
     Ok(())
 }
 

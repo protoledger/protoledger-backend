@@ -1,4 +1,4 @@
-//! Защита локального API (`plan/security.md` T16–T21, T24, ADR 0010): Host → Origin → токен сессии.
+//! Защита локального API: Host → Origin → токен сессии.
 
 use std::sync::Arc;
 

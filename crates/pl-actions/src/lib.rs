@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Размер файла журнала (`plan/security.md` §6).
+/// Размер файла журнала.
 pub const MAX_FILE_BYTES: usize = 256 << 20;
 pub const MAX_ROWS: usize = 1_000_000;
 const MAX_FIELD_BYTES: usize = 64 << 10;

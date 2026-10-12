@@ -22,7 +22,7 @@ pub use decode::{
 };
 pub use diag::{DiagCode, DiagGroup, Diagnostics, MAX_FRAME_NUMBERS, Severity};
 
-/// Предел размера файла записи (`plan/security.md` §6).
+/// Предел размера файла записи.
 pub const MAX_FILE_BYTES: u64 = 1 << 30;
 /// Предел числа кадров в одной записи.
 pub const MAX_FRAMES: u64 = 10_000_000;
