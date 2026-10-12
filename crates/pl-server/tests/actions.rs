@@ -417,3 +417,20 @@ async fn multipart_upload_of_a_log() {
         .collect();
     assert_eq!(values, [70_000, -5, 123_456, 1]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn relative_log_path_is_resolved_from_workspace() {
+    let state = setup("relative").await;
+    let logs = state.session.workspace().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::copy(stand("main.actions.csv"), logs.join("main.actions.csv")).unwrap();
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": "logs/main.actions.csv", "mapping": stand_mapping() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "main.actions.csv", "{body}");
+}

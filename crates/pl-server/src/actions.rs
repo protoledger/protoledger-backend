@@ -163,7 +163,12 @@ async fn import(State(state): State<AppState>, request: Request) -> Result<Json<
             .path
             .file_name()
             .map_or_else(|| "журнал".to_owned(), |n| n.to_string_lossy().into_owned());
-        let path = req.path.clone();
+        // Как у записей: относительный путь — от каталога проектов (`--workspace`).
+        let path = if req.path.is_relative() {
+            state.session.workspace().join(&req.path)
+        } else {
+            req.path.clone()
+        };
         let bytes = tokio::task::spawn_blocking(move || read_file(&path))
             .await
             .map_err(|_| blocking_failed())?

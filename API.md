@@ -63,7 +63,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 | GET | `/api/runs/{id}/items` | Таблица сообщений: потоки, категории, типы | `200` страница |
 | GET | `/api/runs/diff` | Сравнить два прогона: исправлено, ухудшено, изменено, добавлено, исчезло | `200 RunDiffPage` |
 | GET | `/api/action-logs` | Журналы действий проекта | `200 {items}` |
-| POST | `/api/action-logs` | Импорт журнала: `{path, mapping}` или multipart `file` + `mapping` | `200 ActionLog` |
+| POST | `/api/action-logs` | Импорт журнала: `{path, mapping}` или multipart `file` + `mapping`; относительный `path` — от каталога проектов | `200 ActionLog` |
 | GET | `/api/action-logs/{id}/actions` | Действия журнала; фильтры `from`, `to`, `action` | `200` страница |
 | GET | `/api/action-logs/{id}/actions/{line}/exchange` | Обмен для действия: кадры и сообщения в окне времени | `200 Exchange` |
 | GET | `/api/observations` | Наблюдения (якорь + комментарий) с состоянием якоря | `200 {items}` |
@@ -81,7 +81,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 | POST | `/api/exchanges` | Пары запрос→ответ в соединении, с оценкой уверенности и задержкой | `200 ExchangePairPage` |
 | POST | `/api/reports` | Отчёт по проекту: `{format: md|html, runId?}` | `200 Report {format, fileName, content}`, `404`, `409` |
 | GET | `/api/sources` | Записи проекта | `200` страница `Source` |
-| POST | `/api/sources` | Импорт записи: JSON `{path}` или `multipart` с полем `file` | `202 {jobId}` |
+| POST | `/api/sources` | Импорт записи: JSON `{path}` или `multipart` с полем `file`; относительный `path` — от каталога проектов | `202 {jobId}` |
 | GET | `/api/sources/{sha256}/diagnostics` | Что не разобрано в записи и почему | `200 SourceDiagnostics` |
 | GET | `/api/connections` | TCP-соединения; фильтры `source`, `port`, `address`, `flag` | `200` страница `Connection` |
 | GET | `/api/streams/{stream}/bytes` | Байты потока `?from&len` + карта сегментов | `200 StreamBytes` |
