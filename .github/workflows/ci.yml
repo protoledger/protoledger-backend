@@ -90,10 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Уязвимости, лицензии, источники зависимостей
-        uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
         with:
-          command: check advisories licenses bans sources
+          tool: cargo-deny
+      - name: Уязвимости, лицензии, источники зависимостей
+        run: cargo deny --locked check advisories licenses bans sources
 
   api-doc:
     runs-on: ubuntu-latest
