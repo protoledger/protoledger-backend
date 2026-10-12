@@ -107,12 +107,7 @@ impl From<ProjectError> for Problem {
                 format!("Журнала действий {id} в проекте нет."),
             ),
             ProjectError::Cancelled => Problem::new(ProblemKind::Conflict, "Операция отменена."),
-            ProjectError::Io { op, .. } => Problem::new(
-                ProblemKind::Internal,
-                format!(
-                    "Не удалось выполнить операцию «{op}» с файлами проекта. Проверьте права и свободное место."
-                ),
-            ),
+            ProjectError::Io { op, source } => Problem::io(op, &source),
         }
     }
 }

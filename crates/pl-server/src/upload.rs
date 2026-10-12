@@ -57,17 +57,12 @@ fn too_large(max: u64) -> ApiError {
     )
 }
 
-fn io_failed() -> ApiError {
-    ApiError::new(
-        ProblemKind::Internal,
-        "Не удалось сохранить загруженный файл. Проверьте свободное место и права на папку проекта.",
-    )
+fn io_failed(e: std::io::Error) -> ApiError {
+    ApiError(pl_core::Problem::io("сохранение загруженного файла", &e))
 }
 
 async fn write_field(field: &mut Field<'_>, path: &Path, max: u64) -> Result<(), ApiError> {
-    let mut out = tokio::fs::File::create(path)
-        .await
-        .map_err(|_| io_failed())?;
+    let mut out = tokio::fs::File::create(path).await.map_err(io_failed)?;
     let mut total = 0u64;
     while let Some(chunk) = field
         .chunk()
@@ -78,9 +73,9 @@ async fn write_field(field: &mut Field<'_>, path: &Path, max: u64) -> Result<(),
         if total > max {
             return Err(too_large(max));
         }
-        out.write_all(&chunk).await.map_err(|_| io_failed())?;
+        out.write_all(&chunk).await.map_err(io_failed)?;
     }
-    out.flush().await.map_err(|_| io_failed())?;
+    out.flush().await.map_err(io_failed)?;
     Ok(())
 }
 
@@ -96,9 +91,7 @@ pub async fn save(state: &AppState, mut multipart: Multipart) -> Result<Upload, 
     let dir = cache
         .join("uploads")
         .join(format!("{}-{n}", std::process::id()));
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|_| io_failed())?;
+    tokio::fs::create_dir_all(&dir).await.map_err(io_failed)?;
 
     let result = async {
         while let Some(mut field) = multipart

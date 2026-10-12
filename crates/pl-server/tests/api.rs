@@ -238,3 +238,39 @@ async fn project_errors_are_problem_details() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Папка проектов без прав на запись (например, её создал другой пользователь): понятный отказ,
+/// а не внутренняя ошибка. Суперпользователю права не мешают, для него проверка пропускается.
+#[cfg(unix)]
+#[tokio::test]
+async fn read_only_workspace_is_explained() {
+    use std::os::unix::fs::PermissionsExt;
+    let (state, dir) = workspace_state("read-only");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(dir.join("probe"), b"x").is_ok() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let refused = post_json(
+        &state,
+        "/api/project",
+        "application/json",
+        r#"{"path":"demo.protoledger","mode":"create"}"#,
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let body = json(refused).await;
+    assert_eq!(body["type"], "urn:protoledger:problem:conflict");
+    assert!(
+        body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Нет прав на запись"),
+        "{body}"
+    );
+    // Сервер работает дальше, проекта нет.
+    let current = call(&state, Method::GET, "/api/project").await;
+    assert_eq!(current.status(), StatusCode::CONFLICT);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
