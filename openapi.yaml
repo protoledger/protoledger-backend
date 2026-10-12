@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.20
+  version: 0.1.21
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1590,6 +1590,66 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/types:
+    post:
+      tags: [analysis]
+      operationId: findMessageTypes
+      summary: Типы сообщений — байт-различитель и условие when для каждого типа
+      description: |
+        Ищет, чем сообщения делятся на типы. Сначала — сторона обмена: запрос и ответ считаются разными
+        сообщениями. Если в сообщениях есть байт, который повторяет сторону, условие пишется по нему, иначе —
+        по порту (`dst_port`/`src_port`), когда принимающий порт у всех потоков один. Затем среди байтов общего
+        заголовка ищется различитель: внутри его групп сообщения ближе по длине и у них больше постоянных байтов.
+        Оценка считается по каждой стороне отдельно. Не предлагаются: поле длины, счётчики (растут на единицу
+        внутри потока), байты, с которыми размер сообщения растёт по прямой (число элементов), и байты с более чем
+        24 значениями. В ответе: `keys` — различители с оценками, `fields` — поля, которые нужно объявить в описании,
+        `types` — группы с готовым `when`, числом сообщений, разбросом длин, собственными постоянными байтами,
+        примером и сообщением нетипичной длины. Группы меньше трёх сообщений в оценке не участвуют (`rare`).
+        Границы сообщений — из `framing` или из сохранённой интерпретации. Это подсказка: передавайте потоки
+        обеих сторон, по одной стороне результат слабее.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TypesRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba']
+              framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }
+      responses:
+        '200':
+          description: Различители и типы сообщений
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeHints' }
+              example:
+                messages: 54
+                truncated: false
+                incomplete: false
+                keys:
+                  - { kind: side, values: 2, lengthExplainedPermille: 0, constantGainPermille: 0, scorePermille: 0 }
+                  - { kind: byte, at: 2, values: 6, lengthExplainedPermille: 870, constantGainPermille: 277, scorePermille: 573 }
+                fields: [{ name: b2, at: 2, type: u8 }]
+                types:
+                  - id: msg_req_02
+                    when: 'dst_port == 4710 && b2 == 0x02'
+                    key: [{ kind: side, value: 0 }, { kind: byte, at: 2, value: 2 }]
+                    count: 10
+                    sharePermille: 185
+                    minLen: 12
+                    maxLen: 12
+                    lengths: 1
+                    constant: [{ start: 4, end: 6, bytes: '0500' }]
+                    example: { stream: '3f5a1c0d:c0001:ab', start: 0, end: 12 }
+                rare: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2739,6 +2799,98 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    TypesRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    TypeKey:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [byte, side], description: 'byte — байт сообщения, side — сторона обмена' }
+        at: { type: integer, minimum: 0, description: 'Смещение байта (для kind = byte)' }
+
+    MessagePlace:
+      type: object
+      required: [stream, start, end]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+
+    TypeGroup:
+      type: object
+      required: [id, when, key, count, sharePermille, minLen, maxLen, lengths, constant, example]
+      properties:
+        id: { type: string, description: 'Предлагаемый идентификатор сообщения' }
+        when: { type: string, description: 'Условие для описания' }
+        key:
+          type: array
+          items:
+            type: object
+            required: [kind, value]
+            properties:
+              kind: { type: string, enum: [byte, side] }
+              at: { type: integer, minimum: 0 }
+              value: { type: integer, minimum: 0, maximum: 255, description: 'Значение байта; для стороны 0 — начавшая соединение, 1 — вторая' }
+        count: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        minLen: { type: integer, minimum: 0 }
+        maxLen: { type: integer, minimum: 0 }
+        lengths: { type: integer, minimum: 0, description: 'Сколько разных длин у сообщений группы' }
+        constant:
+          type: array
+          description: Постоянные байты группы, которые меняются между группами
+          items:
+            type: object
+            required: [start, end, bytes]
+            properties:
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              bytes: { type: string, description: hex }
+        example:
+          oneOf:
+            - { $ref: '#/components/schemas/MessagePlace' }
+            - { type: 'null' }
+        lengthOutlier: { $ref: '#/components/schemas/MessagePlace' }
+
+    TypeHints:
+      type: object
+      required: [messages, truncated, incomplete, keys, fields, types, rare]
+      properties:
+        messages: { type: integer, minimum: 0 }
+        truncated: { type: boolean, description: 'Сообщений больше 20 000: взяты первые' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени' }
+        keys:
+          type: array
+          description: Различители; пусто — сообщения на типы не делятся
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/TypeKey' }
+              - type: object
+                required: [values, lengthExplainedPermille, constantGainPermille, scorePermille]
+                properties:
+                  values: { type: integer, minimum: 0 }
+                  lengthExplainedPermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля разнообразия длин, объяснённая различителями до этого включительно' }
+                  constantGainPermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля меняющихся байтов, ставших постоянными внутри групп' }
+                  scorePermille: { type: integer, minimum: 0, maximum: 1000 }
+        fields:
+          type: array
+          description: Поля-различители для описания; на них ссылаются условия when
+          items:
+            type: object
+            required: [name, at, type]
+            properties:
+              name: { type: string }
+              at: { type: integer, minimum: 0 }
+              type: { type: string, enum: [u8] }
+        types: { type: array, items: { $ref: '#/components/schemas/TypeGroup' } }
+        rare: { type: integer, minimum: 0, description: 'Сообщений в группах меньше трёх' }
 
     ChecksumRequest:
       type: object
