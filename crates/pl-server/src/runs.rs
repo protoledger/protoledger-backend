@@ -9,7 +9,8 @@ use pl_app::Session;
 use pl_core::ProblemKind;
 use pl_interp::Category;
 use pl_verify::{
-    Change, ChangeKind, CorpusFilter, Counterexample, DiffTotals, Run, StaleReason, Summary,
+    Change, ChangeKind, CorpusFilter, Counterexample, DiffTotals, HypothesisRun, Run, StaleReason,
+    Summary,
 };
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +79,7 @@ async fn start(
     let job_id = pl_app::start_verify(
         &state.jobs,
         &state.sources,
+        &state.actions,
         &state.session,
         request.corpus,
         request.revision,
@@ -211,6 +213,7 @@ struct RunDetail {
     head: RunHead,
     streams: Vec<StreamHead>,
     counterexamples: Vec<Counterexample>,
+    hypotheses: Vec<HypothesisRun>,
 }
 
 async fn show(
@@ -234,6 +237,7 @@ async fn show(
                 })
                 .collect(),
             counterexamples: run.counterexamples.clone(),
+            hypotheses: run.hypotheses.clone(),
             head: head(&run, stale),
         })
     })

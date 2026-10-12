@@ -367,3 +367,59 @@ async fn runs_survive_reopen_and_errors_are_clear() {
     let (status, _) = call(&fresh, Method::GET, "/api/runs/diff?a=run-0001", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hypothesis_tests_are_part_of_the_run() {
+    let state = project_state("hypotheses");
+    import(&state, "main.pcapng").await;
+    import(&state, "extra.pcapng").await;
+    for log in ["main.actions.csv", "extra.actions.csv"] {
+        let mapping =
+            json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+        let path = stand(log).to_string_lossy().into_owned();
+        let (status, body) = call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path, "mapping": mapping })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    // Ошибка исследователя: значение без знака — −5 из дополнительной записи опровергает H2.
+    let unsigned = answer_key().replace("type: i32be", "type: u32be");
+    save_interpretation(&state, &unsigned).await;
+    let id = run(&state, json!({})).await;
+    let (_, detail) = call(&state, Method::GET, &format!("/api/runs/{id}"), None).await;
+    let h2 = detail["hypotheses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "H2")
+        .unwrap()
+        .clone();
+    assert_eq!(h2["verdict"], "refuted", "{h2}");
+    let refuting = h2["counterexamples"].as_u64().unwrap();
+    assert!(refuting >= 1, "{h2}");
+    assert_eq!(detail["summary"]["counterexamples"], refuting, "{detail}");
+    let first = &detail["counterexamples"][0];
+    assert_eq!(first["violations"][0]["kind"], "hypothesis", "{first}");
+    assert_eq!(first["violations"][0]["id"], "H2");
+    assert_eq!(first["violations"][0]["status"], "hypothesis");
+    assert_eq!(first["category"], "matched", "структура сообщения цела");
+
+    save_interpretation(&state, &answer_key()).await;
+    let fixed = run(&state, json!({})).await;
+    let (_, detail) = call(&state, Method::GET, &format!("/api/runs/{fixed}"), None).await;
+    let h2 = detail["hypotheses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "H2")
+        .unwrap()
+        .clone();
+    assert_eq!(h2["verdict"], "no_counterexample", "{h2}");
+    assert!(h2["applicable"].as_u64().unwrap() > 0, "{h2}");
+    assert_eq!(detail["summary"]["counterexamples"], 0, "{detail}");
+}

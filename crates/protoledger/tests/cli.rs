@@ -241,6 +241,7 @@ fn project_with_run(name: &str) -> PathBuf {
         &it,
         Some(1),
         &sources,
+        &[],
         &Default::default(),
         current.settings_digest,
         &|| false,

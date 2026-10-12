@@ -53,6 +53,18 @@ fn differences(old: &Run, new: &Run) -> Vec<String> {
     if old.counterexamples != new.counterexamples && old.summary == new.summary {
         out.push("контрпримеры изменились".to_owned());
     }
+    for (a, b) in old.hypotheses.iter().zip(&new.hypotheses) {
+        if a != b {
+            out.push(format!("гипотеза {}: итог теста изменился", a.id));
+        }
+    }
+    if old.hypotheses.len() != new.hypotheses.len() {
+        out.push(format!(
+            "тестов гипотез: было {}, стало {}",
+            old.hypotheses.len(),
+            new.hypotheses.len()
+        ));
+    }
     out.truncate(10);
     out
 }
@@ -120,6 +132,10 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
     if stored.is_empty() {
         println!("Сохранённых прогонов нет: проверять нечего.");
     }
+    // Журналы действий проекта: по ним прогон выполняет тесты гипотез.
+    let logs = pl_app::ActionLogStore::default();
+    pl_app::reload_action_logs(&session, &logs);
+    let logs = logs.list();
     let current = pl_app::current_signature(&session, &store);
     let sources = store.list();
     for (id, old) in &stored {
@@ -141,6 +157,12 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
             &interpretation,
             Some(rev),
             &sources,
+            // Те же журналы, что у прогона: смена журналов — устаревание, а не невоспроизводимость.
+            &logs
+                .iter()
+                .filter(|l| old.inputs.logs.contains(&l.record.sha256))
+                .cloned()
+                .collect::<Vec<_>>(),
             &old.inputs.corpus,
             settings_digest.clone(),
             &|| false,

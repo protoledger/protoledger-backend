@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.15
+  version: 0.1.16
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -449,6 +449,8 @@ paths:
                     messageId: measure_resp
                     violations:
                       - { kind: check, id: C2, detail: контрольная сумма не сходится, status: rule }
+                hypotheses:
+                  - { id: H2, test: "value == action.params.value", verdict: no_counterexample, applicable: 10, held: 10, notApplicable: 22, counterexamples: 0, errors: 0 }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1880,8 +1882,8 @@ components:
       type: object
       required: [kind, id, detail, status]
       properties:
-        kind: { type: string, enum: [framing, expect, check, field_range] }
-        id: { type: string, description: Поле или проверка }
+        kind: { type: string, enum: [framing, expect, check, field_range, hypothesis], description: "hypothesis — не выполнился тест гипотезы (только в прогоне)" }
+        id: { type: string, description: Поле, проверка или гипотеза }
         detail: { type: string }
         status: { type: string, enum: [rule, hypothesis, unknown] }
 
@@ -1940,8 +1942,8 @@ components:
 
     StaleReason:
       type: string
-      enum: [interpretation, settings, sources]
-      description: Почему прогон устарел — интерпретацию или настройки сборки изменили, записи пропали из проекта
+      enum: [interpretation, settings, sources, action_logs]
+      description: Почему прогон устарел — интерпретацию или настройки сборки изменили, записи пропали из проекта, сменились журналы действий для тестов гипотез
 
     RunSummary:
       type: object
@@ -2034,7 +2036,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/RunHead'
         - type: object
-          required: [streams, counterexamples]
+          required: [streams, counterexamples, hypotheses]
           properties:
             streams:
               type: array
@@ -2042,6 +2044,23 @@ components:
             counterexamples:
               type: array
               items: { $ref: '#/components/schemas/Counterexample' }
+            hypotheses:
+              type: array
+              description: Тесты гипотез интерпретации на записях корпуса
+              items: { $ref: '#/components/schemas/RunHypothesis' }
+
+    RunHypothesis:
+      type: object
+      required: [id, test, verdict, applicable, held, notApplicable, counterexamples, errors]
+      properties:
+        id: { type: string, example: H6 }
+        test: { type: string, example: "threshold_centi_c == dec(action.params.threshold_c, 2)" }
+        verdict: { type: string, enum: [untested, no_counterexample, refuted] }
+        applicable: { type: integer, minimum: 0, description: Сообщений, к которым тест применим }
+        held: { type: integer, minimum: 0, description: Из них выполнилось }
+        notApplicable: { type: integer, minimum: 0 }
+        counterexamples: { type: integer, minimum: 0, description: Всего контрпримеров; первые — в общем списке прогона }
+        errors: { type: integer, minimum: 0, description: Сообщения, на которых тест не вычислился }
 
     RunItem:
       type: object
