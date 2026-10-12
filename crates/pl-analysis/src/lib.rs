@@ -18,6 +18,7 @@ mod checksum;
 mod correlation;
 mod exchanges;
 mod framing;
+mod types;
 mod variability;
 
 pub use checksum::{
@@ -32,6 +33,10 @@ pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
 pub use framing::{
     Counter, CounterReason, DelimiterHint, FieldRef, FixedHint, FramingHints, FramingSpec,
     LengthHint, LengthSpecHint, SignatureHint, find_framing,
+};
+pub use types::{
+    ConstBytes, KeyHint, KeyValue, MAX_TYPE_MESSAGES, TypeGroup, TypeHints, TypeKey, TypeOptions,
+    TypeSample, find_types,
 };
 pub use variability::{
     Column, CounterHint, LengthClass, Region, RegionKind, TopValue, Variability,

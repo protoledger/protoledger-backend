@@ -484,3 +484,90 @@ async fn checksums_find_the_trailing_sum_of_the_stand_protocol() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn types_split_messages_by_side_and_the_type_byte() {
+    let (state, _, ab, ba) = setup("types").await;
+    let (_, hints) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/framing",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    let framing = hints["length"][0]["framing"].clone();
+    let (status, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/types",
+        Some(json!({ "streams": [ab.clone(), ba.clone()], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    // Протокол стенда: тип — третий байт, у ответа он со старшим битом; движок об этом не знает.
+    assert_eq!(found["keys"][0]["kind"], "side", "{found}");
+    assert_eq!(found["keys"][1]["kind"], "byte");
+    assert_eq!(found["keys"][1]["at"], 2);
+    assert_eq!(
+        found["fields"],
+        json!([{ "name": "b2", "at": 2, "type": "u8" }])
+    );
+    let types = found["types"].as_array().unwrap();
+    let whens: Vec<&str> = types.iter().map(|t| t["when"].as_str().unwrap()).collect();
+    assert!(
+        whens.contains(&"dst_port == 4710 && b2 == 0x02"),
+        "{whens:?}"
+    );
+    assert!(
+        whens.contains(&"src_port == 4710 && b2 == 0x82"),
+        "{whens:?}"
+    );
+    let total: u64 = types.iter().map(|t| t["count"].as_u64().unwrap()).sum();
+    assert_eq!(total, found["messages"].as_u64().unwrap());
+    // Пример ведёт к настоящему сообщению потока.
+    let example = &types[0]["example"];
+    assert!(example["stream"] == json!(ab) || example["stream"] == json!(ba));
+    assert!(example["end"].as_u64().unwrap() > example["start"].as_u64().unwrap());
+
+    // Найденные условия принимаются описанием как есть.
+    let messages: Vec<String> = types
+        .iter()
+        .map(|t| {
+            format!(
+                "  - id: {}\n    when: \"{}\"\n    fields:\n      - {{ name: b2, at: 2, type: u8, status: hypothesis, hypothesis: H1 }}\n",
+                t["id"].as_str().unwrap(),
+                t["when"].as_str().unwrap()
+            )
+        })
+        .collect();
+    let yaml = format!(
+        "format: protoledger/interpretation@1\nframing: {}\nmessages:\n{}hypotheses:\n  - {{ id: H1, statement: \"b2 — тип сообщения\" }}\n",
+        framing,
+        messages.concat()
+    );
+    let (status, saved) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/types",
+        Some(json!({ "streams": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/types",
+        Some(json!({ "streams": ["00000000:c0001:ab"], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

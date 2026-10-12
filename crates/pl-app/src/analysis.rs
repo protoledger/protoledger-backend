@@ -1,9 +1,10 @@
 //! Подсказки исследователю поверх собранных потоков: границы, изменчивость, пары запрос→ответ.
 
 use pl_analysis::{
-    ChecksumAlt, ChecksumFn, CorrSample, Correlations, DataRun, Exchange, ExchangeStats,
-    FramingHints, Msg, StreamSample, Variability, VariabilityOptions, correlate, find_framing,
-    pair_exchanges, variability,
+    ChecksumAlt, ChecksumFn, ConstBytes, CorrSample, Correlations, DataRun, Exchange,
+    ExchangeStats, FramingHints, KeyHint, KeyValue, Msg, StreamSample, TypeKey, TypeOptions,
+    TypeSample, Variability, VariabilityOptions, correlate, find_framing, pair_exchanges,
+    variability,
 };
 use pl_core::{Problem, ProblemKind};
 use pl_interp::schema::Framing;
@@ -448,6 +449,207 @@ pub fn message_checksums(
                 width: a.width,
             })
             .collect(),
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct TypesRequest {
+    pub streams: Vec<String>,
+    pub framing: Option<Framing>,
+}
+
+/// Поле-различитель для описания: объявляется в каждом сообщении, на него ссылается `when`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeField {
+    pub name: String,
+    pub at: u32,
+    #[serde(rename = "type")]
+    pub ty: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePlace {
+    pub stream: String,
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeGroupView {
+    /// Предлагаемый идентификатор сообщения.
+    pub id: String,
+    /// Условие для описания.
+    pub when: String,
+    pub key: Vec<KeyValue>,
+    pub count: u64,
+    pub share_permille: u32,
+    pub min_len: u64,
+    pub max_len: u64,
+    pub lengths: u32,
+    pub constant: Vec<ConstBytes>,
+    pub example: Option<MessagePlace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length_outlier: Option<MessagePlace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypesView {
+    pub messages: u64,
+    pub truncated: bool,
+    pub incomplete: bool,
+    pub keys: Vec<KeyHint>,
+    pub fields: Vec<TypeField>,
+    pub types: Vec<TypeGroupView>,
+    pub rare: u64,
+}
+
+/// Типы сообщений указанных потоков: различители и условие `when` для каждого типа.
+pub fn message_types(
+    session: &Session,
+    store: &SourceStore,
+    request: &TypesRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TypesView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    let it = effective(session, request.framing.as_ref(), false)?;
+    let mut messages: Vec<(Vec<u8>, u8, u32)> = Vec::new();
+    let mut places: Vec<(&str, u64, u64)> = Vec::new();
+    // Порт принимающей стороны: если он один на все потоки, сторону можно записать условием на порт.
+    let mut ports: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    let room = pl_analysis::MAX_TYPE_MESSAGES + 1;
+    for (number, id) in request.streams.iter().enumerate() {
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        ports.insert(if dir == 0 {
+            input.meta.dst_port
+        } else {
+            input.meta.src_port
+        });
+        let result = pl_interp::apply(&it, &input, cancelled)
+            .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
+        for m in result.messages {
+            if messages.len() >= room {
+                break;
+            }
+            // Оборванное сообщение короче настоящего и исказило бы длины типа.
+            if matches!(m.category, Category::Incomplete | Category::Ambiguous) {
+                continue;
+            }
+            if let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) {
+                messages.push((bytes.into_owned(), u8::from(dir != 0), number as u32));
+                places.push((id.as_str(), m.start, m.end));
+            }
+        }
+    }
+    let port = match (ports.len(), ports.first()) {
+        (1, Some(p)) => Some(*p),
+        _ => None,
+    };
+    let exclude = it
+        .framing
+        .length
+        .as_ref()
+        .map(|l| (l.at..l.at.saturating_add(l.ty.size() as u32)).collect())
+        .unwrap_or_default();
+    let samples: Vec<TypeSample<'_>> = messages
+        .iter()
+        .map(|(data, side, stream)| TypeSample {
+            data,
+            side: *side,
+            stream: *stream,
+        })
+        .collect();
+    let found = pl_analysis::find_types(
+        &samples,
+        &TypeOptions {
+            exclude,
+            without_side: port.is_none(),
+        },
+        cancelled,
+    );
+
+    let place = |index: u64| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| places.get(i))
+            .map(|(stream, start, end)| MessagePlace {
+                stream: (*stream).to_owned(),
+                start: *start,
+                end: *end,
+            })
+    };
+    let types = found
+        .types
+        .into_iter()
+        .map(|t| {
+            let mut id = "msg".to_owned();
+            let mut terms: Vec<String> = Vec::new();
+            for kv in &t.key {
+                match (kv.key, port) {
+                    (TypeKey::Byte { at }, _) => {
+                        id.push_str(&format!("_{:02x}", kv.value));
+                        terms.push(format!("b{at} == 0x{:02x}", kv.value));
+                    }
+                    (TypeKey::Side, Some(p)) if kv.value == 0 => {
+                        id.push_str("_req");
+                        terms.push(format!("dst_port == {p}"));
+                    }
+                    (TypeKey::Side, Some(p)) => {
+                        id.push_str("_resp");
+                        terms.push(format!("src_port == {p}"));
+                    }
+                    // Без общего порта на стороны не делим: сюда не попадаем.
+                    (TypeKey::Side, None) => {}
+                }
+            }
+            TypeGroupView {
+                id,
+                when: terms.join(" && "),
+                key: t.key,
+                count: t.count,
+                share_permille: t.share_permille,
+                min_len: t.min_len,
+                max_len: t.max_len,
+                lengths: t.lengths,
+                constant: t.constant,
+                example: place(t.first),
+                length_outlier: t.length_outlier.and_then(place),
+            }
+        })
+        .collect();
+    Ok(TypesView {
+        messages: found.messages,
+        truncated: found.truncated,
+        incomplete: found.incomplete,
+        fields: found
+            .keys
+            .iter()
+            .filter_map(|k| match k.key {
+                TypeKey::Byte { at } => Some(TypeField {
+                    name: format!("b{at}"),
+                    at,
+                    ty: "u8",
+                }),
+                TypeKey::Side => None,
+            })
+            .collect(),
+        keys: found.keys,
+        types,
+        rare: found.rare,
     })
 }
 
