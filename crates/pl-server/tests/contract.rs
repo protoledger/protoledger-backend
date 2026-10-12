@@ -543,6 +543,13 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
     api.post(
+        "/api/analysis/draft",
+        "/api/analysis/draft",
+        json!({ "streams": [stream, format!("{conn}:ba")] }),
+        200,
+    )
+    .await;
+    api.post(
         "/api/analysis/checksums",
         "/api/analysis/checksums",
         json!({ "streams": [stream], "framing": hint }),

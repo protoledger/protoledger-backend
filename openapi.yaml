@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.23
+  version: 0.1.24
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1716,6 +1716,56 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/draft:
+    post:
+      tags: [analysis]
+      operationId: draftInterpretation
+      summary: Черновик описания протокола, собранный из подсказок
+      description: |
+        Собирает текст интерпретации по потокам обеих сторон обмена. Шаги: границы сообщений (лучший кандидат поля
+        длины и сигнатура начала) → типы сообщений (`/api/analysis/types`) → поля по поведению (счётчик, строки) и
+        связи с журналом действий по каждому типу → контрольная сумма. Все поля получают статус `hypothesis` и
+        гипотезу с основанием; связи с журналом — гипотезу с тестом (`period_ms == action.params.period_ms`),
+        контрольная сумма — проверку в `checks`. Из равнозначных чтений берётся самое узкое, о возможной большей
+        ширине сказано в гипотезе. Черновик не сохраняется: `yaml` проходит ту же проверку, что
+        `PUT /api/interpretation`, и его можно сохранить как есть. `steps` — что найдено на каждом шаге и на чём
+        основано; `summary` — что черновик даёт на этих же потоках. `422` — границы сообщений не найдены.
+        Журнал (`logId` или все журналы проекта) не обязателен: без него связей с действиями не будет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DraftRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba']
+      responses:
+        '200':
+          description: Черновик описания
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+              example:
+                yaml: "format: protoledger/interpretation@1\nframing: {\"kind\":\"length_prefixed\",\"length\":{\"at\":4,\"type\":\"u16le\",\"adjust\":7},\"status\":\"hypothesis\"}\nmessages:\n  - id: message\n    fields:\n      - { name: length, at: 4, type: u16le, status: hypothesis, hypothesis: H1 }\nhypotheses:\n  - { id: H1, statement: \"length — длина\" }\n"
+                steps:
+                  - { title: Границы сообщений, detail: 'Поле длины u16le по смещению 4: размер сообщения = значение + 7. Сообщений: 32, контрпримеров нет.' }
+                  - { title: Контрольная сумма, detail: 'сумма байтов по модулю 256: поле u8 по смещению end-1, сошлась в 32 из 32 сообщений.' }
+                summary:
+                  streams: 2
+                  messages: 32
+                  counts: { matched: 32 }
+                  unknownBytes: 61308
+                  types: 6
+                  hypotheses: 11
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2865,6 +2915,42 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    DraftRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        logId: { type: string, description: 'Журнал действий; по умолчанию все журналы проекта' }
+
+    Draft:
+      type: object
+      required: [yaml, steps, summary, incomplete]
+      properties:
+        yaml: { type: string, description: 'Текст интерпретации' }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [title, detail]
+            properties:
+              title: { type: string }
+              detail: { type: string }
+        summary:
+          type: object
+          required: [streams, messages, counts, unknownBytes, types, hypotheses]
+          properties:
+            streams: { type: integer, minimum: 0 }
+            messages: { type: integer, minimum: 0 }
+            counts:
+              type: object
+              description: Сообщений по категориям результата
+              additionalProperties: { type: integer, minimum: 0 }
+            unknownBytes: { type: integer, minimum: 0 }
+            types: { type: integer, minimum: 0 }
+            hypotheses: { type: integer, minimum: 0 }
+        incomplete: { type: boolean, description: 'Часть шагов не успела выполниться' }
 
     FieldsRequest:
       type: object
