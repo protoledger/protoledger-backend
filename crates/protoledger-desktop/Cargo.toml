@@ -1,0 +1,30 @@
+[package]
+name = "protoledger-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# Отдельный workspace: Tauri тянет WebView и системные библиотеки, основной CI движка их не собирает.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[dependencies]
+pl-server = { path = "../pl-server" }
+tauri = { version = "2.12.3", features = [] }
+tokio = { version = "1.53.2", features = ["net", "sync", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
