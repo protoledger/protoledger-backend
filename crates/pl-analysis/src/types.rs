@@ -362,10 +362,10 @@ pub fn find_types(
 
     // Стороны и байт, который их повторяет: тогда условие пишется по байту, а не по порту.
     let both_sides = samples.iter().any(|s| s.side == 0) && samples.iter().any(|s| s.side != 0);
+    let by_side = partition(indexed(), &[TypeKey::Side], span);
     let direction_byte = (0..min_len.min(KEY_SPAN))
         .filter(|at| allowed(*at))
         .find(|at| {
-            let by_side = partition(indexed(), &[TypeKey::Side], span);
             let values: Vec<Option<u8>> = by_side
                 .values()
                 .map(|g| match g.bytes.get(*at) {
