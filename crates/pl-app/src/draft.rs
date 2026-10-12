@@ -892,4 +892,40 @@ mod tests {
         assert_eq!(narrowest(8, "u16be", &alts), (9, "u8".to_owned()));
         assert_eq!(narrowest(10, "u16be", &[]), (10, "u16be".to_owned()));
     }
+
+    #[test]
+    fn fields_in_every_encoding_render_into_an_accepted_description() {
+        let framing: Framing = serde_json::from_value(serde_json::json!({
+            "kind": "length_prefixed",
+            "length": { "at": 0, "type": "u8", "adjust": 0 },
+            "status": "hypothesis"
+        }))
+        .unwrap();
+        let mut hyps = Hypotheses::default();
+        let hypothesis = hyps.id("all", || "поля разных кодировок".to_owned(), None);
+        let field = |name: &str, at: u64, ty: &str, len: Option<&str>, mask: Option<u64>| Field {
+            name: name.to_owned(),
+            at: at.to_string(),
+            ty: ty.to_owned(),
+            len: len.map(str::to_owned),
+            expect: None,
+            mask,
+            hypothesis,
+            span: None,
+        };
+        let message = Message {
+            id: "m".to_owned(),
+            when: String::new(),
+            count: 1,
+            fields: vec![
+                field("flag", 1, "u8", None, Some(0x08)),
+                field("serial", 2, "bcd", Some("2"), None),
+                field("temperature", 4, "f32le", None, None),
+            ],
+        };
+        let yaml = render(&framing, &[message], &hyps, &[]);
+        assert!(yaml.contains("type: u8, mask: 0x08"), "{yaml}");
+        assert!(yaml.contains("type: bcd, len: 2"), "{yaml}");
+        parse(&yaml).unwrap();
+    }
 }
