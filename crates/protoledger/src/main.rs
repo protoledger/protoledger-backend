@@ -25,6 +25,7 @@ enum Command {
         /// Адрес прослушивания
         #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
         host: IpAddr,
+        /// Порт прослушивания
         #[arg(long, default_value_t = 8080)]
         port: u16,
         /// Каталог, где лежат проекты

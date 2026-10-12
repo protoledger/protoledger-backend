@@ -21,6 +21,7 @@ pub struct ReportArgs {
     /// Прогон для отчёта (run-0001); без значения — последний
     #[arg(long)]
     pub run: Option<String>,
+    /// Формат отчёта
     #[arg(long, value_enum, default_value = "md")]
     pub format: Format,
     /// Файл результата; без значения — в stdout

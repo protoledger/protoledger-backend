@@ -347,7 +347,8 @@ async fn sweep(state: &AppState, real: &[String]) -> (usize, Vec<String>) {
     for (template, item) in spec["paths"].as_object().unwrap() {
         // Поток событий задачи держит соединение, пока задача идёт: настоящие задачи тут завершены,
         // а незавершённых злые запросы не оставляют — см. wait_jobs ниже.
-        for method in item.as_object().unwrap().keys() {
+        for (method, operation) in item.as_object().unwrap() {
+            let documented = &operation["responses"];
             let method = Method::from_bytes(method.to_uppercase().as_bytes()).unwrap();
             let with_body = matches!(method, Method::POST | Method::PUT | Method::PATCH);
             for url in expand(template, &values) {
@@ -368,6 +369,15 @@ async fn sweep(state: &AppState, real: &[String]) -> (usize, Vec<String>) {
                     match send(state, &method, &uri, content_type, body.clone()).await {
                         Err(why) => defects.push(format!("{method} {template} | {why} | {shown}")),
                         Ok(reply) => {
+                            // Каждый код ответа должен быть описан в контракте для этой операции.
+                            if documented.get(reply.status.as_str()).is_none() {
+                                defects.push(format!(
+                                    "{method} {template} | код {} не описан в контракте | {shown} [{}; {} байт тела]",
+                                    reply.status.as_u16(),
+                                    content_type.unwrap_or("-"),
+                                    body.len()
+                                ));
+                            }
                             if reply.status.is_server_error() {
                                 defects.push(format!(
                                     "{method} {template} | ошибка сервера {} | {shown} [{}; {} байт тела] {}",
