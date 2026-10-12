@@ -216,19 +216,22 @@ pub(crate) fn assign<'a>(
     let mut out = Vec::with_capacity(first_ts.len());
     for ts in first_ts {
         let end = actions.partition_point(|a| a.ts_ns <= ts.saturating_add(TOLERANCE_NS));
+        // Действия раньше окна не подходят никогда: без этой границы каждый поиск проходил бы
+        // весь журнал, и на длинных записях время росло бы квадратично.
+        let start = actions.partition_point(|a| a.ts_ns < ts.saturating_sub(window_ns));
         let in_window = |i: usize| {
             !used.get(i).copied().unwrap_or(true)
                 && actions
                     .get(i)
                     .is_some_and(|a| ts.saturating_sub(a.ts_ns) <= window_ns)
         };
-        let latest = (0..end)
+        let latest = (start..end)
             .rev()
             .filter(|&i| in_window(i))
             .filter_map(|i| actions.get(i).map(|a| a.ts_ns))
             .next();
         let found = latest.and_then(|t| {
-            (0..end).find(|&i| in_window(i) && actions.get(i).is_some_and(|a| a.ts_ns == t))
+            (start..end).find(|&i| in_window(i) && actions.get(i).is_some_and(|a| a.ts_ns == t))
         });
         if let Some(i) = found
             && let Some(u) = used.get_mut(i)
@@ -509,6 +512,22 @@ mod tests {
         let got = assign(&[1_105_000_000, 1_205_000_000], &actions, 2_000_000_000);
         let lines: Vec<Option<u64>> = got.iter().map(|a| a.map(|x| x.line)).collect();
         assert_eq!(lines, [Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn long_journal_is_assigned_in_reasonable_time() {
+        // 50 тыс. действий раз в секунду и столько же сообщений через миллисекунду после каждого.
+        let actions: Vec<Action> = (0..50_000u64).map(|i| action(i + 2, i * 1000)).collect();
+        let refs: Vec<&Action> = actions.iter().collect();
+        let stamps: Vec<u64> = (0..50_000u64)
+            .map(|i| i * 1_000_000_000 + 1_000_000)
+            .collect();
+        let got = assign(&stamps, &refs, 2_000_000_000);
+        assert!(
+            got.iter()
+                .enumerate()
+                .all(|(i, a)| a.map(|x| x.line) == Some(i as u64 + 2))
+        );
     }
 
     #[test]
