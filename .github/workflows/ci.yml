@@ -58,6 +58,34 @@ jobs:
           PL_REQUIRE_TSHARK: "1"
         run: cargo test --all-features --locked
 
+  desktop:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Есть ли крейт
+        id: ready
+        run: if [ -f crates/protoledger-desktop/Cargo.toml ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Системные библиотеки WebView
+        if: steps.ready.outputs.ok == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.ready.outputs.ok == 'true'
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        if: steps.ready.outputs.ok == 'true'
+        with:
+          workspaces: crates/protoledger-desktop
+      - name: Настольное приложение — формат, линтер, тесты
+        if: steps.ready.outputs.ok == 'true'
+        working-directory: crates/protoledger-desktop
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+
   api-doc:
     runs-on: ubuntu-latest
     steps:
@@ -67,11 +95,11 @@ jobs:
 
   ci:
     if: always()
-    needs: [pr-title, rust, api-doc]
+    needs: [pr-title, rust, desktop, api-doc]
     runs-on: ubuntu-latest
     steps:
       - name: Итог
         run: |
-          for r in "${{ needs.pr-title.result }}" "${{ needs.rust.result }}" "${{ needs.api-doc.result }}"; do
+          for r in "${{ needs.pr-title.result }}" "${{ needs.rust.result }}" "${{ needs.desktop.result }}" "${{ needs.api-doc.result }}"; do
             case "$r" in success|skipped) ;; *) echo "есть упавшие проверки: $r"; exit 1 ;; esac
           done

@@ -1,0 +1,97 @@
+//! Настольное приложение (ADR 0009): движок поднимается в процессе на свободном порту
+//! 127.0.0.1 и открывается в окне. SPA и API те же, что у `protoledger serve`.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::net::{Ipv4Addr, TcpListener};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tauri::async_runtime::JoinHandle;
+use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
+use tokio::sync::Notify;
+
+/// Сколько ждём завершения запросов после закрытия окна.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+type Server = Mutex<Option<JoinHandle<std::io::Result<()>>>>;
+
+fn main() {
+    tracing_subscriber::fmt().with_target(false).init();
+    if let Err(err) = run() {
+        tracing::error!("приложение завершилось с ошибкой: {err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Порт занимаем до создания окна: первый запрос WebView ждёт в очереди сокета.
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let port = listener.local_addr()?.port();
+    let origin: Url = format!("http://127.0.0.1:{port}/").parse()?;
+    let stop = Arc::new(Notify::new());
+
+    let app = tauri::Builder::default()
+        .setup({
+            let stop = stop.clone();
+            let origin = origin.clone();
+            move |app| {
+                let workspace = app.path().document_dir()?.join("protoledger");
+                std::fs::create_dir_all(&workspace)?;
+                let state = pl_server::AppState::new(workspace);
+                let server = tauri::async_runtime::spawn(async move {
+                    let listener = tokio::net::TcpListener::from_std(listener)?;
+                    pl_server::serve_on(listener, state, async move { stop.notified().await }).await
+                });
+                app.manage::<Server>(Mutex::new(Some(server)));
+
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin.clone()))
+                    .title("protoledger")
+                    .inner_size(1440.0, 900.0)
+                    .min_inner_size(1024.0, 640.0)
+                    // Окно показывает только встроенный движок: внешние адреса не открываются.
+                    .on_navigation(move |url| same_origin(url, &origin))
+                    .build()?;
+                Ok(())
+            }
+        })
+        .build(tauri::generate_context!())?;
+
+    app.run(move |app, event| {
+        if let RunEvent::Exit = event {
+            stop.notify_one();
+            let server = app.state::<Server>().lock().ok().and_then(|mut s| s.take());
+            if let Some(server) = server {
+                // Таймер создаётся внутри рантайма: вне его tokio::time паникует.
+                let done = tauri::async_runtime::block_on(async move {
+                    tokio::time::timeout(SHUTDOWN_GRACE, server).await
+                });
+                if done.is_err() {
+                    tracing::warn!("сервер не остановился за {SHUTDOWN_GRACE:?}");
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+fn same_origin(url: &Url, origin: &Url) -> bool {
+    url.scheme() == origin.scheme() && url.host() == origin.host() && url.port() == origin.port()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_stays_on_engine() {
+        let origin: Url = "http://127.0.0.1:4100/".parse().unwrap();
+        let ok = |s: &str| same_origin(&s.parse().unwrap(), &origin);
+        assert!(ok("http://127.0.0.1:4100/project/streams?id=1"));
+        assert!(!ok("http://127.0.0.1:4101/"));
+        assert!(!ok("http://localhost:4100/"));
+        assert!(!ok("https://127.0.0.1:4100/"));
+        assert!(!ok("https://example.com/"));
+        assert!(!ok("file:///C:/Windows/win.ini"));
+    }
+}

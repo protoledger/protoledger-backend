@@ -139,14 +139,25 @@ pub fn router(state: AppState) -> Router {
 
 pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.addr).await?;
+    serve_on(listener, AppState::from_config(&config), async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+}
+
+/// Запуск на готовом слушателе: настольное приложение занимает свободный порт само
+/// и останавливает сервер при закрытии окна.
+pub async fn serve_on(
+    listener: tokio::net::TcpListener,
+    state: AppState,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
     tracing::info!(
         addr = %listener.local_addr()?,
-        workspace = %config.workspace.display(),
+        workspace = %state.session.workspace().display(),
         "сервер запущен"
     );
-    axum::serve(listener, router(AppState::from_config(&config)))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown)
         .await
 }
