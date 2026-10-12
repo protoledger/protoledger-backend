@@ -464,3 +464,66 @@ fn repeat_and_sync_are_validated() {
         );
     }
 }
+
+/// Запрос и ответ с одинаковыми байтами: тип сообщения решает сторона, а не содержимое.
+const BY_PORT: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: rule }
+messages:
+  - id: request
+    when: "dst_port == 4710 && code == 3"
+    fields:
+      - { name: code, at: 1, type: u8, status: rule }
+  - id: response
+    when: "src_port == 4710 && code == 3"
+    fields:
+      - { name: code, at: 1, type: u8, status: rule }
+"#;
+
+#[test]
+fn when_sees_stream_ports_and_addresses() {
+    let it = Interpretation::parse(BY_PORT).unwrap();
+    let bytes = [2u8, 3];
+    let to_device = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(to_device.messages[0].message_id.as_deref(), Some("request"));
+
+    let mut back = whole(&bytes);
+    back.meta.src_port = 4710;
+    back.meta.dst_port = 49320;
+    let from_device = apply(&it, &back, &|| false).unwrap();
+    assert_eq!(
+        from_device.messages[0].message_id.as_deref(),
+        Some("response")
+    );
+
+    let by_ip = BY_PORT.replace(
+        r#""dst_port == 4710 && code == 3""#,
+        r#"'dst_ip == "10.0.1.1" && code == 3'"#,
+    );
+    let it = Interpretation::parse(&by_ip).unwrap();
+    let found = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(found.messages[0].message_id.as_deref(), Some("request"));
+}
+
+#[test]
+fn field_named_like_a_stream_name_wins_in_when() {
+    let spec = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: rule }
+messages:
+  - id: own
+    when: "dst_port == 3"
+    fields:
+      - { name: dst_port, at: 1, type: u8, status: rule }
+"#;
+    let it = Interpretation::parse(spec).unwrap();
+    let found = apply(&it, &whole(&[2u8, 3]), &|| false).unwrap();
+    assert_eq!(found.messages[0].message_id.as_deref(), Some("own"));
+    assert_eq!(found.messages[0].category, Category::Matched);
+}
+
+#[test]
+fn unknown_name_in_when_is_still_rejected() {
+    let bad = BY_PORT.replace("dst_port == 4710", "port == 4710");
+    assert!(Interpretation::parse(&bad).is_err());
+}
