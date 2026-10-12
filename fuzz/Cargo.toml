@@ -1,0 +1,56 @@
+[package]
+name = "protoledger-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pl-actions = { path = "../crates/pl-actions" }
+pl-capture = { path = "../crates/pl-capture" }
+pl-interp = { path = "../crates/pl-interp" }
+pl-reassembly = { path = "../crates/pl-reassembly" }
+
+# Отдельный workspace: цели собираются только nightly-компилятором с инструментированием.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "capture"
+path = "fuzz_targets/capture.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal"
+path = "fuzz_targets/journal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "interpretation"
+path = "fuzz_targets/interpretation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expr"
+path = "fuzz_targets/expr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framing"
+path = "fuzz_targets/framing.rs"
+test = false
+doc = false
+bench = false

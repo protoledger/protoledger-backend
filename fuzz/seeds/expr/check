@@ -1,0 +1,1 @@
+length + 7 == message.len && sum8(0, message.len - 1) == tail
