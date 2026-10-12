@@ -1,0 +1,50 @@
+name: bench
+
+# Замер времени и пиковой памяти на контрольном профиле: 100 МиБ, 250 тыс. кадров, 1000 соединений.
+# Вручную и при изменении самого замера. Раннер — Linux x86-64, 4 vCPU; память ограничена 8 ГиБ.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/bench.yml"
+      - "crates/protoledger/src/bench.rs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Сборка
+        run: cargo build --release --locked -p protoledger -p pl-synth
+      - name: Запись профиля
+        run: |
+          mkdir -p bench-data
+          target/release/pl-synth profile --out bench-data/profile.pcapng
+          ls -l bench-data
+      - name: Замер
+        run: |
+          nproc
+          grep MemTotal /proc/meminfo
+          # 8 ГиБ на процесс, как в профиле проверки.
+          ulimit -v $((8 * 1024 * 1024))
+          target/release/protoledger bench bench-data \
+            --interpretation fixtures/synthetic/interpretation.yaml --repeat 5 --json | tee bench.json
+          target/release/protoledger bench bench-data \
+            --interpretation fixtures/synthetic/interpretation.yaml --repeat 5 >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: bench.json
