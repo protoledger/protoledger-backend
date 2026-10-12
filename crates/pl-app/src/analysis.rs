@@ -30,6 +30,16 @@ fn not_found(id: &str) -> Problem {
     Problem::new(ProblemKind::NotFound, format!("Потока {id} нет в проекте."))
 }
 
+/// Число потоков проверяется раньше всего остального: пустой запрос — ошибка запроса, а не проекта.
+fn check_streams(streams: &[String]) -> Result<(), Problem> {
+    if streams.is_empty() || streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    Ok(())
+}
+
 /// Непрерывные участки известных байтов потока и начала TCP-сегментов внутри них.
 fn runs_of(input: &StreamInput<'_>, stream: &Stream) -> Vec<DataRun> {
     let mut runs: Vec<(u64, DataRun)> = Vec::new();
@@ -340,16 +350,27 @@ pub fn message_checksums(
     request: &ChecksumRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<ChecksumView, Problem> {
-    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
-        return Err(bad(format!(
-            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
-        )));
-    }
+    check_streams(&request.streams)?;
     let it = effective(
         session,
         request.framing.as_ref(),
         request.message_id.is_some(),
     )?;
+    checksums_on(&it, store, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn checksums_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &ChecksumRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<ChecksumView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
     let mut messages: Vec<Vec<u8>> = Vec::new();
     let mut places: Vec<(&str, u64, u64)> = Vec::new();
     // Запас сверх предела поиска нужен только для признака «не всё вошло».
@@ -363,7 +384,7 @@ pub fn message_checksums(
             return Err(not_found(id));
         };
         let input = stream_input(&data.file, connection, stream, dir);
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
             if messages.len() >= room {
@@ -514,12 +535,23 @@ pub fn message_types(
     request: &TypesRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<TypesView, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(session, request.framing.as_ref(), false)?;
+    types_on(&it, store, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn types_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &TypesRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TypesView, Problem> {
     if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
         return Err(bad(format!(
             "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
         )));
     }
-    let it = effective(session, request.framing.as_ref(), false)?;
     let mut messages: Vec<(Vec<u8>, u8, u32)> = Vec::new();
     let mut places: Vec<(&str, u64, u64)> = Vec::new();
     // Порт принимающей стороны: если он один на все потоки, сторону можно записать условием на порт.
@@ -539,7 +571,7 @@ pub fn message_types(
         } else {
             input.meta.src_port
         });
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
             if messages.len() >= room {
@@ -746,6 +778,22 @@ pub fn message_fields(
     request: &FieldsRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<FieldsView, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    fields_on(&it, store, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn fields_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &FieldsRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FieldsView, Problem> {
     if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
         return Err(bad(format!(
             "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
@@ -754,11 +802,6 @@ pub fn message_fields(
     if request.matching.len() > 8 {
         return Err(bad("match — не больше 8 условий."));
     }
-    let it = effective(
-        session,
-        request.framing.as_ref(),
-        request.message_id.is_some(),
-    )?;
     // Все сообщения потоков и признак «выбрано фильтром»: счётчик — свойство потока целиком,
     // среди сообщений одного типа он идёт с пропусками.
     struct Row<'a> {
@@ -780,7 +823,7 @@ pub fn message_fields(
         };
         let input = stream_input(&data.file, connection, stream, dir);
         let times = crate::hypothesis::Times::new(&data, stream);
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
             if rows.len() >= room {
@@ -973,6 +1016,23 @@ pub fn message_correlations(
     request: &CorrelationRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Correlations, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    correlations_on(&it, store, logs, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn correlations_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    logs: &ActionLogStore,
+    request: &CorrelationRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Correlations, Problem> {
     if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
         return Err(bad(format!(
             "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
@@ -981,11 +1041,6 @@ pub fn message_correlations(
     if request.window_ms.is_some_and(|w| w > 600_000) {
         return Err(bad("windowMs — не больше 600000."));
     }
-    let it = effective(
-        session,
-        request.framing.as_ref(),
-        request.message_id.is_some(),
-    )?;
     let loaded = match &request.log_id {
         Some(id) => vec![logs.get(id).ok_or_else(|| {
             Problem::new(ProblemKind::NotFound, format!("Журнала действий {id} нет."))
@@ -1016,7 +1071,7 @@ pub fn message_correlations(
             return Err(not_found(id));
         };
         let input = stream_input(&data.file, connection, stream, dir);
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         let times = crate::hypothesis::Times::new(&data, stream);
         // Действия подбираются ко всем сообщениям потока, и только потом остаются сообщения нужного
