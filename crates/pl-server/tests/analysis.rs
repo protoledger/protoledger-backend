@@ -633,3 +633,107 @@ async fn field_hints_find_the_request_counter_even_under_a_type_filter() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn draft_describes_the_stand_protocol_and_survives_a_run() {
+    let (state, ab) = with_log("draft").await;
+    let ba = ab.replace(":ab", ":ba");
+    let (status, draft) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/draft",
+        Some(json!({ "streams": [ab.clone(), ba] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    assert_eq!(draft["incomplete"], false);
+    let yaml = draft["yaml"].as_str().unwrap();
+    // Найдено без знаний о протоколе: границы, сигнатура, тип, счётчик, связи с журналом, сумма.
+    for expected in [
+        r#""length":{"at":4,"type":"u16le","adjust":7}"#,
+        r#""sync":"5ac3""#,
+        r#"when: "dst_port == 4710 && b2 == 0x02""#,
+        "name: counter, at: 3, type: u8",
+        r#"test: "value == action.params.value""#,
+        "name: checksum, at: end-1, type: u8",
+        r#"expr: "checksum == sum8(0, message.len - 1)""#,
+    ] {
+        assert!(
+            yaml.contains(expected),
+            "нет «{expected}» в черновике:\n{yaml}"
+        );
+    }
+    let titles: Vec<&str> = draft["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Границы сообщений",
+            "Типы сообщений",
+            "Счётчик",
+            "Связи с журналом действий",
+            "Контрольная сумма",
+            "Проверка черновика"
+        ]
+    );
+    let summary = &draft["summary"];
+    assert_eq!(summary["counts"]["matched"], summary["messages"], "{draft}");
+    assert_eq!(summary["types"], 6);
+
+    // Черновик сохраняется как есть; прогон не находит ни нарушений, ни опровергнутых гипотез.
+    let (status, saved) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (status, _) = call(&state, Method::POST, "/api/runs", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    wait_jobs(&state).await;
+    let (_, runs) = call(&state, Method::GET, "/api/runs", None).await;
+    let id = runs["items"][0]["id"].as_str().unwrap().to_owned();
+    let (_, run) = call(&state, Method::GET, &format!("/api/runs/{id}"), None).await;
+    assert_eq!(run["summary"]["counterexamples"], 0, "{run}");
+    let hypotheses = run["hypotheses"].as_array().unwrap();
+    assert!(!hypotheses.is_empty());
+    for h in hypotheses {
+        assert_eq!(h["verdict"], "no_counterexample", "{h}");
+    }
+}
+
+#[tokio::test]
+async fn draft_without_boundaries_is_refused_with_a_reason() {
+    let (state, _, ab, _) = setup("draft-none").await;
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/draft",
+        Some(json!({ "streams": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/draft",
+        Some(json!({ "streams": ["00000000:c0001:ab"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Без журнала черновик тоже собирается, просто без связей с действиями.
+    let (status, draft) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/draft",
+        Some(json!({ "streams": [ab.clone(), ab.replace(":ab", ":ba")] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    assert!(!draft["yaml"].as_str().unwrap().contains("action."));
+}
