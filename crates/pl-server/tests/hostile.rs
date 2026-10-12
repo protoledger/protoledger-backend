@@ -202,3 +202,100 @@ async fn connection_limit_is_reported_as_problem() {
     let (status, _) = call(&state, Method::GET, "/api/health", None).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+/// Злые журналы и описания протокола через API: ответ — успех или понятная ошибка клиента,
+/// никогда не ошибка сервера, и сервер после каждого файла отвечает.
+#[tokio::test(flavor = "multi_thread")]
+async fn hostile_journals_and_descriptions_never_break_the_server() {
+    let state = state("inputs");
+    let (mut accepted, mut rejected) = (0, 0);
+    for sample in pl_hostile::inputs::journals() {
+        let path = hostile_dir()
+            .join("journals")
+            .join(format!("{}.{}", sample.name, sample.extension));
+        let format = if sample.name.starts_with("json-") {
+            "json"
+        } else {
+            "kv"
+        };
+        let mapping = json!({ "time": "time", "action": "action", "params": "params", "result": "result", "paramsFormat": format });
+        let (status, body) = call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path.to_string_lossy(), "mapping": mapping })),
+        )
+        .await;
+        match status.as_u16() {
+            200 => accepted += 1,
+            413 | 422 => {
+                assert!(
+                    body["detail"].is_string(),
+                    "{}: нет текста ошибки",
+                    sample.name
+                );
+                rejected += 1;
+            }
+            other => panic!("{}: неожиданный статус {other}: {body}", sample.name),
+        }
+        let (status, _) = call(&state, Method::GET, "/api/action-logs", None).await;
+        assert_eq!(status, StatusCode::OK, "{}", sample.name);
+    }
+    assert!(
+        accepted >= 5 && rejected >= 5,
+        "{accepted} принято, {rejected} отклонено"
+    );
+
+    let (mut saved, mut refused) = (0, 0);
+    for sample in pl_hostile::inputs::interpretations() {
+        let Ok(yaml) = String::from_utf8(sample.bytes.clone()) else {
+            continue;
+        };
+        let (status, body) = call(
+            &state,
+            Method::PUT,
+            "/api/interpretation",
+            Some(json!({ "yaml": yaml })),
+        )
+        .await;
+        match status.as_u16() {
+            200 => saved += 1,
+            413 | 422 => {
+                assert!(
+                    body["detail"].is_string(),
+                    "{}: нет текста ошибки",
+                    sample.name
+                );
+                refused += 1;
+            }
+            other => panic!("{}: неожиданный статус {other}: {body}", sample.name),
+        }
+        let (status, _) = call(&state, Method::GET, "/api/project", None).await;
+        assert_eq!(status, StatusCode::OK, "{}", sample.name);
+    }
+    assert!(
+        saved >= 3 && refused >= 8,
+        "{saved} сохранено, {refused} отклонено"
+    );
+
+    // Строки с разметкой возвращаются как данные.
+    let (_, logs) = call(&state, Method::GET, "/api/action-logs", None).await;
+    let html = logs["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["name"] == "html-and-controls.csv")
+        .expect("журнал с разметкой принят");
+    let (status, actions) = call(
+        &state,
+        Method::GET,
+        &format!(
+            "/api/action-logs/{}/actions?limit=10",
+            html["id"].as_str().unwrap()
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(actions["items"][0]["action"], "<script>alert(1)</script>");
+}

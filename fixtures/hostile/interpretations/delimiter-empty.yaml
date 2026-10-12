@@ -1,0 +1,2 @@
+format: protoledger/interpretation@1
+framing: { kind: delimiter, bytes: "" }

@@ -5,7 +5,7 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "pl-hostile",
-    about = "Злые записи трафика для проверки устойчивости"
+    about = "Злые записи трафика, журналы, описания и манифесты для проверки устойчивости"
 )]
 struct Cli {
     /// Каталог результата
@@ -33,7 +33,22 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
+    for s in pl_hostile::inputs::journals() {
+        items.push((format!("journals/{}.{}", s.name, s.extension), s.bytes));
+    }
+    for s in pl_hostile::inputs::interpretations() {
+        items.push((
+            format!("interpretations/{}.{}", s.name, s.extension),
+            s.bytes,
+        ));
+    }
+    for s in pl_hostile::inputs::manifests() {
+        items.push((format!("projects/{}/project.yaml", s.name), s.bytes));
+    }
     for (file, bytes) in items {
+        if let Some(parent) = cli.out.join(&file).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Err(e) = std::fs::write(cli.out.join(&file), &bytes) {
             eprintln!("{file}: {e}");
             return std::process::ExitCode::from(2);

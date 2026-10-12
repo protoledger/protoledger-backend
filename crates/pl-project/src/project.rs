@@ -202,6 +202,29 @@ fn write_atomic(dir: &Path, target: &Path, bytes: &[u8]) -> Result<(), ProjectEr
     Ok(())
 }
 
+/// Каталоги проекта — настоящие каталоги внутри его папки. Чужой проект с символической ссылкой
+/// на их месте увёл бы чтение и запись (копии записей, прогоны) за пределы папки.
+fn reject_linked_dirs(root: &Path) -> Result<(), ProjectError> {
+    let history = format!("{INTERPRETATION_DIR}/history");
+    for rel in [
+        SOURCES_DIR,
+        RUNS_DIR,
+        ACTION_LOGS_DIR,
+        INTERPRETATION_DIR,
+        history.as_str(),
+        CACHE_DIR,
+    ] {
+        if let Ok(meta) = fs::symlink_metadata(root.join(rel))
+            && !meta.file_type().is_dir()
+        {
+            return Err(ProjectError::InvalidPath(
+                "в папке проекта на месте каталога — символическая ссылка или файл",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn save_manifest(root: &Path, manifest: &Manifest) -> Result<(), ProjectError> {
     let text = serde_saphyr::to_string(manifest)
         .map_err(|e| ProjectError::InvalidManifest(e.to_string()))?;
@@ -443,6 +466,7 @@ impl Project {
             }
         }
         let manifest = load_manifest(path)?;
+        reject_linked_dirs(path)?;
         Ok(Self {
             root: path.to_path_buf(),
             manifest,
@@ -1512,6 +1536,43 @@ mod tests {
         assert!(matches!(
             Project::open(&root),
             Err(ProjectError::NotAProject)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_directories_are_refused() {
+        for name in [
+            SOURCES_DIR,
+            RUNS_DIR,
+            ACTION_LOGS_DIR,
+            INTERPRETATION_DIR,
+            CACHE_DIR,
+        ] {
+            let dir = TestDir::new();
+            let root = dir.path("p.protoledger");
+            drop(Project::create(&root).unwrap());
+            let outside = dir.path("outside");
+            fs::create_dir_all(&outside).unwrap();
+            let _ = fs::remove_dir_all(root.join(name));
+            std::os::unix::fs::symlink(&outside, root.join(name)).unwrap();
+            assert!(
+                matches!(Project::open(&root), Err(ProjectError::InvalidPath(_))),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_in_place_of_a_directory_is_refused() {
+        let dir = TestDir::new();
+        let root = dir.path("p.protoledger");
+        drop(Project::create(&root).unwrap());
+        let _ = fs::remove_dir_all(root.join(RUNS_DIR));
+        fs::write(root.join(RUNS_DIR), b"x").unwrap();
+        assert!(matches!(
+            Project::open(&root),
+            Err(ProjectError::InvalidPath(_))
         ));
     }
 

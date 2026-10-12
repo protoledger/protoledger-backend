@@ -899,7 +899,10 @@ name = "pl-hostile"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "pl-actions",
  "pl-capture",
+ "pl-interp",
+ "pl-project",
  "pl-reassembly",
  "pl-synth",
  "serde_json",

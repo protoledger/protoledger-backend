@@ -1,0 +1,9 @@
+formatVersion: 1
+engineVersion: "0.1.0"
+name: demo
+settings:
+  overlapPolicy: first
+  checksumPolicy: warn
+imports: []
+interpretations:
+  - { rev: 7, digest: d05c6bf0777f43e39d377ad69da0ef1ff86c3e741a7b27cdb7cdc510950efb75 }

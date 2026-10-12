@@ -1,0 +1,8 @@
+formatVersion: 1
+engineVersion: "0.1.0"
+name: demo
+settings:
+  overlapPolicy: first
+  checksumPolicy: warn
+imports:
+  - { id: imp-0001, sha256: "C:\\Windows\\win.ini", name: win.ini, format: pcap, sizeBytes: 10 }

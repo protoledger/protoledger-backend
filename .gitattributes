@@ -8,3 +8,7 @@
 *.ico binary
 *.pdf binary
 *.woff2 binary
+# Злые образцы — байт в байт: CRLF, BOM и не-UTF-8 в них намеренные.
+fixtures/hostile/journals/** -text
+fixtures/hostile/interpretations/** -text
+fixtures/hostile/projects/** -text
