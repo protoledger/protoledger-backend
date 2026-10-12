@@ -276,28 +276,40 @@ pub fn find_fields(samples: &[FieldSample<'_>], cancelled: &dyn Fn() -> bool) ->
                 let (mut steps, mut fit, mut moved) = (0u64, 0u64, 0u64);
                 let mut epoch = true;
                 let mut counter = None;
-                for (index, a, b) in &pairs {
-                    let (Some(x), Some(y)) = (
-                        read(a.data, at, width, big_endian),
-                        read(b.data, at, width, big_endian),
-                    ) else {
+                // Сравнение — с первым сообщением потока, а не с соседним: так секундные отметки
+                // при частых сообщениях не выглядят рывками, а счётчик сообщений быстро расходится
+                // с часами.
+                let mut origin: Option<(u32, u64, u64)> = None;
+                let mut previous = 0u64;
+                for (index, s) in samples.iter().enumerate() {
+                    let Some(value) = read(s.data, at, width, big_endian) else {
                         continue;
                     };
-                    if b.ts_ns <= a.ts_ns {
+                    let (first_value, first_ts) = match origin {
+                        Some((stream, v, ts)) if stream == s.stream => (v, ts),
+                        _ => {
+                            origin = Some((s.stream, value, s.ts_ns));
+                            previous = value;
+                            continue;
+                        }
+                    };
+                    if s.ts_ns <= first_ts {
                         continue;
                     }
                     steps += 1;
-                    let elapsed = u128::from(b.ts_ns - a.ts_ns);
-                    let grown = u128::from(y.wrapping_sub(x)) * unit_ns;
-                    let slack = (elapsed / 5).max(2 * unit_ns + 5_000_000);
-                    if y >= x && grown.abs_diff(elapsed) <= slack {
+                    let elapsed = u128::from(s.ts_ns - first_ts);
+                    let grown = u128::from(value.wrapping_sub(first_value)) * unit_ns;
+                    // Шаг единицы, задержка доставки и расхождение часов в пределах 2 %.
+                    let slack = unit_ns + 20_000_000 + elapsed / 50;
+                    if value >= first_value && grown.abs_diff(elapsed) <= slack {
                         fit += 1;
-                        moved += u64::from(y != x);
+                        moved += u64::from(value != previous);
                     } else if counter.is_none() {
-                        counter = Some(*index as u64);
+                        counter = Some(index as u64);
                     }
-                    epoch &=
-                        (u128::from(y) * unit_ns).abs_diff(u128::from(b.ts_ns)) <= EPOCH_SLACK_NS;
+                    previous = value;
+                    epoch &= (u128::from(value) * unit_ns).abs_diff(u128::from(s.ts_ns))
+                        <= EPOCH_SLACK_NS;
                 }
                 // Неподвижное значение «совпадает» с любыми короткими паузами: нужны настоящие приросты.
                 if steps >= MIN_SAMPLES
@@ -333,7 +345,7 @@ pub fn find_fields(samples: &[FieldSample<'_>], cancelled: &dyn Fn() -> bool) ->
                 out.incomplete = true;
                 return out;
             }
-            let (mut seen, mut fit) = (0u64, 0u64);
+            let (mut seen, mut fit, mut empty) = (0u64, 0u64, 0u64);
             let mut to_end = true;
             let mut counter = None;
             let mut texts: BTreeSet<&str> = BTreeSet::new();
@@ -345,9 +357,15 @@ pub fn find_fields(samples: &[FieldSample<'_>], cancelled: &dyn Fn() -> bool) ->
                 };
                 seen += 1;
                 let start = at + width;
+                // Пустая строка допустима, но ничего не подтверждает.
+                if length == 0 {
+                    fit += 1;
+                    empty += 1;
+                    to_end &= start == s.data.len();
+                    continue;
+                }
                 let text = usize::try_from(length)
                     .ok()
-                    .filter(|l| *l >= 1)
                     .and_then(|l| s.data.get(start..start.checked_add(l)?))
                     .and_then(printable);
                 match text {
@@ -366,7 +384,7 @@ pub fn find_fields(samples: &[FieldSample<'_>], cancelled: &dyn Fn() -> bool) ->
             }
             // Один и тот же короткий текст во всех сообщениях может быть совпадением байтов.
             let convincing = texts.len() >= 2 || longest >= 6;
-            if fit >= MIN_SAMPLES && permille(fit, seen) >= MIN_SHARE && convincing {
+            if fit - empty >= MIN_SAMPLES && permille(fit, seen) >= MIN_SHARE && convincing {
                 let mut hint = base(
                     FieldKind::String,
                     at,

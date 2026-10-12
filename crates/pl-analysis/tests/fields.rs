@@ -65,6 +65,8 @@ fn a_request_number_is_a_counter_and_narrower_readings_are_equivalent() {
     assert_eq!((c.at, c.ty.as_str(), c.size), (1, "u16be", Some(2)));
     assert_eq!((c.matches, c.samples, c.share_permille), (58, 58, 1000));
     assert!(c.first_counterexample.is_none());
+    // Номер сообщения растёт быстрее часов: временем он не считается.
+    assert!(of(&found, FieldKind::Time).is_empty());
     // Младший байт сам растёт на единицу — то же поле, а не второй счётчик.
     assert!(c.equivalent.iter().any(|e| e.at == 2 && e.ty == "u8"));
 }
@@ -227,4 +229,23 @@ fn hostile_and_tiny_inputs_are_harmless() {
     let stopped = find_fields(&samples, &|| true);
     assert!(stopped.incomplete);
     assert!(stopped.hints.is_empty());
+}
+
+#[test]
+fn an_empty_string_is_allowed_but_proves_nothing() {
+    let names = ["", "Lab", "", "Line-2", "Котёл"];
+    let msgs = messages(20, 11, |i, _, rng| {
+        let name = names[i % names.len()].as_bytes();
+        let mut m = vec![rng.next() | 0x80, name.len() as u8];
+        m.extend_from_slice(name);
+        m
+    });
+    let found = find(&msgs);
+    let s = of(&found, FieldKind::String)[0];
+    assert_eq!((s.at, s.matches, s.samples), (1, 40, 40));
+    assert_eq!(s.example.as_deref(), Some("Lab"));
+
+    // Одни пустые строки — это просто нулевой байт.
+    let empty = messages(20, 12, |_, _, rng| vec![rng.next() | 0x80, 0]);
+    assert!(of(&find(&empty), FieldKind::String).is_empty());
 }

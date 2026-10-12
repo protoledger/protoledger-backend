@@ -2,9 +2,9 @@
 
 use pl_analysis::{
     ChecksumAlt, ChecksumFn, ConstBytes, CorrSample, Correlations, DataRun, Exchange,
-    ExchangeStats, FramingHints, KeyHint, KeyValue, Msg, StreamSample, TypeKey, TypeOptions,
-    TypeSample, Variability, VariabilityOptions, correlate, find_framing, pair_exchanges,
-    variability,
+    ExchangeStats, FieldAlt, FieldKind, FieldSample, FramingHints, KeyHint, KeyValue, Msg,
+    StreamSample, TypeKey, TypeOptions, TypeSample, Variability, VariabilityOptions, correlate,
+    find_framing, pair_exchanges, variability,
 };
 use pl_core::{Problem, ProblemKind};
 use pl_interp::schema::Framing;
@@ -650,6 +650,232 @@ pub fn message_types(
         keys: found.keys,
         types,
         rare: found.rare,
+    })
+}
+
+/// Отбор сообщений по значению байта: так выбирается один тип до того, как он описан.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteMatch {
+    pub at: u32,
+    pub value: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldsRequest {
+    pub streams: Vec<String>,
+    pub framing: Option<Framing>,
+    /// Только сообщения этого типа (нужна интерпретация).
+    pub message_id: Option<String>,
+    /// Только сообщения с этими значениями байтов.
+    pub matching: Vec<ByteMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldHintView {
+    pub kind: FieldKind,
+    pub at: u32,
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_end: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<u32>,
+    /// Что это значит, одной фразой.
+    pub summary: String,
+    pub matches: u64,
+    pub samples: u64,
+    pub share_permille: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_counterexample: Option<MessagePlace>,
+    pub equivalent: Vec<FieldAlt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldsView {
+    pub messages: u64,
+    pub truncated: bool,
+    pub incomplete: bool,
+    pub hints: Vec<FieldHintView>,
+}
+
+fn field_summary(h: &pl_analysis::FieldHint) -> String {
+    match h.kind {
+        FieldKind::Counter => "растёт на единицу с каждым сообщением потока".to_owned(),
+        FieldKind::Time => {
+            let unit = match h.unit {
+                Some("s") => "секундах",
+                Some("ms") => "миллисекундах",
+                _ => "микросекундах",
+            };
+            if h.epoch == Some(true) {
+                format!("время в {unit} от эпохи Unix: совпадает с часами записи")
+            } else {
+                format!("растёт вместе со временем записи, в {unit}; отсчёт не от эпохи Unix")
+            }
+        }
+        FieldKind::String => {
+            let tail = if h.to_end == Some(true) {
+                ", до конца сообщения"
+            } else {
+                ""
+            };
+            format!("длина и сразу за ней текст этой длины{tail}")
+        }
+        FieldKind::Text => "печатный текст на постоянном месте".to_owned(),
+        FieldKind::Tlv => format!(
+            "записи «метка, длина, значение» до конца сообщения; разных меток: {}",
+            h.tags.unwrap_or(0)
+        ),
+    }
+}
+
+/// Подсказки полей по поведению значений в сообщениях указанных потоков.
+pub fn message_fields(
+    session: &Session,
+    store: &SourceStore,
+    request: &FieldsRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FieldsView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    if request.matching.len() > 8 {
+        return Err(bad("match — не больше 8 условий."));
+    }
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    // Все сообщения потоков и признак «выбрано фильтром»: счётчик — свойство потока целиком,
+    // среди сообщений одного типа он идёт с пропусками.
+    struct Row<'a> {
+        data: Vec<u8>,
+        stream: u32,
+        ts_ns: u64,
+        place: (&'a str, u64, u64),
+        selected: bool,
+    }
+    let mut rows: Vec<Row<'_>> = Vec::new();
+    let room = pl_analysis::MAX_FIELD_MESSAGES + 1;
+    for (number, id) in request.streams.iter().enumerate() {
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        let times = crate::hypothesis::Times::new(&data, stream);
+        let result = pl_interp::apply(&it, &input, cancelled)
+            .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
+        for m in result.messages {
+            if rows.len() >= room {
+                break;
+            }
+            // Оборванное сообщение нарушило бы и счётчик, и длины строк.
+            if matches!(m.category, Category::Incomplete | Category::Ambiguous) {
+                continue;
+            }
+            let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) else {
+                continue;
+            };
+            let of_type = request
+                .message_id
+                .as_ref()
+                .is_none_or(|want| m.message_id.as_ref() == Some(want));
+            let matched = request
+                .matching
+                .iter()
+                .all(|c| bytes.get(c.at as usize) == Some(&c.value));
+            rows.push(Row {
+                ts_ns: times.first_ts(m.start, m.end).unwrap_or(0),
+                data: bytes.into_owned(),
+                stream: number as u32,
+                place: (id.as_str(), m.start, m.end),
+                selected: of_type && matched,
+            });
+        }
+    }
+    let sample = |r: &'_ Row<'_>| MessagePlace {
+        stream: r.place.0.to_owned(),
+        start: r.place.1,
+        end: r.place.2,
+    };
+    let view = |h: pl_analysis::FieldHint, rows: &[&Row<'_>]| FieldHintView {
+        summary: field_summary(&h),
+        first_counterexample: h
+            .first_counterexample
+            .and_then(|i| usize::try_from(i).ok())
+            .and_then(|i| rows.get(i))
+            .map(|r| sample(r)),
+        kind: h.kind,
+        at: h.at,
+        ty: h.ty,
+        size: h.size,
+        unit: h.unit,
+        epoch: h.epoch,
+        to_end: h.to_end,
+        example: h.example,
+        tags: h.tags,
+        matches: h.matches,
+        samples: h.samples,
+        share_permille: h.share_permille,
+        equivalent: h.equivalent,
+    };
+    let search = |rows: &[&Row<'_>]| {
+        let samples: Vec<FieldSample<'_>> = rows
+            .iter()
+            .map(|r| FieldSample {
+                data: &r.data,
+                stream: r.stream,
+                ts_ns: r.ts_ns,
+            })
+            .collect();
+        pl_analysis::find_fields(&samples, cancelled)
+    };
+
+    let all: Vec<&Row<'_>> = rows.iter().collect();
+    let selected: Vec<&Row<'_>> = rows.iter().filter(|r| r.selected).collect();
+    let filtered = selected.len() != all.len();
+    let found = search(&selected);
+    let mut incomplete = found.incomplete;
+    let mut hints: Vec<FieldHintView> = found
+        .hints
+        .into_iter()
+        .filter(|h| !(filtered && h.kind == FieldKind::Counter))
+        .map(|h| view(h, &selected))
+        .collect();
+    if filtered {
+        let whole = search(&all);
+        incomplete |= whole.incomplete;
+        hints.extend(
+            whole
+                .hints
+                .into_iter()
+                .filter(|h| h.kind == FieldKind::Counter)
+                .map(|h| view(h, &all)),
+        );
+        hints.sort_by_key(|h| (h.at, h.kind as u8));
+    }
+    Ok(FieldsView {
+        messages: found.messages,
+        truncated: found.truncated,
+        incomplete,
+        hints,
     })
 }
 
