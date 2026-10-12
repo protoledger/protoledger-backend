@@ -159,6 +159,9 @@ pub struct RunInputs {
     pub sources: Vec<String>,
     pub corpus: CorpusFilter,
     pub engine_version: String,
+    /// sha256 журналов действий, по которым выполнены тесты гипотез, по возрастанию.
+    #[serde(default)]
+    pub logs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +172,75 @@ pub struct Run {
     pub summary: Summary,
     pub streams: Vec<StreamRun>,
     pub counterexamples: Vec<Counterexample>,
+    /// Тесты гипотез интерпретации на записях корпуса; у прогонов до 0.1.16 поля нет.
+    #[serde(default)]
+    pub hypotheses: Vec<HypothesisRun>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HypothesisVerdict {
+    /// Применимых сообщений нет.
+    Untested,
+    /// Контрпримеров нет — это не доказательство.
+    NoCounterexample,
+    Refuted,
+}
+
+/// Итог теста одной гипотезы в прогоне.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HypothesisRun {
+    pub id: String,
+    pub test: String,
+    pub verdict: HypothesisVerdict,
+    pub applicable: u64,
+    pub held: u64,
+    pub not_applicable: u64,
+    pub counterexamples: u64,
+    /// Сообщения, на которых тест не вычислился: не учтены ни за, ни против.
+    pub errors: u64,
+}
+
+/// Контрпример теста гипотезы: сообщение и значения имён из выражения.
+pub struct HypothesisExample {
+    pub anchor: Anchor,
+    pub message_id: Option<String>,
+    pub detail: String,
+}
+
+impl Run {
+    /// Добавляет итог теста гипотезы; его контрпримеры попадают в общий список прогона.
+    pub fn add_hypothesis(&mut self, outcome: HypothesisRun, examples: Vec<HypothesisExample>) {
+        self.summary.counterexamples += outcome.counterexamples;
+        if outcome.counterexamples > examples.len() as u64 {
+            self.summary.counterexamples_truncated = true;
+        }
+        for example in examples {
+            if self.counterexamples.len() >= MAX_COUNTEREXAMPLES {
+                self.summary.counterexamples_truncated = true;
+                break;
+            }
+            let category = self
+                .streams
+                .iter()
+                .find(|s| s.id == example.anchor.stream)
+                .and_then(|s| s.messages.iter().find(|m| m.0 == example.anchor.start))
+                .map_or(Category::Matched, |m| m.2);
+            self.counterexamples.push(Counterexample {
+                anchor: example.anchor,
+                category,
+                message_id: example.message_id,
+                violations: vec![ViolationRow {
+                    kind: ViolationKind::Hypothesis,
+                    id: outcome.id.clone(),
+                    detail: example.detail,
+                    status: Status::Hypothesis,
+                }],
+            });
+        }
+        self.hypotheses.push(outcome);
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -288,6 +360,7 @@ pub fn execute(
         summary,
         streams,
         counterexamples,
+        hypotheses: Vec::new(),
     })
 }
 
@@ -300,6 +373,8 @@ pub struct Current {
     pub settings_digest: String,
     /// sha256 записей, доступных сейчас.
     pub sources: Vec<String>,
+    /// sha256 журналов действий проекта, по возрастанию.
+    pub logs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +386,8 @@ pub enum StaleReason {
     Settings,
     /// Записи корпуса пропали из проекта.
     Sources,
+    /// Журналы действий изменились: тесты гипотез считались по другим.
+    ActionLogs,
 }
 
 pub fn stale_reasons(run: &Run, current: &Current) -> Vec<StaleReason> {
@@ -328,6 +405,9 @@ pub fn stale_reasons(run: &Run, current: &Current) -> Vec<StaleReason> {
         .all(|s| current.sources.contains(s))
     {
         out.push(StaleReason::Sources);
+    }
+    if !run.hypotheses.is_empty() && run.inputs.logs != current.logs {
+        out.push(StaleReason::ActionLogs);
     }
     out
 }

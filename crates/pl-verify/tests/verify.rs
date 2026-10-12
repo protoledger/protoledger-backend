@@ -1,8 +1,8 @@
 use pl_interp::schema::Direction;
 use pl_interp::{Category, Interpretation, Region, RegionKind, StreamInput, StreamMeta};
 use pl_verify::{
-    ChangeKind, Current, RunInputs, StaleReason, StreamTarget, VerifyError, diff, digest_of,
-    execute, stale_reasons,
+    Anchor, ChangeKind, Current, HypothesisExample, HypothesisRun, HypothesisVerdict, RunInputs,
+    StaleReason, StreamTarget, VerifyError, diff, digest_of, execute, stale_reasons,
 };
 
 /// `a5 | тип | всего | данные | сумма`.
@@ -69,6 +69,7 @@ fn inputs(it: &Interpretation) -> RunInputs {
         sources: vec!["a".repeat(64)],
         corpus: pl_verify::CorpusFilter::default(),
         engine_version: "test".into(),
+        logs: vec![],
     }
 }
 
@@ -175,8 +176,17 @@ fn staleness_follows_the_signature() {
         interpretation_digest: Some(it.digest()),
         settings_digest: digest_of(&"settings"),
         sources: vec!["a".repeat(64), "b".repeat(64)],
+        logs: vec![],
     };
     assert!(stale_reasons(&r, &fresh).is_empty());
+    let new_log = Current {
+        logs: vec!["c".repeat(64)],
+        ..fresh.clone()
+    };
+    assert!(
+        stale_reasons(&r, &new_log).is_empty(),
+        "без тестов гипотез журналы прогону не важны"
+    );
 
     let changed = Current {
         interpretation_digest: Some(spec(false).digest()),
@@ -198,6 +208,19 @@ fn staleness_follows_the_signature() {
         ..fresh
     };
     assert_eq!(stale_reasons(&r, &gone), [StaleReason::Sources]);
+
+    let mut tested = r.clone();
+    tested.hypotheses.push(HypothesisRun {
+        id: "H1".into(),
+        test: "kind == 1".into(),
+        verdict: HypothesisVerdict::NoCounterexample,
+        applicable: 1,
+        held: 1,
+        not_applicable: 0,
+        counterexamples: 0,
+        errors: 0,
+    });
+    assert_eq!(stale_reasons(&tested, &new_log), [StaleReason::ActionLogs]);
 }
 
 #[test]
@@ -233,4 +256,49 @@ fn diff_tells_fixed_from_regressed_and_new() {
     let other = run(&lax, &[target("s:c0002:ab", &bytes)]);
     let moved = diff(&a, &other);
     assert_eq!((moved.totals.added, moved.totals.removed), (2, 2));
+}
+
+#[test]
+fn hypothesis_counterexamples_join_the_run() {
+    let good = [msg(1, b"ab", true), msg(1, b"c", true)].concat();
+    let it = spec(true);
+    let mut r = run(&it, &[target("s:c0001:ab", &good)]);
+    assert_eq!(r.summary.counterexamples, 0);
+    let first = r.streams[0].messages[0].clone();
+    let example = |start: u64| HypothesisExample {
+        anchor: Anchor {
+            source: "a".repeat(64),
+            stream: "s:c0001:ab".into(),
+            start,
+            end: start + 1,
+            sha256: None,
+        },
+        message_id: Some("echo".into()),
+        detail: "H1: тест не выполнился".into(),
+    };
+    let outcome = HypothesisRun {
+        id: "H1".into(),
+        test: "kind == action.params.kind".into(),
+        verdict: HypothesisVerdict::Refuted,
+        applicable: 2,
+        held: 0,
+        not_applicable: 0,
+        counterexamples: 3,
+        errors: 0,
+    };
+    r.add_hypothesis(outcome, vec![example(first.0), example(999)]);
+
+    assert_eq!(r.summary.counterexamples, 3);
+    assert!(r.summary.counterexamples_truncated, "показаны 2 из 3");
+    assert_eq!(r.hypotheses.len(), 1);
+    assert_eq!(r.counterexamples.len(), 2);
+    let c = &r.counterexamples[0];
+    assert_eq!(c.category, first.2, "категория — из таблицы сообщений");
+    assert_eq!(c.violations[0].kind, pl_interp::ViolationKind::Hypothesis);
+    assert_eq!(c.violations[0].id, "H1");
+    assert_eq!(
+        r.counterexamples[1].category,
+        Category::Matched,
+        "сообщения нет в таблице — структура не нарушена"
+    );
 }

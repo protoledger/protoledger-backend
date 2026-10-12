@@ -83,6 +83,7 @@ fn run_info(run: &Run, stale: Vec<StaleReason>) -> RunInfo {
                     StaleReason::Interpretation => "interpretation",
                     StaleReason::Settings => "settings",
                     StaleReason::Sources => "sources",
+                    StaleReason::ActionLogs => "action_logs",
                 }
                 .to_owned()
             })

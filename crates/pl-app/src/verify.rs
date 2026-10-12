@@ -6,12 +6,15 @@ use std::sync::Arc;
 use pl_core::{Problem, ProblemKind};
 use pl_interp::Interpretation;
 use pl_project::{ChecksumPolicy, OverlapPolicy};
-use pl_verify::{CorpusFilter, Current, RunInputs, StreamTarget};
+use pl_verify::{
+    Anchor, CorpusFilter, Current, HypothesisExample, HypothesisRun, HypothesisVerdict, RunInputs,
+    StreamTarget,
+};
 use serde::Serialize;
 
 use crate::{
-    JobKind, JobRegistry, ProgressStage, ProgressUnit, Session, SourceData, SourceStore,
-    stream_input,
+    ActionLogStore, JobKind, JobRegistry, LoadedLog, ProgressStage, ProgressUnit, Session,
+    SourceData, SourceStore, TestOptions, Verdict, stream_input, test_hypothesis,
 };
 
 const DIRECTION_SUFFIX: [&str; 2] = ["ab", "ba"];
@@ -55,7 +58,15 @@ pub fn current_signature(session: &Session, store: &SourceStore) -> Option<Curre
             checksum: settings.checksum_policy,
         }),
         sources: store.list().iter().map(|s| s.sha256.clone()).collect(),
+        logs: log_digests(project.action_logs().iter().map(|l| l.sha256.clone())),
     })
+}
+
+fn log_digests(digests: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = digests.collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Все потоки записей корпуса, по порядку записей, соединений и направлений.
@@ -80,11 +91,14 @@ fn targets<'a>(sources: &'a [Arc<SourceData>], corpus: &CorpusFilter) -> Vec<Str
     out
 }
 
-/// Прогон без задачи: интерпретация применяется к потокам корпуса, результат не сохраняется.
+/// Прогон без задачи: интерпретация применяется к потокам корпуса, тесты её гипотез — к записям
+/// корпуса с журналами действий; результат не сохраняется.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_run(
     interpretation: &Interpretation,
     revision: Option<u32>,
     sources: &[Arc<SourceData>],
+    logs: &[Arc<LoadedLog>],
     corpus: &CorpusFilter,
     settings_digest: String,
     cancelled: &dyn Fn() -> bool,
@@ -98,18 +112,84 @@ pub fn execute_run(
         revision,
         interpretation_digest: interpretation.digest(),
         settings_digest,
-        sources: used,
+        sources: used.clone(),
         corpus: corpus.clone(),
         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+        logs: log_digests(logs.iter().map(|l| l.record.sha256.clone())),
     };
-    pl_verify::execute(interpretation, &targets, inputs, cancelled, progress)
-        .map_err(verify_problem)
+    let mut run = pl_verify::execute(interpretation, &targets, inputs, cancelled, progress)
+        .map_err(verify_problem)?;
+
+    // ТЗ R4: тесты гипотез — часть прогона. Фильтры портов и направлений тест сужает сам
+    // через область интерпретации, корпус ограничивает записи.
+    let corpus_sources: Vec<Arc<SourceData>> = sources
+        .iter()
+        .filter(|s| used.binary_search(&s.sha256).is_ok())
+        .cloned()
+        .collect();
+    for h in &interpretation.hypotheses {
+        let Some(test) = &h.test else { continue };
+        if cancelled() {
+            return Err(verify_problem(pl_verify::VerifyError::Cancelled));
+        }
+        let evidence = test_hypothesis(
+            &corpus_sources,
+            interpretation,
+            logs,
+            test,
+            &TestOptions::default(),
+        )?;
+        let outcome = HypothesisRun {
+            id: h.id.clone(),
+            test: test.clone(),
+            verdict: match evidence.verdict {
+                Verdict::Untested => HypothesisVerdict::Untested,
+                Verdict::NoCounterexample => HypothesisVerdict::NoCounterexample,
+                Verdict::Refuted => HypothesisVerdict::Refuted,
+            },
+            applicable: evidence.applicable,
+            held: evidence.held,
+            not_applicable: evidence.not_applicable,
+            counterexamples: evidence.counterexamples_total,
+            errors: evidence.errors_total,
+        };
+        let examples = evidence
+            .counterexamples
+            .into_iter()
+            .map(|c| {
+                let values = c
+                    .values
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let line = c
+                    .action_line
+                    .map(|l| format!(" (строка журнала {l})"))
+                    .unwrap_or_default();
+                HypothesisExample {
+                    anchor: Anchor {
+                        source: c.anchor.source,
+                        stream: c.anchor.stream,
+                        start: c.anchor.start,
+                        end: c.anchor.end,
+                        sha256: c.anchor.sha256,
+                    },
+                    message_id: c.message_id,
+                    detail: format!("{}: тест «{test}» не выполнился: {values}{line}", h.id),
+                }
+            })
+            .collect();
+        run.add_hypothesis(outcome, examples);
+    }
+    Ok(run)
 }
 
 /// Запускает прогон; результат задачи — `{runId}`.
 pub fn start_verify(
     jobs: &JobRegistry,
     store: &SourceStore,
+    logs: &ActionLogStore,
     session: &Session,
     corpus: CorpusFilter,
     revision: Option<u32>,
@@ -145,7 +225,7 @@ pub fn start_verify(
         ));
     }
 
-    let (store, session) = (store.clone(), session.clone());
+    let (store, session, logs) = (store.clone(), session.clone(), logs.clone());
     jobs.spawn(JobKind::Verify, move |ctx| async move {
         let work = tokio::task::spawn_blocking(move || -> Result<String, Problem> {
             let sources = store.list();
@@ -155,6 +235,7 @@ pub fn start_verify(
                 &interpretation,
                 Some(rev),
                 &sources,
+                &logs.list(),
                 &corpus,
                 current.settings_digest,
                 &cancelled,

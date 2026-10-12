@@ -74,6 +74,8 @@ pub enum ViolationKind {
     Expect,
     Check,
     FieldRange,
+    /// Тест гипотезы на корпусе: его добавляет прогон проверки, разбор сообщения его не порождает.
+    Hypothesis,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
