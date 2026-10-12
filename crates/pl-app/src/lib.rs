@@ -17,8 +17,10 @@ pub use actions::{
     find_exchange, import_action_log, reload_action_logs,
 };
 pub use analysis::{
+    ChecksumAlgorithm, ChecksumCounterView, ChecksumHintView, ChecksumRequest, ChecksumView,
     CorrelationRequest, ExchangeView, MAX_REQUEST_STREAMS, MessageRef, VariabilityRequest,
-    connection_exchanges, framing_hints, message_correlations, message_variability,
+    connection_exchanges, framing_hints, message_checksums, message_correlations,
+    message_variability,
 };
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use hypothesis::{

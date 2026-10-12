@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.19
+  version: 0.1.20
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1531,6 +1531,65 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/checksums:
+    post:
+      tags: [analysis]
+      operationId: findChecksums
+      summary: Поиск контрольной суммы в сообщениях
+      description: |
+        Ищет поле, значение которого равно контрольной сумме остальных байтов сообщения. Перебираются: место поля
+        (в конце сообщения, в том числе перед одним-двумя завершающими байтами, или в заголовке по смещению до 16),
+        порядок байтов, начало диапазона (первые 0–8 байт могут не входить в сумму) и функции из `checked` —
+        суммы, XOR, LRC, Fletcher-16, контрольная сумма Интернета, CRC-8, CRC-16 и CRC-32 с распространёнными
+        параметрами. Подсказка даётся, только если значение сходится не меньше чем на 8 сообщениях и в 80 % случаев,
+        а значения поля различаются; несошедшееся сообщение — первый контрпример. `expr` — готовая проверка для
+        описания (`checks`), `checksum` в ней — имя поля, которое нужно объявить по `at` и `type`. Границы сообщений —
+        из `framing` или из сохранённой интерпретации; оборванные и неоднозначные сообщения не учитываются.
+        Пустой список — ни одна из проверенных функций не подошла; это не значит, что контрольной суммы нет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChecksumRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab']
+              framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }
+      responses:
+        '200':
+          description: Найденные контрольные суммы
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChecksumHints' }
+              example:
+                messages: 32
+                truncated: false
+                skippedLong: 0
+                incomplete: false
+                hints:
+                  - algorithm: sum8
+                    title: сумма байтов по модулю 256
+                    at: end-1
+                    type: u8
+                    from: 0
+                    to: message.len - 1
+                    expr: checksum == sum8(0, message.len - 1)
+                    matches: 32
+                    samples: 32
+                    sharePermille: 1000
+                    distinct: 27
+                    equivalent: []
+                checked:
+                  - { name: sum8, title: сумма байтов по модулю 256, width: 1 }
+                  - { name: crc16_modbus, title: CRC-16/MODBUS, width: 2 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2680,6 +2739,69 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    ChecksumRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
+
+    ChecksumHint:
+      type: object
+      required: [algorithm, title, at, type, from, to, expr, matches, samples, sharePermille, distinct, equivalent]
+      properties:
+        algorithm: { type: string, description: 'Имя функции в выражениях описания' }
+        title: { type: string }
+        at: { type: string, description: 'Место поля в записи описания: смещение от начала или end-N' }
+        type: { type: string, enum: [u8, u16be, u16le, u32be, u32le] }
+        from: { type: integer, minimum: 0, description: 'Первый байт диапазона под функцией' }
+        to: { type: string, description: 'Конец диапазона: выражение над message.len' }
+        expr: { type: string, description: 'Готовая проверка; checksum — имя поля' }
+        matches: { type: integer, minimum: 0 }
+        samples: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        distinct: { type: integer, minimum: 0, description: 'Разных значений поля среди совпавших сообщений (считается до 64)' }
+        firstCounterexample:
+          type: object
+          required: [stream, start, end, got, expected]
+          properties:
+            stream: { type: string }
+            start: { type: integer, minimum: 0 }
+            end: { type: integer, minimum: 0 }
+            got: { type: integer, minimum: 0 }
+            expected: { type: integer, minimum: 0 }
+        equivalent:
+          type: array
+          description: Другие функции и начала диапазона, дающие то же поле на этих данных
+          items:
+            type: object
+            required: [algorithm, from]
+            properties:
+              algorithm: { type: string }
+              from: { type: integer, minimum: 0 }
+
+    ChecksumHints:
+      type: object
+      required: [messages, truncated, skippedLong, incomplete, hints, checked]
+      properties:
+        messages: { type: integer, minimum: 0, description: 'Сколько сообщений проверено' }
+        truncated: { type: boolean, description: 'Часть сообщений не вошла: больше 2000 или больше 16 МиБ' }
+        skippedLong: { type: integer, minimum: 0, description: 'Сообщений длиннее 64 КиБ пропущено' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени' }
+        hints: { type: array, items: { $ref: '#/components/schemas/ChecksumHint' } }
+        checked:
+          type: array
+          description: Какие функции проверялись
+          items:
+            type: object
+            required: [name, title, width]
+            properties:
+              name: { type: string }
+              title: { type: string }
+              width: { type: integer, enum: [1, 2, 4], description: 'Размер результата в байтах' }
 
     VariabilityColumn:
       type: object

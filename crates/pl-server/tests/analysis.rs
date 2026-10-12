@@ -424,3 +424,63 @@ async fn correlations_do_not_borrow_actions_from_other_message_types() {
         (Some(5), Some(5))
     );
 }
+
+#[tokio::test]
+async fn checksums_find_the_trailing_sum_of_the_stand_protocol() {
+    let (state, _, ab, ba) = setup("checksums").await;
+    let (_, hints) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/framing",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    let framing = hints["length"][0]["framing"].clone();
+    let (status, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/checksums",
+        Some(json!({ "streams": [ab.clone(), ba.clone()], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found["incomplete"], false);
+    assert!(found["messages"].as_u64().unwrap() >= 8);
+    // Протокол стенда кончается суммой всех предыдущих байтов; движок об этом не знает.
+    let top = &found["hints"][0];
+    assert_eq!(top["algorithm"], "sum8", "{found}");
+    assert_eq!(top["at"], "end-1");
+    assert_eq!(top["type"], "u8");
+    assert_eq!(top["from"], 0);
+    assert_eq!(top["expr"], "checksum == sum8(0, message.len - 1)");
+    assert_eq!(top["sharePermille"], 1000);
+    assert!(top.get("firstCounterexample").is_none());
+    assert_eq!(found["hints"].as_array().unwrap().len(), 1, "{found}");
+    assert_eq!(found["checked"].as_array().unwrap().len(), 20);
+
+    // Без фрейминга и без сохранённой интерпретации границ сообщений нет.
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/checksums",
+        Some(json!({ "streams": [ab] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/checksums",
+        Some(json!({ "streams": [], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/checksums",
+        Some(json!({ "streams": ["00000000:c0001:ab"], "framing": framing })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

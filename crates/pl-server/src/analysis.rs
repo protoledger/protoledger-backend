@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
-use pl_app::{ExchangeView, VariabilityRequest};
+use pl_app::{ChecksumRequest, ExchangeView, VariabilityRequest};
 use pl_core::ProblemKind;
 use pl_interp::schema::Framing;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/framing", post(framing))
         .route("/analysis/variability", post(variability))
         .route("/analysis/correlations", post(correlations))
+        .route("/analysis/checksums", post(checksums))
         .route("/exchanges", post(exchanges))
 }
 
@@ -87,6 +88,37 @@ async fn variability(
                 framing: body.framing,
                 message_id: body.message_id,
                 length: body.length,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChecksumsBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    framing: Option<Framing>,
+    #[serde(default)]
+    message_id: Option<String>,
+}
+
+async fn checksums(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<ChecksumsBody>,
+) -> Result<Json<pl_app::ChecksumView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::message_checksums(
+            &state.session,
+            &state.sources,
+            &ChecksumRequest {
+                streams: body.streams,
+                framing: body.framing,
+                message_id: body.message_id,
             },
             &|| started.elapsed() > SEARCH_TIMEOUT,
         )
