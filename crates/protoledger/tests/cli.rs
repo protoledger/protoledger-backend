@@ -582,3 +582,25 @@ fn verify_accepts_a_run_saved_before_hypothesis_tests() {
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     assert!(stdout.contains("без тестов гипотез"), "{stdout}");
 }
+
+#[test]
+fn verify_reruns_a_run_on_its_own_sources_after_a_later_import() {
+    let root = project_with_run("later-import");
+    let mut project = Project::open(&root).unwrap();
+    project
+        .add_source(
+            &repo("fixtures/synthetic/normal.pcapng"),
+            &|| false,
+            &mut |_| {},
+        )
+        .unwrap();
+    drop(project);
+    let out = run(&["verify", root.to_str().unwrap()]);
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("normal.pcapng: цела"), "{stdout}");
+    assert!(
+        stdout.contains("run-0001: результат воспроизводится"),
+        "{stdout}"
+    );
+}

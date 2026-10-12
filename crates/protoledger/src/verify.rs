@@ -153,13 +153,20 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
         let settings_digest = current
             .as_ref()
             .map_or_else(String::new, |c| c.settings_digest.clone());
+        // Прогон повторяется на своих записях: импортированные позже — повод для нового прогона,
+        // а не отличие в старом.
+        let run_sources: Vec<_> = sources
+            .iter()
+            .filter(|s| old.inputs.sources.contains(&s.sha256))
+            .cloned()
+            .collect();
         // Прогон сохранён до того, как тесты гипотез стали частью прогона: сравнивать их не с чем.
         let legacy =
             old.hypotheses.is_empty() && interpretation.hypotheses.iter().any(|h| h.test.is_some());
         let mut new = pl_app::execute_run(
             &interpretation,
             Some(rev),
-            &sources,
+            &run_sources,
             // Те же журналы, что у прогона: смена журналов — устаревание, а не невоспроизводимость.
             &logs
                 .iter()
