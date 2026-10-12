@@ -145,6 +145,25 @@ async fn every_hostile_file_is_handled_and_server_stays_alive() {
                 .await;
                 assert_eq!(status, StatusCode::OK, "{id}");
             }
+            // Черновик описания проходит по всем подсказкам сразу: на злых данных он либо
+            // собирается, либо отказывает с причиной, но сервер не падает.
+            let ids: Vec<&str> = conn["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|s| s["id"].as_str())
+                .collect();
+            let (status, body) = call(
+                &state,
+                Method::POST,
+                "/api/analysis/draft",
+                Some(json!({ "streams": ids })),
+            )
+            .await;
+            assert!(
+                matches!(status, StatusCode::OK | StatusCode::UNPROCESSABLE_ENTITY),
+                "{ids:?}: {status} {body}"
+            );
         }
     }
 }

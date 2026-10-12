@@ -102,7 +102,10 @@ fn quoted(text: &str) -> String {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
-            c if c.is_control() => out.push(' '),
+            // Управляющие символы и разделители строк Юникода ломают однострочную запись.
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{feff}') => {
+                out.push(' ');
+            }
             c => out.push(c),
         }
     }
@@ -829,4 +832,45 @@ pub fn draft_interpretation(
         summary,
         incomplete,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_from_data_cannot_break_the_yaml_line() {
+        let hostile = "a\"b\\c\nd\u{2028}e\u{0}f: #- {x}";
+        let line = format!("statement: {}", quoted(hostile));
+        assert_eq!(line.lines().count(), 1);
+        let parsed: BTreeMap<String, String> = serde_saphyr::from_str(&line).unwrap();
+        assert_eq!(parsed["statement"], "a\"b\\c d e f: #- {x}");
+    }
+
+    #[test]
+    fn journal_names_become_safe_field_names() {
+        let mut taken = BTreeSet::new();
+        assert_eq!(field_name("params.period_ms", &taken), "period_ms");
+        taken.insert("period_ms".to_owned());
+        assert_eq!(
+            field_name("result.configuration.period_ms", &taken),
+            "configuration_period_ms"
+        );
+        assert_eq!(
+            field_name("result.measurements.1.alarm", &taken),
+            "measurements_1_alarm"
+        );
+        assert_eq!(field_name("params.9 lives!", &taken), "f9_lives_");
+        assert!(expression_name("params.period_ms"));
+        assert!(expression_name("result.values.0"));
+        assert!(!expression_name("params.9 lives!"));
+        assert!(!expression_name(""));
+    }
+
+    #[test]
+    fn the_narrowest_equivalent_reading_is_taken() {
+        let alts = ["i16be@8".to_owned(), "u8@9".to_owned(), "мусор".to_owned()];
+        assert_eq!(narrowest(8, "u16be", &alts), (9, "u8".to_owned()));
+        assert_eq!(narrowest(10, "u16be", &[]), (10, "u16be".to_owned()));
+    }
 }
