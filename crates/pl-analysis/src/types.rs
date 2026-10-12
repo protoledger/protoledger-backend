@@ -10,11 +10,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-/// Сообщение и сторона, которая его отправила: 0 — начавшая соединение, 1 — вторая.
+/// Сообщение, сторона, которая его отправила (0 — начавшая соединение, 1 — вторая), и номер
+/// потока: сообщения одного потока идут во входном списке подряд, в порядке передачи.
 #[derive(Debug, Clone, Copy)]
 pub struct TypeSample<'a> {
     pub data: &'a [u8],
     pub side: u8,
+    pub stream: u32,
 }
 
 /// Сколько сообщений участвует в поиске типов.
@@ -52,7 +54,7 @@ pub enum TypeKey {
 pub struct TypeOptions {
     /// Смещения, которые различителем быть не могут: поле длины.
     pub exclude: Vec<u32>,
-    /// На стороны не делить: сторону нечем выразить в описании.
+    /// Сторону различителем не предлагать: её нечем выразить в описании.
     pub without_side: bool,
 }
 
@@ -264,6 +266,67 @@ impl Pool<'_, '_> {
     }
 }
 
+/// Байт ведёт себя как число элементов или длина: внутри уже найденных групп размер сообщения
+/// растёт вместе с ним по прямой. Такой байт объясняет длину лучше любого кода, но типов не задаёт.
+fn count_like(samples: &[TypeSample<'_>], keys: &[TypeKey], candidate: TypeKey) -> bool {
+    /// Значение байта → длины сообщений с ним.
+    type Lengths = BTreeMap<u8, BTreeSet<usize>>;
+    let mut groups: BTreeMap<Vec<u8>, (u64, Lengths)> = BTreeMap::new();
+    for s in samples {
+        let mut key: Vec<u8> = keys.iter().map(|k| value_of(*k, s)).collect();
+        key.push(s.side.min(1));
+        let g = groups.entry(key).or_default();
+        g.0 += 1;
+        g.1.entry(value_of(candidate, s))
+            .or_default()
+            .insert(s.data.len());
+    }
+    let (mut varies, mut on_a_line) = (0u64, 0u64);
+    for (count, by_value) in groups.values() {
+        if by_value.len() < 2 {
+            continue;
+        }
+        varies += count;
+        let points: Option<Vec<(i64, i64)>> = by_value
+            .iter()
+            .map(|(v, lens)| match (lens.len(), lens.first()) {
+                (1, Some(len)) => Some((i64::from(*v), *len as i64)),
+                _ => None,
+            })
+            .collect();
+        let Some(points) = points else {
+            continue;
+        };
+        let (Some((v0, l0)), Some((v1, l1))) = (points.first(), points.get(1)) else {
+            continue;
+        };
+        let line = points
+            .iter()
+            .all(|(v, l)| (l - l0) * (v1 - v0) == (l1 - l0) * (v - v0));
+        // Каждая единица счётчика добавляет целое число байт; дробный шаг — совпадение кодов и длин.
+        let whole_step = l1 > l0 && (l1 - l0) % (v1 - v0) == 0;
+        if points.len() >= 3 && whole_step && line {
+            on_a_line += count;
+        }
+    }
+    on_a_line > 0 && on_a_line * 2 >= varies
+}
+
+/// Байт растёт на единицу от сообщения к сообщению своего потока: это номер, а не тип. В записи
+/// по сценарию номер может случайно совпадать с командой и «объяснять» форму сообщений.
+fn counter_like(samples: &[TypeSample<'_>], candidate: TypeKey) -> bool {
+    let (mut steps, mut plus_one) = (0u64, 0u64);
+    for pair in samples.windows(2) {
+        let [a, b] = pair else { continue };
+        if a.stream != b.stream {
+            continue;
+        }
+        steps += 1;
+        plus_one += u64::from(value_of(candidate, b) == value_of(candidate, a).wrapping_add(1));
+    }
+    steps >= 4 && plus_one * 5 >= steps * 3
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -299,7 +362,6 @@ pub fn find_types(
 
     // Стороны и байт, который их повторяет: тогда условие пишется по байту, а не по порту.
     let both_sides = samples.iter().any(|s| s.side == 0) && samples.iter().any(|s| s.side != 0);
-    let split = both_sides && !options.without_side;
     let direction_byte = (0..min_len.min(KEY_SPAN))
         .filter(|at| allowed(*at))
         .find(|at| {
@@ -314,9 +376,18 @@ pub fn find_types(
             matches!(values.as_slice(), [Some(a), Some(b)] if a != b)
         })
         .map(|at| TypeKey::Byte { at: at as u32 });
-    let base: Option<TypeKey> = split.then(|| direction_byte.unwrap_or(TypeKey::Side));
+    let base: Option<TypeKey> = match (both_sides, direction_byte) {
+        (false, _) => None,
+        (true, Some(byte)) => Some(byte),
+        (true, None) => (!options.without_side).then_some(TypeKey::Side),
+    };
 
-    let sides: &[Option<u8>] = if split { &[Some(0), Some(1)] } else { &[None] };
+    // Оценивается каждая сторона отдельно, даже когда сторону нечем записать в описании.
+    let sides: &[Option<u8>] = if both_sides {
+        &[Some(0), Some(1)]
+    } else {
+        &[None]
+    };
     let pools: Vec<Pool<'_, '_>> = sides
         .iter()
         .map(|side| {
@@ -383,8 +454,9 @@ pub fn find_types(
             let length_like = differences.len() == 1 && length_entropy_all > 0.0;
             ((2..=MAX_VALUES).contains(&values.len())
                 && values.len() as u64 * 4 <= n
-                && !length_like)
-                .then_some((key, values.len() as u32))
+                && !length_like
+                && !counter_like(samples, key))
+            .then_some((key, values.len() as u32))
         })
         .collect();
 
@@ -401,6 +473,9 @@ pub fn find_types(
                 continue;
             }
             let mut keys: Vec<TypeKey> = chosen.iter().map(|(k, ..)| *k).collect();
+            if count_like(samples, &keys, *key) {
+                continue;
+            }
             keys.push(*key);
             let (s, covered, groups) = evaluate(&keys);
             if covered < MIN_COVERED || groups > MAX_TYPES {

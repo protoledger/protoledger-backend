@@ -520,12 +520,12 @@ pub fn message_types(
         )));
     }
     let it = effective(session, request.framing.as_ref(), false)?;
-    let mut messages: Vec<(Vec<u8>, u8)> = Vec::new();
+    let mut messages: Vec<(Vec<u8>, u8, u32)> = Vec::new();
     let mut places: Vec<(&str, u64, u64)> = Vec::new();
     // Порт принимающей стороны: если он один на все потоки, сторону можно записать условием на порт.
     let mut ports: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
     let room = pl_analysis::MAX_TYPE_MESSAGES + 1;
-    for id in &request.streams {
+    for (number, id) in request.streams.iter().enumerate() {
         let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
         let (Some(connection), Some(stream)) = (
             data.connections.get(conn),
@@ -550,7 +550,7 @@ pub fn message_types(
                 continue;
             }
             if let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) {
-                messages.push((bytes.into_owned(), u8::from(dir != 0)));
+                messages.push((bytes.into_owned(), u8::from(dir != 0), number as u32));
                 places.push((id.as_str(), m.start, m.end));
             }
         }
@@ -567,7 +567,11 @@ pub fn message_types(
         .unwrap_or_default();
     let samples: Vec<TypeSample<'_>> = messages
         .iter()
-        .map(|(data, side)| TypeSample { data, side: *side })
+        .map(|(data, side, stream)| TypeSample {
+            data,
+            side: *side,
+            stream: *stream,
+        })
         .collect();
     let found = pl_analysis::find_types(
         &samples,
