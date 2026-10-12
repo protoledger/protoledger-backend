@@ -4,6 +4,8 @@
 
 #![allow(clippy::vec_init_then_push)] // перечень образцов читается лучше последовательностью push
 
+pub mod inputs;
+
 use std::net::Ipv4Addr;
 
 use pl_synth::capture::{Capture, Format};

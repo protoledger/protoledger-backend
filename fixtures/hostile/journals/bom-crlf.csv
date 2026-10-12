@@ -1,0 +1,4 @@
+﻿time,action,params,result
+2026-10-01T00:00:00.000000Z,set_param,param=gain;value=0,ok
+2026-10-01T00:00:01.000000Z,set_param,param=gain;value=1,ok
+2026-10-01T00:00:02.000000Z,set_param,param=gain;value=2,ok

@@ -1,0 +1,11 @@
+time,action,params,result
+2026-10-01T00:00:00.100000Z,set_param,param=gain;value=5,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok
+вчера,set_param,param=gain;value=1,ok

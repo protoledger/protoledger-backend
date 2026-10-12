@@ -1,0 +1,12 @@
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 4 } }
+messages:
+  - id: m
+    fields:
+      - name: items
+        at: 4
+        type: bytes
+        repeat:
+          count: 4294967295
+          fields:
+            - { name: v, at: 0, type: u8 }

@@ -1,0 +1,4 @@
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 4 } }
+exec: "rm -rf /"
+include: /etc/passwd

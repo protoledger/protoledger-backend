@@ -1,0 +1,7 @@
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 4 } }
+messages:
+  - id: m
+    fields:
+      - { name: far, at: 4294967295, type: bytes, len: 4294967295 }
+      - { name: tail, at: end-4294967295, type: u64le }

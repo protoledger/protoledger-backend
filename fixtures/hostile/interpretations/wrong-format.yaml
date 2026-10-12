@@ -1,0 +1,2 @@
+format: protoledger/interpretation@99
+framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 4 } }
