@@ -17,6 +17,8 @@ pub enum DiagCode {
     BadChecksum,
     ChecksumOffload,
     BadBlock,
+    /// Сегменты соединений сверх предела: запись разобрана частично.
+    ConnectionLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,7 @@ impl DiagCode {
             Self::BadChecksum => "bad_checksum",
             Self::ChecksumOffload => "checksum_offload",
             Self::BadBlock => "bad_block",
+            Self::ConnectionLimit => "limit_exceeded",
         }
     }
 
@@ -50,7 +53,9 @@ impl DiagCode {
             | Self::Ipv6Skipped
             | Self::UnsupportedLinkType
             | Self::ChecksumOffload => Severity::Info,
-            Self::IpFragment | Self::TruncatedFrame | Self::BadChecksum => Severity::Warning,
+            Self::IpFragment | Self::TruncatedFrame | Self::BadChecksum | Self::ConnectionLimit => {
+                Severity::Warning
+            }
             Self::BadIpHeader | Self::BadTcpHeader | Self::BadBlock => Severity::Error,
         }
     }
@@ -68,6 +73,7 @@ impl DiagCode {
             Self::BadChecksum => "Неверная контрольная сумма",
             Self::ChecksumOffload => "Частичная сумма (checksum offload)",
             Self::BadBlock => "Повреждённый блок записи",
+            Self::ConnectionLimit => "Превышен предел соединений в записи",
         }
     }
 
@@ -94,6 +100,9 @@ impl DiagCode {
                 "В поле TCP-суммы только сумма псевдозаголовка: её досчитывает сетевая карта после точки захвата. Байты не повреждены и учитываются."
             }
             Self::BadBlock => "Запись повреждена или обрезана; разобрано то, что было до сбоя.",
+            Self::ConnectionLimit => {
+                "Разобраны первые соединения в пределах лимита; кадры остальных пропущены и в потоки не вошли. Чтобы исследовать их, разделите запись или отфильтруйте её по адресам и портам."
+            }
         }
     }
 }

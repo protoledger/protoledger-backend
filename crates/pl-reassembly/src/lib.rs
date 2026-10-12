@@ -210,12 +210,55 @@ pub fn checksum_report(idx: &CaptureIndex) -> ChecksumReport {
     }
 }
 
+/// Сборка с отказом при превышении предела соединений.
 pub fn reassemble(
     idx: &CaptureIndex,
     file: &[u8],
     policy: Policy,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<Connection>, ReassemblyError> {
+    let done = reassemble_partial(idx, file, policy, cancelled)?;
+    match done.skipped_frames.len() {
+        0 => Ok(done.connections),
+        _ => Err(ReassemblyError::LimitExceeded {
+            name: "соединений в записи",
+            value: MAX_CONNECTIONS as u64 + done.skipped_connections,
+            max: MAX_CONNECTIONS as u64,
+        }),
+    }
+}
+
+/// Результат сборки, при которой предел соединений не останавливает разбор записи.
+#[derive(Debug, Default)]
+pub struct Reassembled {
+    pub connections: Vec<Connection>,
+    /// Соединения сверх `MAX_CONNECTIONS`: не собраны.
+    pub skipped_connections: u64,
+    /// Кадры их сегментов, по порядку записи.
+    pub skipped_frames: Vec<u32>,
+}
+
+/// ТЗ 7.3: ошибка одной сессии не блокирует остальные. Соединения сверх предела не собираются,
+/// а перечисляются явно — без скрытого обрезания.
+pub fn reassemble_partial(
+    idx: &CaptureIndex,
+    file: &[u8],
+    policy: Policy,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Reassembled, ReassemblyError> {
+    reassemble_limited(idx, file, policy, cancelled, MAX_CONNECTIONS)
+}
+
+#[doc(hidden)]
+pub fn reassemble_limited(
+    idx: &CaptureIndex,
+    file: &[u8],
+    policy: Policy,
+    cancelled: &dyn Fn() -> bool,
+    max_connections: usize,
+) -> Result<Reassembled, ReassemblyError> {
+    let mut skipped: BTreeSet<Key> = BTreeSet::new();
+    let mut skipped_frames = Vec::new();
     let mut epochs: Vec<Epoch<'_>> = Vec::new();
     let mut current: BTreeMap<Key, usize> = BTreeMap::new();
     for s in &idx.segments {
@@ -223,12 +266,10 @@ pub fn reassemble(
         let at = match current.get(&k).copied() {
             Some(i) if !epochs.get(i).is_some_and(|e| e.new_connection_by(s)) => i,
             prev => {
-                if epochs.len() >= MAX_CONNECTIONS {
-                    return Err(ReassemblyError::LimitExceeded {
-                        name: "соединений в записи",
-                        value: epochs.len() as u64 + 1,
-                        max: MAX_CONNECTIONS as u64,
-                    });
+                if epochs.len() >= max_connections {
+                    skipped.insert(k);
+                    skipped_frames.push(s.frame);
+                    continue;
                 }
                 epochs.push(Epoch {
                     reused: prev.is_some(),
@@ -263,7 +304,11 @@ pub fn reassemble(
             out.push(c);
         }
     }
-    Ok(out)
+    Ok(Reassembled {
+        connections: out,
+        skipped_connections: skipped.len() as u64,
+        skipped_frames,
+    })
 }
 
 fn connection(
