@@ -556,6 +556,9 @@ fn length_hints(streams: &[StreamSample], cancelled: &dyn Fn() -> bool) -> Vec<L
             (
                 std::cmp::Reverse(permille(c.s.covered, c.s.total)),
                 std::cmp::Reverse(c.s.coherence().0.max(c.s.alignment().0)),
+                // Нулевой байт заголовка читается как «сообщение из трёх байт» и режет каждое
+                // сообщение надвое, попадая в такт: начал вдвое больше, но половина — не с сегмента.
+                std::cmp::Reverse(c.s.alignment().0),
                 std::cmp::Reverse(c.s.ended_exactly),
                 std::cmp::Reverse(c.s.messages),
                 c.p.at,
@@ -565,6 +568,28 @@ fn length_hints(streams: &[StreamSample], cancelled: &dyn Fn() -> bool) -> Vec<L
             )
         };
         key(a).cmp(&key(b))
+    });
+
+    // Варианты с одними и теми же границами на данных неразличимы. Первым из них показываем
+    // двухбайтовое поле: более широкое отличается от него только постоянными нулями в старших
+    // байтах, однобайтовое не оставляет запаса на сообщения длиннее 255 байт.
+    let mut first_seen: BTreeMap<u64, usize> = BTreeMap::new();
+    for (i, c) in cands.iter().enumerate() {
+        first_seen.entry(c.s.fingerprint).or_insert(i);
+    }
+    let width_rank = |w: u8| match w {
+        2 => 0u8,
+        4 => 1,
+        _ => 2,
+    };
+    cands.sort_by_key(|c| {
+        (
+            first_seen
+                .get(&c.s.fingerprint)
+                .copied()
+                .unwrap_or(usize::MAX),
+            width_rank(c.p.width),
+        )
     });
 
     // Метка «не похоже на остальные» нужна только там, где разбор формально прошёл без ошибок.
