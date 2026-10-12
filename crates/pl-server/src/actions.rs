@@ -391,9 +391,15 @@ struct ExchangeDto {
 
 async fn exchange(
     State(state): State<AppState>,
-    Path((id, line)): Path<(String, u64)>,
+    Path((id, line)): Path<(String, String)>,
     q: Result<Query<ExchangeQuery>, QueryRejection>,
 ) -> Result<Json<ExchangeDto>, ApiError> {
+    let line: u64 = line.parse().map_err(|_| {
+        ApiError::new(
+            ProblemKind::BadRequest,
+            "Номер строки журнала — целое неотрицательное число.",
+        )
+    })?;
     let q = query(q)?;
     let (before, after) = (
         q.before.unwrap_or(DEFAULT_BEFORE_MS),

@@ -144,8 +144,12 @@ async fn revisions(State(state): State<AppState>) -> Result<Json<RevisionList>, 
 
 async fn revision(
     State(state): State<AppState>,
-    Path(rev): Path<u32>,
+    Path(rev): Path<String>,
 ) -> Result<Json<Doc>, ApiError> {
+    // Номер разбирается здесь, чтобы отказ пришёл в общем формате ошибок, а не текстом фреймворка.
+    let rev: u32 = rev
+        .parse()
+        .map_err(|_| ApiError::new(ProblemKind::BadRequest, "Номер ревизии — целое число от 1."))?;
     let doc = tokio::task::spawn_blocking(move || -> Result<Doc, Problem> {
         let guard = state.session.read();
         let project = guard.as_ref().ok_or_else(Session::no_project)?;
