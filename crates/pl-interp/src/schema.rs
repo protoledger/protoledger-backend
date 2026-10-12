@@ -12,6 +12,8 @@ pub const FORMAT: &str = "protoledger/interpretation@1";
 pub const MAX_FILE_BYTES: usize = 4 << 20;
 pub const MAX_MESSAGES: usize = 1_000;
 pub const MAX_FIELDS: usize = 1_000;
+/// Имена потока, доступные в условии области и в `when`.
+const STREAM_NAMES: [&str; 4] = ["src_port", "dst_port", "src_ip", "dst_ip"];
 /// Повторений одной группы полей в сообщении (`repeat`).
 pub const MAX_REPEAT: u64 = 4_096;
 pub const MAX_ITEMS: usize = 10_000;
@@ -415,8 +417,7 @@ impl Interpretation {
             return invalid("слишком много описаний");
         }
         if let Some(filter) = &self.scope.filter {
-            let allowed = ["src_port", "dst_port", "src_ip", "dst_ip"];
-            self.check_expr("scope.filter", filter, |n| allowed.contains(&n))?;
+            self.check_expr("scope.filter", filter, |n| STREAM_NAMES.contains(&n))?;
         }
         self.validate_framing()?;
         self.validate_hypotheses()?;
@@ -590,7 +591,7 @@ impl Interpretation {
             self.check_expr(
                 &format!("сообщение «{}», when", m.id),
                 when,
-                |n| fixed.contains(n),
+                |n| fixed.contains(n) || STREAM_NAMES.contains(&n),
             )?;
         }
         Ok(())

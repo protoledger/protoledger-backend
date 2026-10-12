@@ -225,7 +225,8 @@ fn decode(ty: FieldType, bytes: &[u8]) -> Option<Value> {
     }
 }
 
-/// Контекст `when`: поля с известным местом и размером читаются по требованию.
+/// Контекст `when`: поля с известным местом и размером читаются по требованию;
+/// адреса и порты потока — чтобы отличать запрос от ответа, когда в байтах направления нет.
 struct WhenCtx<'a, 'b> {
     view: &'a View<'a, 'b>,
     def: &'a MessageDef,
@@ -233,7 +234,9 @@ struct WhenCtx<'a, 'b> {
 
 impl Context for WhenCtx<'_, '_> {
     fn get(&self, name: &str) -> Option<Value> {
-        let field = self.def.fields.iter().find(|f| f.name == name)?;
+        let Some(field) = self.def.fields.iter().find(|f| f.name == name) else {
+            return StreamCtx(&self.view.input.meta).get(name);
+        };
         let at = self.view.resolve(&field.at)?;
         let len = fixed_len(field)?;
         match self.view.input.read(at, len) {
