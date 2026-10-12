@@ -48,17 +48,6 @@
 id_rsa*
 id_ed25519*
 
-# Следы ИИ-инструментов — никогда
-CLAUDE.md
-CLAUDE.local.md
-AGENTS.md
-.claude/
-.cursor/
-.aider*
-.copilot*
-.windsurf*
-.codex/
-
 # Мусор ОС и редакторов
 .DS_Store
 Thumbs.db
