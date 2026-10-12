@@ -341,6 +341,7 @@ struct DiffPage {
     totals: DiffTotals,
     counts_a: std::collections::BTreeMap<Category, u64>,
     counts_b: std::collections::BTreeMap<Category, u64>,
+    hypotheses: Vec<pl_verify::HypothesisChange>,
     items: Vec<Change>,
     total: u64,
     limit: u64,
@@ -370,6 +371,7 @@ async fn diff(
             totals: d.totals.clone(),
             counts_a: d.counts_a.clone(),
             counts_b: d.counts_b.clone(),
+            hypotheses: d.hypotheses.clone(),
             total: selected.len() as u64,
             items: selected
                 .into_iter()

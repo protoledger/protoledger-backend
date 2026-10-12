@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.16
+  version: 0.1.17
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -397,6 +397,8 @@ paths:
                 totals: { fixed: 1, regressed: 0, changed: 0, added: 0, removed: 0, unchanged: 31 }
                 countsA: { matched: 31, violated: 1 }
                 countsB: { matched: 32 }
+                hypotheses:
+                  - { id: H2, kind: fixed, from: refuted, to: no_counterexample, counterexamplesFrom: 3, counterexamplesTo: 0, applicableFrom: 12, applicableTo: 12 }
                 items:
                   - { stream: 'd05c6bf0:c0001:ba', start: 1210, end: 61210, kind: fixed, from: violated, to: matched, messageId: measure_resp }
                 total: 1
@@ -2099,9 +2101,24 @@ components:
         to: { oneOf: [{ $ref: '#/components/schemas/ResultCategory' }, { type: 'null' }] }
         messageId: { type: [string, 'null'] }
 
+    RunHypothesisChange:
+      type: object
+      required: [id, kind, from, to, counterexamplesFrom, counterexamplesTo, applicableFrom, applicableTo]
+      properties:
+        id: { type: string }
+        kind:
+          allOf: [{ $ref: '#/components/schemas/ChangeKind' }]
+          description: 'fixed — была опровергнута, теперь нет; regressed — стала опровергнутой; changed — изменились числа или выражение теста; added, removed'
+        from: { type: [string, 'null'], enum: [untested, no_counterexample, refuted, null] }
+        to: { type: [string, 'null'], enum: [untested, no_counterexample, refuted, null] }
+        counterexamplesFrom: { type: integer, minimum: 0 }
+        counterexamplesTo: { type: integer, minimum: 0 }
+        applicableFrom: { type: integer, minimum: 0 }
+        applicableTo: { type: integer, minimum: 0 }
+
     RunDiffPage:
       type: object
-      required: [a, b, staleA, staleB, totals, countsA, countsB, items, total, limit, offset]
+      required: [a, b, staleA, staleB, totals, countsA, countsB, hypotheses, items, total, limit, offset]
       properties:
         a: { type: string }
         b: { type: string }
@@ -2123,6 +2140,10 @@ components:
         countsB:
           type: object
           additionalProperties: { type: integer }
+        hypotheses:
+          type: array
+          description: Гипотезы, итог теста которых изменился между прогонами; без изменений — не перечисляются
+          items: { $ref: '#/components/schemas/RunHypothesisChange' }
         items:
           type: array
           items: { $ref: '#/components/schemas/RunChange' }

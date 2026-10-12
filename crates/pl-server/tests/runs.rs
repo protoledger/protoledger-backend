@@ -423,3 +423,91 @@ async fn hypothesis_tests_are_part_of_the_run() {
     assert!(h2["applicable"].as_u64().unwrap() > 0, "{h2}");
     assert_eq!(detail["summary"]["counterexamples"], 0, "{detail}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn diff_shows_hypotheses_fixed_by_a_new_revision_and_tests_follow_the_corpus() {
+    let state = project_state("hypotheses-diff");
+    import(&state, "main.pcapng").await;
+    import(&state, "extra.pcapng").await;
+    for log in ["main.actions.csv", "extra.actions.csv"] {
+        let mapping =
+            json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+        let path = stand(log).to_string_lossy().into_owned();
+        call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path, "mapping": mapping })),
+        )
+        .await;
+    }
+    let unsigned = answer_key().replace("type: i32be", "type: u32be");
+    save_interpretation(&state, &unsigned).await;
+    let wrong = run(&state, json!({})).await;
+
+    // Корпус только из ответов устройства: тест H2 про запросы к нему неприменим, и контрпримеров
+    // из потоков вне корпуса в прогоне нет.
+    let replies = run(&state, json!({ "corpus": { "direction": "b_to_a" } })).await;
+    let (_, detail) = call(&state, Method::GET, &format!("/api/runs/{replies}"), None).await;
+    for c in detail["counterexamples"].as_array().unwrap() {
+        assert!(
+            c["anchor"]["stream"].as_str().unwrap().ends_with(":ba"),
+            "{c}"
+        );
+    }
+    let (_, all) = call(&state, Method::GET, &format!("/api/runs/{wrong}"), None).await;
+    let applicable = |d: &Value| -> u64 {
+        d["hypotheses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["applicable"].as_u64().unwrap())
+            .sum()
+    };
+    assert!(applicable(&detail) < applicable(&all), "{detail}");
+
+    save_interpretation(&state, &answer_key()).await;
+    let fixed = run(&state, json!({})).await;
+    let (status, diff) = call(
+        &state,
+        Method::GET,
+        &format!("/api/runs/diff?a={wrong}&b={fixed}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    let h2 = diff["hypotheses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "H2")
+        .unwrap_or_else(|| panic!("нет H2: {diff}"));
+    assert_eq!(h2["kind"], "fixed");
+    assert_eq!(h2["from"], "refuted");
+    assert_eq!(h2["to"], "no_counterexample");
+    assert!(h2["counterexamplesFrom"].as_u64().unwrap() >= 1);
+    assert_eq!(h2["counterexamplesTo"], 0);
+
+    let (_, back) = call(
+        &state,
+        Method::GET,
+        &format!("/api/runs/diff?a={fixed}&b={wrong}"),
+        None,
+    )
+    .await;
+    let h2 = back["hypotheses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "H2")
+        .unwrap();
+    assert_eq!(h2["kind"], "regressed");
+    let (_, same) = call(
+        &state,
+        Method::GET,
+        &format!("/api/runs/diff?a={fixed}&b={fixed}"),
+        None,
+    )
+    .await;
+    assert_eq!(same["hypotheses"], json!([]));
+}

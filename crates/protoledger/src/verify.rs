@@ -153,6 +153,9 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
         let settings_digest = current
             .as_ref()
             .map_or_else(String::new, |c| c.settings_digest.clone());
+        // Прогон сохранён до того, как тесты гипотез стали частью прогона: сравнивать их не с чем.
+        let legacy =
+            old.hypotheses.is_empty() && interpretation.hypotheses.iter().any(|h| h.test.is_some());
         let mut new = pl_app::execute_run(
             &interpretation,
             Some(rev),
@@ -165,6 +168,7 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
                 .collect::<Vec<_>>(),
             &old.inputs.corpus,
             settings_digest.clone(),
+            !legacy,
             &|| false,
             &mut |_, _| {},
         )
@@ -175,6 +179,8 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
         if diffs.is_empty() {
             let note = if settings_changed {
                 " (настройки сборки изменены, результат тот же)"
+            } else if legacy {
+                " (сохранён без тестов гипотез: они не сравнивались)"
             } else {
                 ""
             };

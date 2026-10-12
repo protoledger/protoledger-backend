@@ -262,7 +262,7 @@ async fn run_test(
             })?],
             None => state.actions.list(),
         };
-        let options = TestOptions { window_ms: request.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS) };
+        let options = TestOptions { window_ms: request.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS), ..TestOptions::default() };
         let evidence = pl_app::test_hypothesis(&pl_app::all_sources(&state.sources), &interpretation, &logs, &expr, &options)?;
         Ok(TestResult { hypothesis: hypothesis.id, statement: hypothesis.statement, status: hypothesis.status, evidence })
     })
