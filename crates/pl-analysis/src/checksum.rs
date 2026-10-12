@@ -179,11 +179,7 @@ fn candidates(functions: &[ChecksumFn<'_>]) -> Vec<Cand> {
 }
 
 fn permille(part: u64, whole: u64) -> u32 {
-    if whole == 0 {
-        0
-    } else {
-        (part.saturating_mul(1000) / whole) as u32
-    }
+    part.saturating_mul(1000).checked_div(whole).unwrap_or(0) as u32
 }
 
 fn type_name(width: u8, big_endian: bool) -> &'static str {
