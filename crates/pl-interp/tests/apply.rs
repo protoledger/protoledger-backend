@@ -572,3 +572,100 @@ fn checksum_range_outside_the_message_is_an_error_not_a_panic() {
             .contains("не вычислилась")
     );
 }
+
+/// Сообщение `длина | флаги | f32be | f32le | f64be | BCD ×2`.
+const ENCODINGS: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: rule }
+messages:
+  - id: reading
+    when: "mode == 5"
+    fields:
+      - { name: total, at: 0, type: u8, status: rule }
+      - { name: alarm, at: 1, type: u8, mask: 0x01, status: rule }
+      - { name: mode, at: 1, type: u8, mask: 0x38, status: rule }
+      - { name: temperature, at: 2, type: f32be, status: rule }
+      - { name: threshold, at: 6, type: f32le, status: rule }
+      - { name: ratio, at: 10, type: f64be, status: rule }
+      - { name: serial, at: 18, type: bcd, len: 2, status: rule, expect: 1234 }
+checks:
+  - { id: C1, kind: structural, expr: "dec(temperature, 1) == 215 && dec(threshold, 1) == 0 - 25" }
+  - { id: C2, kind: structural, expr: "ratio == \"0.1\" && serial + alarm == 1235" }
+"#;
+
+fn reading() -> Vec<u8> {
+    let mut m = vec![20u8, 0b1010_1101];
+    m.extend_from_slice(&21.5f32.to_be_bytes());
+    m.extend_from_slice(&(-2.5f32).to_le_bytes());
+    m.extend_from_slice(&0.1f64.to_be_bytes());
+    m.extend_from_slice(&[0x12, 0x34]);
+    m
+}
+
+#[test]
+fn floats_bcd_and_bit_fields_are_decoded() {
+    let it = Interpretation::parse(ENCODINGS).unwrap();
+    let out = apply(&it, &whole(&reading()), &|| false).unwrap();
+    let m = &out.messages[0];
+    assert_eq!(m.category, Category::Matched, "{:?}", m.violations);
+    let value = |name: &str| {
+        m.fields
+            .iter()
+            .find(|f| f.name == name)
+            .and_then(|f| f.value.clone())
+    };
+    // Битовые поля одного байта: младший бит и три бита со сдвигом.
+    assert_eq!(value("alarm"), Some(Value::Int(1)));
+    assert_eq!(value("mode"), Some(Value::Int(5)));
+    // Кратчайшая десятичная запись, а не «21.299999237».
+    assert_eq!(value("temperature"), Some(Value::Str("21.5".to_owned())));
+    assert_eq!(value("threshold"), Some(Value::Str("-2.5".to_owned())));
+    assert_eq!(value("ratio"), Some(Value::Str("0.1".to_owned())));
+    assert_eq!(value("serial"), Some(Value::Int(1234)));
+    // Два битовых поля одного байта не считают его дважды.
+    assert_eq!(m.unknown_bytes, 0);
+}
+
+#[test]
+fn a_float_that_is_not_exact_in_binary_still_reads_as_written() {
+    let spec = ENCODINGS.replace("dec(temperature, 1) == 215", "dec(temperature, 1) == 213");
+    let it = Interpretation::parse(&spec).unwrap();
+    let mut bytes = reading();
+    bytes[2..6].copy_from_slice(&21.3f32.to_be_bytes());
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(out.messages[0].category, Category::Matched);
+}
+
+#[test]
+fn broken_bcd_and_not_a_number_do_not_panic_or_pass() {
+    let it = Interpretation::parse(ENCODINGS).unwrap();
+    let mut bytes = reading();
+    bytes[18] = 0x1f;
+    bytes[2..6].copy_from_slice(&f32::NAN.to_be_bytes());
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    let m = &out.messages[0];
+    let serial = m.fields.iter().find(|f| f.name == "serial").unwrap();
+    assert_eq!(serial.value, None);
+    // «NaN» — не десятичная запись: проверка не вычисляется, а не проходит молча.
+    assert_eq!(m.category, Category::Violated);
+}
+
+#[test]
+fn new_field_types_are_validated() {
+    let bad = [
+        ("type: bcd, len: 2", "type: bcd"),
+        ("type: bcd, len: 2", "type: bcd, len: 9"),
+        ("type: f32be, status", "type: f32be, len: 4, status"),
+        ("mask: 0x38", "mask: 0"),
+        ("mask: 0x38", "mask: 0x100"),
+        ("type: f32le, status", "type: f32le, mask: 1, status"),
+        ("expect: 1234", "expect: \"12\""),
+    ];
+    for (from, to) in bad {
+        assert!(ENCODINGS.contains(from), "{from}");
+        assert!(
+            Interpretation::parse(&ENCODINGS.replace(from, to)).is_err(),
+            "принято: {to}"
+        );
+    }
+}

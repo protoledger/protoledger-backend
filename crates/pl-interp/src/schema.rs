@@ -137,6 +137,13 @@ pub enum FieldType {
     I32le,
     I64be,
     I64le,
+    /// Число с плавающей точкой IEEE 754; значение — его кратчайшая десятичная запись.
+    F32be,
+    F32le,
+    F64be,
+    F64le,
+    /// Двоично-десятичное число: по десятичной цифре в каждом полубайте.
+    Bcd,
     Bytes,
     String,
     Unknown,
@@ -162,7 +169,21 @@ impl FieldType {
             _ => return None,
         })
     }
+
+    /// Размер в байтах и порядок байтов (старший первым) числа с плавающей точкой.
+    pub fn float(self) -> Option<(usize, bool)> {
+        match self {
+            Self::F32be => Some((4, true)),
+            Self::F32le => Some((4, false)),
+            Self::F64be => Some((8, true)),
+            Self::F64le => Some((8, false)),
+            _ => None,
+        }
+    }
 }
+
+/// Столько байт занимает самое длинное двоично-десятичное число: 16 цифр.
+pub const MAX_BCD_BYTES: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -238,6 +259,9 @@ pub struct FieldDef {
     pub len: Option<Len>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect: Option<Expect>,
+    /// Битовое поле внутри целого: значение — биты маски, сдвинутые к младшему.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u64>,
     #[serde(default)]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -624,10 +648,27 @@ impl Interpretation {
                     return invalid(format!("{ctx}: для bytes и string нужна len"));
                 }
             }
+            FieldType::Bcd => {
+                if !matches!(f.len, Some(Len::Fixed(1..=MAX_BCD_BYTES))) {
+                    return invalid(format!(
+                        "{ctx}: для bcd нужна len — число байт от 1 до {MAX_BCD_BYTES}"
+                    ));
+                }
+            }
             _ if f.len.is_some() => {
                 return invalid(format!("{ctx}: len только у bytes, string и unknown"));
             }
             _ => {}
+        }
+        if let Some(mask) = f.mask {
+            let fits =
+                f.ty.int()
+                    .is_some_and(|int| int.size() == 8 || mask < 1u64 << (int.size() * 8));
+            if mask == 0 || !fits {
+                return invalid(format!(
+                    "{ctx}: mask — ненулевое число, которое помещается в целый тип поля"
+                ));
+            }
         }
         if let Some(Len::Text(text)) = &f.len
             && text != "to_end"
@@ -656,6 +697,9 @@ impl Interpretation {
             let ok = match (f.ty, expect) {
                 (FieldType::Bytes, Expect::Text(t)) => parse_hex(t).is_some(),
                 (FieldType::String, Expect::Text(_)) => true,
+                (FieldType::Bcd, Expect::Int(v)) => *v >= 0,
+                // Десятичная запись числа с плавающей точкой: `expect: "21.5"`.
+                (t, Expect::Text(_)) if t.float().is_some() => true,
                 (t, Expect::Int(v)) => t.int().is_some_and(|int| fits(int, i128::from(*v))),
                 (t, Expect::Text(s)) => t.int().is_some() && parse_hex(s).is_some(),
             };
@@ -684,9 +728,14 @@ fn fits(ty: IntType, value: i128) -> bool {
 /// Поле с известным размером: целое или bytes/string с числовой длиной.
 /// Постоянный размер поля в байтах: целые и bytes/string с числовой длиной.
 pub fn fixed_size(f: &FieldDef) -> Option<u64> {
+    if let Some((size, _)) = f.ty.float() {
+        return Some(size as u64);
+    }
     match (f.ty.int(), &f.len) {
         (Some(t), _) => Some(t.size() as u64),
-        (None, Some(Len::Fixed(n))) if matches!(f.ty, FieldType::Bytes | FieldType::String) => {
+        (None, Some(Len::Fixed(n)))
+            if matches!(f.ty, FieldType::Bytes | FieldType::String | FieldType::Bcd) =>
+        {
             Some(u64::from(*n))
         }
         _ => None,
@@ -694,9 +743,7 @@ pub fn fixed_size(f: &FieldDef) -> Option<u64> {
 }
 
 pub fn is_fixed_size(f: &FieldDef) -> bool {
-    f.ty.int().is_some()
-        || (matches!(f.ty, FieldType::Bytes | FieldType::String)
-            && matches!(f.len, Some(Len::Fixed(_))))
+    fixed_size(f).is_some()
 }
 
 #[cfg(test)]
