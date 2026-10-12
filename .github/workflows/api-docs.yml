@@ -1,0 +1,43 @@
+name: api-docs
+
+# Документация API (openapi.yaml + Redoc) на GitHub Pages. Страница собирается всегда,
+# публикуется, когда в репо включены Pages и задана переменная PAGES_ENABLED=true.
+on:
+  push:
+    branches: [main]
+    paths: [openapi.yaml, docs/api/**, .github/workflows/api-docs.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-docs
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Страница
+        run: |
+          mkdir -p site
+          cp docs/api/index.html openapi.yaml site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: vars.PAGES_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
