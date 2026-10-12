@@ -14,11 +14,16 @@
     )
 )]
 
+mod checksum;
 mod correlation;
 mod exchanges;
 mod framing;
 mod variability;
 
+pub use checksum::{
+    ChecksumAlt, ChecksumCounter, ChecksumFn, ChecksumHint, ChecksumHints, MAX_CHECKSUM_BYTES,
+    MAX_CHECKSUM_MESSAGE_BYTES, MAX_CHECKSUM_MESSAGES, find_checksums,
+};
 pub use correlation::{
     ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, Decimal, MAX_CORR_SAMPLES,
     ValueHint, correlate,
