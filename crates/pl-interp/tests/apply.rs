@@ -527,3 +527,48 @@ fn unknown_name_in_when_is_still_rejected() {
     let bad = BY_PORT.replace("dst_port == 4710", "port == 4710");
     assert!(Interpretation::parse(&bad).is_err());
 }
+
+/// Сообщение `длина | данные | CRC-16/MODBUS младшим байтом вперёд` — как в кадрах Modbus RTU.
+const WITH_CRC: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: rule }
+messages:
+  - id: frame
+    fields:
+      - { name: total, at: 0, type: u8, status: rule }
+      - { name: crc, at: end-2, type: u16le, status: rule }
+checks:
+  - { id: C1, kind: structural, expr: "crc == crc16_modbus(0, message.len - 2)", description: "CRC не сходится" }
+"#;
+
+#[test]
+fn crc_check_passes_on_intact_bytes_and_catches_a_flipped_bit() {
+    let it = Interpretation::parse(WITH_CRC).unwrap();
+    let mut bytes = vec![7u8, 0x01, 0x03, 0x00, 0x2a];
+    let crc = pl_interp::Algorithm::by_name("crc16_modbus")
+        .unwrap()
+        .compute(&bytes) as u16;
+    bytes.extend_from_slice(&crc.to_le_bytes());
+
+    let ok = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(ok.messages[0].category, Category::Matched);
+
+    bytes[3] ^= 0x10;
+    let broken = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(broken.messages[0].category, Category::Violated);
+    assert_eq!(broken.messages[0].violations[0].kind, ViolationKind::Check);
+}
+
+#[test]
+fn checksum_range_outside_the_message_is_an_error_not_a_panic() {
+    let spec = WITH_CRC.replace("message.len - 2", "message.len + 1");
+    let it = Interpretation::parse(&spec).unwrap();
+    let bytes = [5u8, 1, 2, 3, 4];
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(out.messages[0].category, Category::Violated);
+    assert!(
+        out.messages[0].violations[0]
+            .detail
+            .contains("не вычислилась")
+    );
+}

@@ -2,7 +2,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pl_interp::{Context, Expr, ExprError, Value};
+use pl_interp::{Algorithm, Context, Expr, ExprError, Value};
 
 struct Names;
 
@@ -20,11 +20,13 @@ impl Context for Names {
         }
     }
 
-    fn sum8(&self, from: i128, to: i128) -> Result<i128, ExprError> {
+    fn checksum(&self, a: &Algorithm, from: i128, to: i128) -> Result<i128, ExprError> {
         if from < 0 || to < from || to > 64 {
-            return Err(ExprError::Arguments("sum8"));
+            return Err(ExprError::Arguments(a.name));
         }
-        Ok((to - from) % 256)
+        // Сообщение из 64 байт: каждый равен своему смещению.
+        let bytes: Vec<u8> = (from..to).map(|i| i as u8).collect();
+        Ok(i128::from(a.compute(&bytes)))
     }
 }
 
