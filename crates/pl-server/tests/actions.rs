@@ -434,3 +434,41 @@ async fn relative_log_path_is_resolved_from_workspace() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["name"], "main.actions.csv", "{body}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn journal_columns_are_guessed_with_reasons() {
+    let state = project_state("guess");
+    let path = stand("main.actions.csv").to_string_lossy().into_owned();
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs/guess",
+        Some(json!({ "path": path })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["mapping"]["time"], "time");
+    assert_eq!(body["mapping"]["action"], "action");
+    assert_eq!(body["mapping"]["params"], "params");
+    assert_eq!(body["skipped"], 0);
+    assert!(body["reasons"]["time"].as_str().unwrap().contains("time"));
+    // Догадка сразу годится для импорта.
+    let (status, imported) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": path, "mapping": body["mapping"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    assert_eq!(imported["rows"], body["rows"]);
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs/guess",
+        Some(json!({ "path": "нет-такого.csv" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

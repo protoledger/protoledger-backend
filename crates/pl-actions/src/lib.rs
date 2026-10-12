@@ -16,6 +16,9 @@
 
 use std::collections::BTreeMap;
 
+mod guess;
+pub use guess::{Guess, guess_mapping};
+
 use serde::{Deserialize, Serialize};
 
 /// Размер файла журнала.
@@ -166,7 +169,7 @@ pub struct ParsedLog {
 // ------------------------------------------------------------------- CSV
 
 /// Разбирает CSV с кавычками (`""` внутри поля, переводы строк в кавычках). `(номер строки, поля)`.
-fn csv_rows(text: &str, delimiter: char) -> Result<Vec<(u64, Vec<String>)>, LogError> {
+pub(crate) fn csv_rows(text: &str, delimiter: char) -> Result<Vec<(u64, Vec<String>)>, LogError> {
     let mut rows = Vec::new();
     let mut row: Vec<String> = Vec::new();
     let mut field = String::new();

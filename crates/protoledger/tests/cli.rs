@@ -604,3 +604,31 @@ fn verify_reruns_a_run_on_its_own_sources_after_a_later_import() {
         "{stdout}"
     );
 }
+
+#[test]
+fn apply_guesses_journal_columns_without_a_mapping() {
+    let dir = temp("guess");
+    let mapping = mapping_file(&dir);
+    let log = repo("fixtures/stand/main.actions.csv");
+    let with = apply(
+        "fixtures/stand/main.pcapng",
+        &[
+            "--action-log",
+            log.to_str().unwrap(),
+            "--mapping",
+            mapping.to_str().unwrap(),
+        ],
+    );
+    let guessed = apply(
+        "fixtures/stand/main.pcapng",
+        &["--action-log", log.to_str().unwrap()],
+    );
+    assert_eq!(
+        text(&guessed.stdout),
+        text(&with.stdout),
+        "догадка даёт тот же результат, что ручное сопоставление"
+    );
+    let err = text(&guessed.stderr);
+    assert!(err.contains("колонки журнала угаданы"), "{err}");
+    assert!(err.contains("time: «time»"), "{err}");
+}
