@@ -245,12 +245,16 @@ pub(crate) fn assign<'a>(
 
 pub struct TestOptions {
     pub window_ms: u64,
+    /// Потоки, чьи сообщения проверяются; без значения — все. Парный ответ берётся из встречного
+    /// потока, даже если тот в корпус не входит.
+    pub corpus: Option<pl_verify::CorpusFilter>,
 }
 
 impl Default for TestOptions {
     fn default() -> Self {
         Self {
             window_ms: DEFAULT_WINDOW_MS,
+            corpus: None,
         }
     }
 }
@@ -347,6 +351,18 @@ pub fn test_hypothesis(
                 );
             }
             for (i, msgs) in per_stream.iter().enumerate() {
+                let (src, dst) = if i == 0 {
+                    (connection.a.port(), connection.b.port())
+                } else {
+                    (connection.b.port(), connection.a.port())
+                };
+                if options
+                    .corpus
+                    .as_ref()
+                    .is_some_and(|c| !c.accepts(&data.sha256, i, src, dst))
+                {
+                    continue;
+                }
                 let partner = per_stream.get(1 - i);
                 let stamps: Vec<u64> = msgs.iter().map(|m| m.first_ts).collect();
                 let partner_stamps: Vec<u64> =

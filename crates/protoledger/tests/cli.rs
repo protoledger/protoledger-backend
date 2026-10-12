@@ -244,6 +244,7 @@ fn project_with_run(name: &str) -> PathBuf {
         &[],
         &Default::default(),
         current.settings_digest,
+        true,
         &|| false,
         &mut |_, _| {},
     )
@@ -562,4 +563,22 @@ fn bench_errors_have_code_two() {
         run(&["bench", text_file.to_str().unwrap()]).status.code(),
         Some(2)
     );
+}
+
+#[test]
+fn verify_accepts_a_run_saved_before_hypothesis_tests() {
+    let root = project_with_run("legacy-run");
+    let path = root.join("runs/run-0001.json");
+    let mut run: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(
+        !run["hypotheses"].as_array().unwrap().is_empty(),
+        "у прогона есть итоги тестов"
+    );
+    run.as_object_mut().unwrap().remove("hypotheses");
+    std::fs::write(&path, serde_json::to_string(&run).unwrap()).unwrap();
+    let out = self::run(&["verify", root.to_str().unwrap()]);
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("без тестов гипотез"), "{stdout}");
 }

@@ -101,6 +101,7 @@ pub fn execute_run(
     logs: &[Arc<LoadedLog>],
     corpus: &CorpusFilter,
     settings_digest: String,
+    hypothesis_tests: bool,
     cancelled: &dyn Fn() -> bool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<pl_verify::Run, Problem> {
@@ -120,8 +121,15 @@ pub fn execute_run(
     let mut run = pl_verify::execute(interpretation, &targets, inputs, cancelled, progress)
         .map_err(verify_problem)?;
 
-    // ТЗ R4: тесты гипотез — часть прогона. Фильтры портов и направлений тест сужает сам
-    // через область интерпретации, корпус ограничивает записи.
+    if !hypothesis_tests {
+        return Ok(run);
+    }
+    // ТЗ R4: тесты гипотез — часть прогона и считаются по тем же потокам, что и сводка:
+    // условия фильтрации одни для всего результата.
+    let options = TestOptions {
+        corpus: Some(corpus.clone()),
+        ..TestOptions::default()
+    };
     let corpus_sources: Vec<Arc<SourceData>> = sources
         .iter()
         .filter(|s| used.binary_search(&s.sha256).is_ok())
@@ -132,13 +140,7 @@ pub fn execute_run(
         if cancelled() {
             return Err(verify_problem(pl_verify::VerifyError::Cancelled));
         }
-        let evidence = test_hypothesis(
-            &corpus_sources,
-            interpretation,
-            logs,
-            test,
-            &TestOptions::default(),
-        )?;
+        let evidence = test_hypothesis(&corpus_sources, interpretation, logs, test, &options)?;
         let outcome = HypothesisRun {
             id: h.id.clone(),
             test: test.clone(),
@@ -238,6 +240,7 @@ pub fn start_verify(
                 &logs.list(),
                 &corpus,
                 current.settings_digest,
+                true,
                 &cancelled,
                 &mut |done, total| {
                     ctx.progress(ProgressStage::Verifying, done, total, ProgressUnit::Streams)

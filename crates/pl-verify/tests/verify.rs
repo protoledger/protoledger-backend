@@ -302,3 +302,66 @@ fn hypothesis_counterexamples_join_the_run() {
         "сообщения нет в таблице — структура не нарушена"
     );
 }
+
+#[test]
+fn diff_tracks_hypothesis_outcomes() {
+    let good = [msg(1, b"ab", true)].concat();
+    let it = spec(true);
+    let base = run(&it, &[target("s:c0001:ab", &good)]);
+    let outcome = |id: &str, verdict: HypothesisVerdict, counterexamples: u64| HypothesisRun {
+        id: id.into(),
+        test: "kind == 1".into(),
+        verdict,
+        applicable: 4,
+        held: 4 - counterexamples,
+        not_applicable: 0,
+        counterexamples,
+        errors: 0,
+    };
+    let (mut a, mut b) = (base.clone(), base.clone());
+    a.add_hypothesis(outcome("H1", HypothesisVerdict::Refuted, 2), vec![]);
+    a.add_hypothesis(
+        outcome("H2", HypothesisVerdict::NoCounterexample, 0),
+        vec![],
+    );
+    a.add_hypothesis(
+        outcome("H3", HypothesisVerdict::NoCounterexample, 0),
+        vec![],
+    );
+    a.add_hypothesis(outcome("H4", HypothesisVerdict::Untested, 0), vec![]);
+    b.add_hypothesis(
+        outcome("H1", HypothesisVerdict::NoCounterexample, 0),
+        vec![],
+    );
+    b.add_hypothesis(outcome("H2", HypothesisVerdict::Refuted, 1), vec![]);
+    b.add_hypothesis(
+        outcome("H3", HypothesisVerdict::NoCounterexample, 0),
+        vec![],
+    );
+    b.add_hypothesis(
+        outcome("H5", HypothesisVerdict::NoCounterexample, 0),
+        vec![],
+    );
+
+    let d = diff(&a, &b);
+    let kinds: Vec<(&str, ChangeKind)> = d
+        .hypotheses
+        .iter()
+        .map(|h| (h.id.as_str(), h.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("H1", ChangeKind::Fixed),
+            ("H2", ChangeKind::Regressed),
+            ("H4", ChangeKind::Removed),
+            ("H5", ChangeKind::Added),
+        ],
+        "H3 не изменилась и в список не попала"
+    );
+    let h1 = &d.hypotheses[0];
+    assert_eq!((h1.counterexamples_from, h1.counterexamples_to), (2, 0));
+    assert_eq!(h1.from, Some(HypothesisVerdict::Refuted));
+    assert!(diff(&a, &a).hypotheses.is_empty());
+    assert!(diff(&base, &base).hypotheses.is_empty());
+}

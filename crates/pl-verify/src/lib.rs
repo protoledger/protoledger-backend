@@ -441,6 +441,58 @@ pub struct Change {
     pub message_id: Option<String>,
 }
 
+/// Изменение итога теста гипотезы между прогонами.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HypothesisChange {
+    pub id: String,
+    /// `fixed` — была опровергнута, теперь нет; `regressed` — стала опровергнутой; `changed` — итог
+    /// тот же по смыслу, но изменились числа или выражение теста; `added`, `removed`.
+    pub kind: ChangeKind,
+    pub from: Option<HypothesisVerdict>,
+    pub to: Option<HypothesisVerdict>,
+    pub counterexamples_from: u64,
+    pub counterexamples_to: u64,
+    pub applicable_from: u64,
+    pub applicable_to: u64,
+}
+
+fn hypothesis_changes(a: &Run, b: &Run) -> Vec<HypothesisChange> {
+    let ids: std::collections::BTreeSet<&str> = a
+        .hypotheses
+        .iter()
+        .chain(&b.hypotheses)
+        .map(|h| h.id.as_str())
+        .collect();
+    let find = |run: &'_ Run, id: &str| run.hypotheses.iter().find(|h| h.id == id).cloned();
+    ids.into_iter()
+        .filter_map(|id| {
+            let (left, right) = (find(a, id), find(b, id));
+            let refuted = |h: &HypothesisRun| h.verdict == HypothesisVerdict::Refuted;
+            let kind = match (&left, &right) {
+                (Some(l), Some(r)) if l == r => return None,
+                (Some(l), Some(r)) => match (refuted(l), refuted(r)) {
+                    (true, false) => ChangeKind::Fixed,
+                    (false, true) => ChangeKind::Regressed,
+                    _ => ChangeKind::Changed,
+                },
+                (None, Some(_)) => ChangeKind::Added,
+                _ => ChangeKind::Removed,
+            };
+            Some(HypothesisChange {
+                id: id.to_owned(),
+                kind,
+                from: left.as_ref().map(|h| h.verdict),
+                to: right.as_ref().map(|h| h.verdict),
+                counterexamples_from: left.as_ref().map_or(0, |h| h.counterexamples),
+                counterexamples_to: right.as_ref().map_or(0, |h| h.counterexamples),
+                applicable_from: left.as_ref().map_or(0, |h| h.applicable),
+                applicable_to: right.as_ref().map_or(0, |h| h.applicable),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DiffTotals {
     pub fixed: u64,
@@ -460,6 +512,9 @@ pub struct RunDiff {
     pub counts_a: BTreeMap<Category, u64>,
     pub counts_b: BTreeMap<Category, u64>,
     pub changes: Vec<Change>,
+    /// Гипотезы, итог теста которых изменился.
+    #[serde(default)]
+    pub hypotheses: Vec<HypothesisChange>,
 }
 
 /// Качество категории: чем меньше, тем лучше.
@@ -530,5 +585,6 @@ pub fn diff(a: &Run, b: &Run) -> RunDiff {
         counts_a: totals_counts(a),
         counts_b: totals_counts(b),
         changes,
+        hypotheses: hypothesis_changes(a, b),
     }
 }
