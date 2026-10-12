@@ -16,6 +16,9 @@
     "category": "DeveloperTool",
     "shortDescription": "Исследование прикладных протоколов по записям трафика",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
+    "windows": {
+      "wix": { "language": "ru-RU" }
+    },
     "linux": {
       "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"] }
     }
