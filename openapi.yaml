@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.17
+  version: 0.1.18
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -281,6 +281,71 @@ paths:
                 total: 1
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/field-hints:
+    post:
+      tags: [interpretation]
+      operationId: getFieldTypeHints
+      summary: Подсказка типа поля
+      description: |
+        Для целочисленного поля перебирает типы той же ширины (знаковый и беззнаковый, оба порядка байтов) и для
+        каждого применяет описание к записям проекта: границы значений, число отрицательных, нарушения проверок и итог
+        тестов гипотез, в которых участвует поле (в том числе с `dec()` и `response.*`). `suggested` — тип с наименьшим
+        числом противоречий, если он лучше текущего; иначе `null`. Замена типа той же ширины не сдвигает соседние
+        поля, поэтому годится как быстрое исправление. Поле с тем же именем и типом в других сообщениях (запрос и
+        ответ) меняется вместе с этим — они перечислены в `messages`. Для поля повторяющейся группы имя —
+        `<группа>.<поле>`. Это подсказка с основаниями (числа контрпримеров при каждом варианте), а не вывод.
+        Без `yaml` берётся текущая ревизия. Ничего не сохраняется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FieldHintsRequest' }
+            example: { messageId: set_config_req, field: threshold_centi_c }
+      responses:
+        '200':
+          description: Варианты типа с основаниями
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldHints' }
+              example:
+                messageId: set_config_req
+                field: threshold_centi_c
+                currentType: u16be
+                messages: [set_config_req, config_resp]
+                hypotheses: [H6, H12]
+                suggested: i16be
+                candidates:
+                  - type: u16be
+                    current: true
+                    values: 40
+                    min: 0
+                    max: 65286
+                    negative: 0
+                    violations: 0
+                    counterexamples: 8
+                    tests:
+                      - { id: H6, verdict: refuted, applicable: 24, held: 20, counterexamples: 4 }
+                      - { id: H12, verdict: refuted, applicable: 38, held: 34, counterexamples: 4 }
+                  - type: i16be
+                    current: false
+                    values: 40
+                    min: -1000
+                    max: 2500
+                    negative: 4
+                    violations: 0
+                    counterexamples: 0
+                    tests:
+                      - { id: H6, verdict: no_counterexample, applicable: 24, held: 24, counterexamples: 0 }
+                      - { id: H12, verdict: no_counterexample, applicable: 38, held: 38, counterexamples: 0 }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1849,6 +1914,52 @@ components:
         или ожидание; `incomplete` — задевает дыру или обрывается в конце потока; `ambiguous` — задевает
         неоднозначный участок; `unmatched` — ни одно описание не подошло; `limit_exceeded` — ограничение
         реализации (заявленная длина больше предела).
+
+    FieldHintsRequest:
+      type: object
+      required: [messageId, field]
+      additionalProperties: false
+      properties:
+        messageId: { type: string, description: 'Тип сообщения из описания' }
+        field: { type: string, description: 'Имя поля; для поля повторяющейся группы — <группа>.<поле>' }
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+        windowMs: { type: integer, minimum: 0, maximum: 600000, description: 'Окно подбора действия журнала, мс (по умолчанию 2000)' }
+
+    FieldTypeCandidate:
+      type: object
+      required: [type, current, values, min, max, negative, violations, counterexamples, tests]
+      properties:
+        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le, u64be, u64le, i64be, i64le] }
+        current: { type: boolean, description: 'Тип, записанный в описании сейчас' }
+        values: { type: integer, minimum: 0, description: 'Сколько значений поля прочитано' }
+        min: { type: [integer, 'null'] }
+        max: { type: [integer, 'null'] }
+        negative: { type: integer, minimum: 0, description: 'Сколько значений отрицательны при этом типе' }
+        violations: { type: integer, minimum: 0, description: 'Нарушения проверок и ожидаемых значений в сообщениях с полем' }
+        counterexamples: { type: integer, minimum: 0, description: 'Контрпримеры всех тестов гипотез, где участвует поле' }
+        tests:
+          type: array
+          items:
+            type: object
+            required: [id, verdict, applicable, held, counterexamples]
+            properties:
+              id: { type: string }
+              verdict: { type: string, enum: [untested, no_counterexample, refuted] }
+              applicable: { type: integer, minimum: 0 }
+              held: { type: integer, minimum: 0 }
+              counterexamples: { type: integer, minimum: 0 }
+
+    FieldHints:
+      type: object
+      required: [messageId, field, currentType, messages, hypotheses, candidates, suggested]
+      properties:
+        messageId: { type: string }
+        field: { type: string }
+        currentType: { type: string }
+        messages: { type: array, items: { type: string }, description: 'Сообщения, где поле с этим именем и типом меняется вместе' }
+        hypotheses: { type: array, items: { type: string }, description: 'Гипотезы, в тестах которых участвует поле' }
+        candidates: { type: array, items: { $ref: '#/components/schemas/FieldTypeCandidate' } }
+        suggested: { type: [string, 'null'], description: 'Тип с наименьшим числом противоречий, если он лучше текущего' }
 
     PreviewRequest:
       type: object

@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod field_hints;
 mod hypothesis;
 mod interp;
 mod jobs;
@@ -19,6 +20,7 @@ pub use analysis::{
     CorrelationRequest, ExchangeView, MAX_REQUEST_STREAMS, MessageRef, VariabilityRequest,
     connection_exchanges, framing_hints, message_correlations, message_variability,
 };
+pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,
 };
