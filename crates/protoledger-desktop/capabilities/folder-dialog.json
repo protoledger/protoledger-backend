@@ -1,0 +1,7 @@
+{
+  "identifier": "folder-dialog",
+  "description": "Выбор папки проекта: только окно встроенного движка, только открытие диалога",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*"] },
+  "permissions": ["dialog:allow-open"]
+}

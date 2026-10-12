@@ -68,6 +68,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stop = Arc::new(Notify::new());
 
     let app = tauri::Builder::default()
+        // Нативное в окне — только выбор папки проекта (capabilities/folder-dialog.json).
+        .plugin(tauri_plugin_dialog::init())
         .setup({
             let stop = stop.clone();
             move |app| {
