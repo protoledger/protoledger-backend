@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.22
+  version: 0.1.23
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1650,6 +1650,72 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/fields:
+    post:
+      tags: [analysis]
+      operationId: findFieldHints
+      summary: Подсказки полей по поведению значений
+      description: |
+        Ищет в сообщениях поля с узнаваемым поведением. **`counter`** — целое, которое растёт на единицу с каждым
+        сообщением потока (ищется по всем сообщениям потоков, фильтры на него не действуют: среди сообщений одного
+        типа номер идёт с пропусками). **`time`** — целое 4 или 8 байт, прирост которого от первого сообщения потока
+        совпадает с приростом времени записи в секундах, милли- или микросекундах; `epoch: true` — значение
+        совпадает с часами записи, то есть это время от эпохи Unix. **`string`** — длина (u8 или u16) и сразу за ней
+        печатный текст UTF-8 этой длины. **`text`** — печатный текст на постоянном месте, не короче 4 байт.
+        **`tlv`** — записи «метка, длина, значение» подряд до конца сообщения. Подсказка даётся при совпадении не
+        меньше чем на 5 примерах и в 80 % случаев; первое несовпавшее сообщение — `firstCounterexample`.
+        Сообщения должны быть одного вида: передавайте потоки одной стороны и отбирайте тип — `messageId`
+        (нужна сохранённая интерпретация) или `match` — значения байтов-различителей из `/api/analysis/types`.
+        Границы сообщений — из `framing` или из сохранённой интерпретации. Это подсказки, не выводы.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FieldsRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab']
+              framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 8 }, status: hypothesis }
+              match: [{ at: 7, value: 32 }]
+      responses:
+        '200':
+          description: Подсказки полей
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldBehaviorHints' }
+              example:
+                messages: 14
+                truncated: false
+                incomplete: false
+                hints:
+                  - kind: counter
+                    at: 4
+                    type: u16be
+                    size: 2
+                    summary: растёт на единицу с каждым сообщением потока
+                    matches: 80
+                    samples: 80
+                    sharePermille: 1000
+                    equivalent: [{ at: 5, type: u8 }]
+                  - kind: string
+                    at: 13
+                    type: u8
+                    toEnd: true
+                    example: Lab
+                    summary: длина и сразу за ней текст этой длины, до конца сообщения
+                    matches: 13
+                    samples: 14
+                    sharePermille: 928
+                    firstCounterexample: { stream: '3f5a1c0d:c0001:ab', start: 120, end: 134 }
+                    equivalent: []
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2799,6 +2865,63 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    FieldsRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
+        match:
+          type: array
+          maxItems: 8
+          description: Только сообщения с этими значениями байтов
+          items:
+            type: object
+            required: [at, value]
+            additionalProperties: false
+            properties:
+              at: { type: integer, minimum: 0 }
+              value: { type: integer, minimum: 0, maximum: 255 }
+
+    FieldBehaviorHint:
+      type: object
+      required: [kind, at, type, summary, matches, samples, sharePermille, equivalent]
+      properties:
+        kind: { type: string, enum: [counter, time, string, text, tlv] }
+        at: { type: integer, minimum: 0, description: 'Смещение поля; у строки и записей — смещение длины или первой записи' }
+        type: { type: string, description: 'Тип поля; у строки и записей — тип длины' }
+        size: { type: integer, minimum: 1, description: 'Размер в байтах: счётчик, время, текст' }
+        unit: { type: string, enum: [s, ms, us], description: 'Единица времени' }
+        epoch: { type: boolean, description: 'Время от эпохи Unix: совпадает с часами записи' }
+        toEnd: { type: boolean, description: 'Строка или записи доходят до конца сообщения' }
+        example: { type: string, description: 'Пример текста, до 32 символов' }
+        tags: { type: integer, minimum: 0, description: 'Разных меток у записей' }
+        summary: { type: string, description: 'Что это значит, одной фразой' }
+        matches: { type: integer, minimum: 0 }
+        samples: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        firstCounterexample: { $ref: '#/components/schemas/MessagePlace' }
+        equivalent:
+          type: array
+          description: То же поле, прочитанное иначе; на этих данных неотличимо
+          items:
+            type: object
+            required: [at, type]
+            properties:
+              at: { type: integer, minimum: 0 }
+              type: { type: string }
+
+    FieldBehaviorHints:
+      type: object
+      required: [messages, truncated, incomplete, hints]
+      properties:
+        messages: { type: integer, minimum: 0, description: 'Сколько сообщений отобрано фильтром' }
+        truncated: { type: boolean, description: 'Сообщений больше 20 000: взяты первые' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени' }
+        hints: { type: array, items: { $ref: '#/components/schemas/FieldBehaviorHint' } }
 
     TypesRequest:
       type: object

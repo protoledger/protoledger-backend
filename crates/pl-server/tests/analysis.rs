@@ -571,3 +571,65 @@ async fn types_split_messages_by_side_and_the_type_byte() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn field_hints_find_the_request_counter_even_under_a_type_filter() {
+    let (state, _, ab, _) = setup("fields").await;
+    let (_, hints) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/framing",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    let framing = hints["length"][0]["framing"].clone();
+    // Сообщения одного типа: номер запроса среди них идёт с пропусками, но счётчик ищется по потоку.
+    let (status, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/fields",
+        Some(json!({ "streams": [ab.clone()], "framing": framing, "match": [{ "at": 2, "value": 2 }] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found["incomplete"], false);
+    let all = found["hints"].as_array().unwrap();
+    let counter = all.iter().find(|h| h["kind"] == "counter").unwrap();
+    assert_eq!(counter["at"], 3, "{found}");
+    assert_eq!(counter["type"], "u8");
+    assert_eq!(counter["sharePermille"], 1000);
+    assert!(
+        counter["summary"]
+            .as_str()
+            .unwrap()
+            .contains("растёт на единицу")
+    );
+    // Отобраны только сообщения с байтом типа 02.
+    let (_, everything) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/fields",
+        Some(json!({ "streams": [ab.clone()], "framing": framing })),
+    )
+    .await;
+    assert!(found["messages"].as_u64().unwrap() < everything["messages"].as_u64().unwrap());
+    // Ложного «времени» на постоянных байтах заголовка нет.
+    assert!(all.iter().all(|h| h["kind"] != "time"), "{found}");
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/fields",
+        Some(json!({ "streams": [ab.clone()], "framing": framing, "match": [{ "at": 2, "value": 256 }] })),
+    )
+    .await;
+    assert!(status.is_client_error());
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/fields",
+        Some(json!({ "streams": [ab] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}

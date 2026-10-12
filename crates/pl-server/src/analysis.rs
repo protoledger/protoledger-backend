@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
-use pl_app::{ChecksumRequest, ExchangeView, TypesRequest, VariabilityRequest};
+use pl_app::{
+    ByteMatch, ChecksumRequest, ExchangeView, FieldsRequest, TypesRequest, VariabilityRequest,
+};
 use pl_core::ProblemKind;
 use pl_interp::schema::Framing;
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/correlations", post(correlations))
         .route("/analysis/checksums", post(checksums))
         .route("/analysis/types", post(types))
+        .route("/analysis/fields", post(fields))
         .route("/exchanges", post(exchanges))
 }
 
@@ -148,6 +151,54 @@ async fn types(
             &TypesRequest {
                 streams: body.streams,
                 framing: body.framing,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatchBody {
+    at: u32,
+    value: u8,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FieldsBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    framing: Option<Framing>,
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default, rename = "match")]
+    matching: Vec<MatchBody>,
+}
+
+async fn fields(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<FieldsBody>,
+) -> Result<Json<pl_app::FieldsView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::message_fields(
+            &state.session,
+            &state.sources,
+            &FieldsRequest {
+                streams: body.streams,
+                framing: body.framing,
+                message_id: body.message_id,
+                matching: body
+                    .matching
+                    .iter()
+                    .map(|m| ByteMatch {
+                        at: m.at,
+                        value: m.value,
+                    })
+                    .collect(),
             },
             &|| started.elapsed() > SEARCH_TIMEOUT,
         )

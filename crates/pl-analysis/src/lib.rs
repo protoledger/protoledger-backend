@@ -17,6 +17,7 @@
 mod checksum;
 mod correlation;
 mod exchanges;
+mod fields;
 mod framing;
 mod types;
 mod variability;
@@ -30,6 +31,9 @@ pub use correlation::{
     ValueHint, correlate,
 };
 pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
+pub use fields::{
+    FieldAlt, FieldHint, FieldHints, FieldKind, FieldSample, MAX_FIELD_MESSAGES, find_fields,
+};
 pub use framing::{
     Counter, CounterReason, DelimiterHint, FieldRef, FixedHint, FramingHints, FramingSpec,
     LengthHint, LengthSpecHint, SignatureHint, find_framing,
