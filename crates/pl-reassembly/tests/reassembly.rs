@@ -381,3 +381,40 @@ fn checksum_report_tells_offloading_from_corruption() {
     let mixed = report("mixed");
     assert!(mixed.offloading_host.is_none(), "{mixed:?}");
 }
+
+#[test]
+fn connections_over_the_limit_are_skipped_explicitly() {
+    let file = fixture("mixed.pcapng");
+    let idx = index(&file, Limits::default(), &|| false, &mut |_| {}).unwrap();
+    let full = reassemble(&idx, &file, Policy::default(), &|| false).unwrap();
+    assert!(full.len() >= 2, "в сценарии несколько соединений");
+
+    let all =
+        pl_reassembly::reassemble_limited(&idx, &file, Policy::default(), &|| false, full.len())
+            .unwrap();
+    assert_eq!(all.connections.len(), full.len());
+    assert_eq!(all.skipped_connections, 0);
+    assert!(all.skipped_frames.is_empty());
+
+    let keep = full.len() - 1;
+    let part =
+        pl_reassembly::reassemble_limited(&idx, &file, Policy::default(), &|| false, keep).unwrap();
+    assert_eq!(
+        part.connections.len(),
+        keep,
+        "в пределе — первые соединения"
+    );
+    for (a, b) in part.connections.iter().zip(&full) {
+        assert_eq!(a.a, b.a);
+        assert_eq!(a.b, b.b);
+        assert_eq!(a.streams, b.streams, "уже собранные соединения не меняются");
+    }
+    assert!(part.skipped_connections >= 1);
+    assert!(!part.skipped_frames.is_empty(), "пропущенное перечислено");
+    let frames = |c: &[Connection]| c.iter().map(|c| u64::from(c.frame_count)).sum::<u64>();
+    assert_eq!(
+        frames(&part.connections) + part.skipped_frames.len() as u64,
+        frames(&full),
+        "каждый кадр либо в собранном соединении, либо в списке пропущенных"
+    );
+}

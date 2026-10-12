@@ -187,17 +187,39 @@ async fn hostile_strings_are_returned_as_data_not_markup() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn connection_limit_is_reported_as_problem() {
+async fn connections_over_the_limit_are_diagnosed_not_fatal() {
     let state = state("limit");
     let dir = std::env::temp_dir().join(format!("pl-hostile-large-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("connections-over-limit.pcap");
     std::fs::write(&path, pl_hostile::large("connections-over-limit").unwrap()).unwrap();
+    // ТЗ 7.3: запись открывается, соединения в пределе собраны, остальное — явная диагностика.
     let job = import(&state, path).await;
-    assert_eq!(job.state, JobState::Failed);
-    let problem = job.error.unwrap();
-    assert_eq!(problem.status, 413);
-    assert!(problem.limit.is_some());
+    assert_eq!(job.state, JobState::Succeeded, "{:?}", job.error);
+    let (_, sources) = call(&state, Method::GET, "/api/sources", None).await;
+    let sha = sources["items"][0]["sha256"].as_str().unwrap().to_owned();
+    let (_, conns) = call(&state, Method::GET, "/api/connections?limit=1", None).await;
+    assert_eq!(
+        conns["total"],
+        pl_reassembly::MAX_CONNECTIONS as u64,
+        "{conns}"
+    );
+    let (status, diag) = call(
+        &state,
+        Method::GET,
+        &format!("/api/sources/{sha}/diagnostics"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{diag}");
+    let limit = diag["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "limit_exceeded")
+        .unwrap_or_else(|| panic!("нет limit_exceeded: {diag}"));
+    assert!(limit["count"].as_u64().unwrap() > 0);
+    assert_eq!(limit["severity"], "warning");
     let _ = std::fs::remove_dir_all(dir);
     let (status, _) = call(&state, Method::GET, "/api/health", None).await;
     assert_eq!(status, StatusCode::OK);

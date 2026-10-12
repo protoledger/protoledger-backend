@@ -151,14 +151,20 @@ pub fn analyze_with(
         .map(|b| format!("{b:02x}"))
         .collect();
     progress(ProgressStage::Reading, 0, total, ProgressUnit::Bytes);
-    let index = pl_capture::index(&file, Limits::default(), cancelled, &mut |done| {
+    let mut index = pl_capture::index(&file, Limits::default(), cancelled, &mut |done| {
         progress(ProgressStage::Reading, done, total, ProgressUnit::Bytes);
     })
     .map_err(capture_problem)?;
     let frames = index.frames.len() as u64;
     progress(ProgressStage::Reassembling, 0, frames, ProgressUnit::Frames);
-    let connections =
-        pl_reassembly::reassemble(&index, &file, policy, cancelled).map_err(reassembly_problem)?;
+    let done = pl_reassembly::reassemble_partial(&index, &file, policy, cancelled)
+        .map_err(reassembly_problem)?;
+    for frame in &done.skipped_frames {
+        index
+            .diagnostics
+            .add(pl_capture::DiagCode::ConnectionLimit, *frame);
+    }
+    let connections = done.connections;
     progress(
         ProgressStage::Reassembling,
         frames,
