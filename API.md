@@ -80,6 +80,7 @@ PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tool
 | POST | `/api/analysis/variability` | Постоянные и меняющиеся байты сообщений, счётчики | `200 Variability` |
 | POST | `/api/analysis/correlations` | Связи байтов сообщений с параметрами и именами действий из журнала | `200 Correlations`, `409` |
 | POST | `/api/analysis/checksums` | Поиск контрольной суммы: поле, функция, диапазон, готовая проверка для описания | `200 ChecksumHints` |
+| POST | `/api/analysis/device-connections` | Соединения устройства по журналу: доля действий, после которых в соединении шли данные; `device` / `background` | `200 DeviceConnections`, `409` |
 | POST | `/api/exchanges` | Пары запрос→ответ в соединении, с оценкой уверенности и задержкой | `200 ExchangePairPage` |
 | POST | `/api/reports` | Отчёт по проекту: `{format: md|html, runId?}` | `200 Report {format, fileName, content}`, `404`, `409` |
 | GET | `/api/sources` | Записи проекта | `200` страница `Source` |
@@ -248,6 +249,7 @@ response.applied == action.params.value
 | Дата | Изменение | Ломающее | PR |
 |---|---|---|---|
 | 2026-10-13 | v0.1.20: `POST /api/analysis/checksums` — поиск контрольной суммы сообщений; в выражениях описания доступны функции `lrc8`, `xor8`, `sum16`, `inet16`, `fletcher16`, `crc8`, `crc8_maxim`, `crc16_*`, `crc32*` (аддитивно) | — | — |
+| 2026-10-13 | v0.1.21: `POST /api/analysis/device-connections` — соединения устройства среди фона по совпадению с действиями журнала (аддитивно) | — | — |
 | 2026-10-13 | v0.1.19: уточнения без смены формы — описаны коды `400` у `GET /api/sources` и `415` у `POST /api/project`; размер страницы по умолчанию у прогонов, сравнения и действий журнала приведён к контракту (50, было 100); отказ на нечисловой номер ревизии и строки журнала — в общем формате ошибок | — | — |
 | 2026-10-12 | v0.1.18: `POST /api/interpretation/field-hints` — подсказка типа поля по значениям и тестам гипотез (аддитивно) | — | — |
 | 2026-10-12 | v0.1.17: `hypotheses` в `GET /api/runs/diff` — изменения итогов гипотез между прогонами; тесты гипотез учитывают фильтры корпуса (аддитивно) | — | — |

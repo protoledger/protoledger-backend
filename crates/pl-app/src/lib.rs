@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod devices;
 mod field_hints;
 mod hypothesis;
 mod interp;
@@ -22,6 +23,7 @@ pub use analysis::{
     connection_exchanges, framing_hints, message_checksums, message_correlations,
     message_variability,
 };
+pub use devices::{ConnectionRole, DeviceConnection, DeviceConnections, device_connections};
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,

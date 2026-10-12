@@ -434,3 +434,65 @@ async fn relative_log_path_is_resolved_from_workspace() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["name"], "main.actions.csv", "{body}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn device_connections_follow_the_journal() {
+    let state = setup("devices").await;
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/device-connections",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "без журнала — понятный отказ");
+
+    // Посторонний TCP-трафик из другой записи — в другое время, действий журнала рядом нет.
+    let other = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic/background.pcapng")
+        .to_string_lossy()
+        .into_owned();
+    call(
+        &state,
+        Method::POST,
+        "/api/sources",
+        Some(json!({ "path": other })),
+    )
+    .await;
+    wait_jobs(&state).await;
+    let (status, _) = import_log(&state, stand_mapping()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/device-connections",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let first = &body["items"][0];
+    assert_eq!(first["role"], "device", "{body}");
+    assert!(first["sharePermille"].as_u64().unwrap() >= 900, "{first}");
+    assert!(first["reason"].as_str().unwrap().contains("действий"));
+    assert_eq!(body["windowMs"], 2000);
+    let items = body["items"].as_array().unwrap();
+    let background = items.iter().filter(|c| c["role"] == "background").count();
+    assert!(
+        background >= 1,
+        "посторонние соединения помечены фоном: {body}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|c| c["role"] != "device" || c["sharePermille"].as_u64().unwrap() >= 500)
+    );
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/device-connections",
+        Some(json!({ "windowMs": 0 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

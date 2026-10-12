@@ -1590,6 +1590,42 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/device-connections:
+    post:
+      tags: [analysis]
+      operationId: deviceConnections
+      summary: Соединения устройства по журналу действий
+      description: |
+        Для каждого соединения — сколько действий журнала его записи «ответили» в нём данными в течение
+        `windowMs` после начала действия (с допуском 50 мс на часы). Доля от половины и выше — `device`,
+        остальное — `background`. Подсказка для выбора соединения среди фона, не вывод о протоколе.
+        Устройство — первыми, затем по доле. Нужен импортированный журнал, иначе `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                windowMs: { type: integer, minimum: 1, maximum: 60000, default: 2000, description: Окно после начала действия, мс }
+            example: {}
+      responses:
+        '200':
+          description: Соединения с ролью и основанием
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceConnections' }
+              example:
+                windowMs: 2000
+                items:
+                  - { connection: 'd05c6bf0:c0001', source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, a: '10.77.0.10:42010', b: '10.77.0.20:46123', role: device, actionsMatched: 16, actionsTotal: 16, sharePermille: 1000, payloadFrames: 32, reason: 'данные в течение 2000 мс после 16 из 16 действий записи' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+
   /api/exchanges:
     post:
       tags: [analysis]
@@ -2915,6 +2951,30 @@ components:
               value: { type: integer, minimum: 0 }
               count: { type: integer, minimum: 0, description: 'Сообщений действия с этим значением' }
               of: { type: integer, minimum: 0, description: 'Всех сообщений действия' }
+
+    DeviceConnections:
+      type: object
+      required: [windowMs, items]
+      additionalProperties: false
+      properties:
+        windowMs: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+            required: [connection, source, a, b, role, actionsMatched, actionsTotal, sharePermille, payloadFrames, reason]
+            additionalProperties: false
+            properties:
+              connection: { type: string }
+              source: { $ref: '#/components/schemas/Sha256' }
+              a: { type: string }
+              b: { type: string }
+              role: { type: string, enum: [device, background] }
+              actionsMatched: { type: integer, minimum: 0 }
+              actionsTotal: { type: integer, minimum: 0 }
+              sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+              payloadFrames: { type: integer, minimum: 0 }
+              reason: { type: string }
 
     Correlations:
       type: object
