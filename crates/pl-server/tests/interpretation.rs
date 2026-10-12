@@ -363,3 +363,122 @@ async fn preview_scope_and_errors() {
         assert_eq!(status, expected, "{body}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn field_hints_suggest_the_type_that_removes_counterexamples() {
+    let state = project_state("field-hints");
+    import_stand(&state, "main.pcapng").await;
+    import_stand(&state, "extra.pcapng").await;
+    for log in ["main.actions.csv", "extra.actions.csv"] {
+        let mapping =
+            json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+        let path = stand(log).to_string_lossy().into_owned();
+        let (status, body) = call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path, "mapping": mapping })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    // Ошибка исследователя: значение параметра описано как беззнаковое.
+    let unsigned = answer_key().replace("type: i32be", "type: u32be");
+    let request = json!({ "yaml": unsigned, "messageId": "set_param_req", "field": "value" });
+    let (status, hints) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/field-hints",
+        Some(request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{hints}");
+    assert_eq!(hints["currentType"], "u32be");
+    assert_eq!(hints["suggested"], "i32be", "{hints}");
+    assert!(
+        hints["hypotheses"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("H2")),
+        "{hints}"
+    );
+    assert!(
+        hints["messages"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("set_param_req")),
+        "{hints}"
+    );
+    let candidate = |ty: &str| {
+        hints["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["type"] == ty)
+            .unwrap_or_else(|| panic!("нет варианта {ty}: {hints}"))
+            .clone()
+    };
+    let (now, better) = (candidate("u32be"), candidate("i32be"));
+    assert_eq!(now["current"], true);
+    assert!(now["counterexamples"].as_u64().unwrap() >= 1, "{now}");
+    assert_eq!(now["negative"], 0);
+    assert_eq!(better["counterexamples"], 0, "{better}");
+    assert!(
+        better["negative"].as_u64().unwrap() >= 1,
+        "−5 из дополнительной записи: {better}"
+    );
+    assert!(better["min"].as_i64().unwrap() < 0);
+    assert!(better["tests"][0]["held"].as_u64().unwrap() > 0);
+    // Обратный порядок байтов даёт больше противоречий, чем верный тип.
+    assert!(candidate("i32le")["counterexamples"].as_u64().unwrap() >= 1);
+    assert_eq!(hints["candidates"].as_array().unwrap().len(), 4);
+
+    // Верное описание: советовать нечего.
+    let (status, fine) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/field-hints",
+        Some(json!({ "yaml": answer_key(), "messageId": "set_param_req", "field": "value" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fine["currentType"], "i32be");
+    assert!(fine["suggested"].is_null(), "{fine}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn field_hints_explain_what_they_cannot_do() {
+    let state = project_state("field-hints-errors");
+    import_stand(&state, "main.pcapng").await;
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/field-hints",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, problem) = ask(json!({ "messageId": "set_param_req", "field": "value" })).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "нет сохранённого описания: {problem}"
+    );
+    let yaml = answer_key();
+    let (status, _) = ask(json!({ "yaml": yaml, "messageId": "нет", "field": "value" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) =
+        ask(json!({ "yaml": yaml, "messageId": "set_param_req", "field": "нет" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, problem) =
+        ask(json!({ "yaml": yaml, "messageId": "set_param_req", "field": "signature" })).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    let (status, _) = ask(json!({ "yaml": "не yaml: [", "messageId": "m", "field": "f" })).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = ask(json!({ "yaml": yaml, "messageId": "set_param_req", "field": "value", "windowMs": 9_999_999 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
