@@ -1,0 +1,1 @@
+tail == crc16_modbus(0, message.len - 2) || crc32(a, 9) != xor8(0, 64)
