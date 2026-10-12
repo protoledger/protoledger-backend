@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.21
+  version: 0.1.22
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
