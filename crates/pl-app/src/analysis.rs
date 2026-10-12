@@ -412,16 +412,9 @@ pub fn message_correlations(
         let result = pl_interp::apply(&it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         let times = crate::hypothesis::Times::new(&data, stream);
-        let messages: Vec<_> = result
-            .messages
-            .iter()
-            .filter(|m| {
-                request
-                    .message_id
-                    .as_ref()
-                    .is_none_or(|want| m.message_id.as_ref() == Some(want))
-            })
-            .collect();
+        // Действия подбираются ко всем сообщениям потока, и только потом остаются сообщения нужного
+        // типа: иначе сообщению досталось бы действие соседнего сообщения другого типа.
+        let messages: Vec<_> = result.messages.iter().collect();
         let first_ts: Vec<u64> = messages
             .iter()
             .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
@@ -435,6 +428,13 @@ pub fn message_correlations(
         for (m, action) in messages.iter().zip(assigned) {
             if samples.len() > pl_analysis::MAX_CORR_SAMPLES {
                 break;
+            }
+            if request
+                .message_id
+                .as_ref()
+                .is_some_and(|want| m.message_id.as_ref() != Some(want))
+            {
+                continue;
             }
             let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) else {
                 continue;

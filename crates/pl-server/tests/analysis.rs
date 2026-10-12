@@ -292,6 +292,31 @@ async fn correlations_link_message_bytes_with_action_parameters() {
     assert_eq!(hint["sharePermille"], 1000);
     assert!(hint["firstCounterexample"].is_null());
 
+    // Сообщению достаётся только его действие: у set_param шесть действий в журнале, и параметры
+    // соседних действий (канал измерения) к нему не примешиваются.
+    assert_eq!(c["withAction"], 6, "{c}");
+    assert_eq!(
+        hint["samples"], 6,
+        "все шесть set_param связаны со своим действием: {hint}"
+    );
+    assert_eq!(hint["matches"], 6, "{hint}");
+    assert!(
+        c["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h["param"] != "params.channel"),
+        "{c}"
+    );
+    let (_, reads) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab.clone()], "messageId": "read_param_req" })),
+    )
+    .await;
+    assert_eq!(reads["withAction"], 4, "{reads}");
+
     // Без фильтра по типу: байт типа сообщения — код действия.
     let (_, all) = call(
         &state,
@@ -339,4 +364,63 @@ async fn correlations_need_an_action_log() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+/// Действие, которого нет в журнале, не подменяется действием соседнего сообщения другого типа.
+#[tokio::test]
+async fn correlations_do_not_borrow_actions_from_other_message_types() {
+    let (state, _, ab, _) = setup("corr-borrow").await;
+    // Из журнала убрано первое изменение уставки; за полторы секунды до него — чтение параметра.
+    let log: String = std::fs::read_to_string(stand("main.actions.csv"))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.contains("param=setpoint;value=21"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let dir = std::env::temp_dir().join(format!("pl-analysis-test-{}-log", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("partial.actions.csv");
+    std::fs::write(&path, log).unwrap();
+    let mapping =
+        json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": path.to_string_lossy(), "mapping": mapping })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let yaml = std::fs::read_to_string(stand("interpretation.yaml")).unwrap();
+    call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+
+    let (status, c) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/correlations",
+        Some(json!({ "streams": [ab], "messageId": "set_param_req" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    assert_eq!(c["samples"], 6, "{c}");
+    assert_eq!(
+        c["withAction"], 5,
+        "шестому сообщению действие не досталось: {c}"
+    );
+    let value = c["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["param"] == "params.value")
+        .unwrap_or_else(|| panic!("{c}"));
+    assert_eq!(
+        (value["matches"].as_u64(), value["samples"].as_u64()),
+        (Some(5), Some(5))
+    );
 }
