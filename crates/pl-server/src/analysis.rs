@@ -29,6 +29,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/checksums", post(checksums))
         .route("/analysis/types", post(types))
         .route("/analysis/fields", post(fields))
+        .route("/analysis/draft", post(draft))
         .route("/exchanges", post(exchanges))
 }
 
@@ -199,6 +200,34 @@ async fn fields(
                         value: m.value,
                     })
                     .collect(),
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DraftBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    log_id: Option<String>,
+}
+
+async fn draft(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<DraftBody>,
+) -> Result<Json<pl_app::DraftView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::draft_interpretation(
+            &state.sources,
+            &state.actions,
+            &pl_app::DraftRequest {
+                streams: body.streams,
+                log_id: body.log_id,
             },
             &|| started.elapsed() > SEARCH_TIMEOUT,
         )

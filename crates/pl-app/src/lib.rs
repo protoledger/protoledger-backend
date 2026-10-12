@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod draft;
 mod field_hints;
 mod hypothesis;
 mod interp;
@@ -23,6 +24,7 @@ pub use analysis::{
     TypesView, VariabilityRequest, connection_exchanges, framing_hints, message_checksums,
     message_correlations, message_fields, message_types, message_variability,
 };
+pub use draft::{DraftRequest, DraftStep, DraftSummary, DraftView, draft_interpretation};
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,
