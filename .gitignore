@@ -29,10 +29,15 @@
 !/benches/**
 !/examples/**
 !/fixtures/**
+!/fuzz/**
 !/migrations/**
 
 # Артефакты
 **/target/
+# Корпус и находки фаззинга создаются при прогоне
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
 # Схемы, которые tauri-build генерирует при каждой сборке
 **/gen/schemas/
 **/*.profraw

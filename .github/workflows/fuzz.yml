@@ -1,0 +1,86 @@
+name: fuzz
+
+# Фаззинг разборщиков недоверенного ввода: записи, журналы, описания протокола, выражения.
+# Раз в сутки и вручную; в PR — короткий прогон, если менялись цели.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Секунд на цель
+        default: "150"
+  schedule:
+    - cron: "17 2 * * *"
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [capture, journal, interpretation, expr, framing]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          cache-bin: true
+      - name: cargo-fuzz
+        run: command -v cargo-fuzz >/dev/null || cargo install cargo-fuzz --locked
+      - name: Начальный корпус из примеров
+        run: |
+          corpus="fuzz/corpus/${{ matrix.target }}"
+          mkdir -p "$corpus"
+          case "${{ matrix.target }}" in
+            capture)
+              find fixtures/hostile -maxdepth 1 -type f \( -name '*.pcap' -o -name '*.pcapng' \) -size -200k -exec cp {} "$corpus/" \;
+              cp fixtures/synthetic/*.pcap* "$corpus/" ;;
+            journal)
+              # Первый байт входа — режим разбора; нулевой — RFC 3339 и пары «ключ=значение».
+              for f in fixtures/hostile/journals/*.csv fixtures/stand/*.csv; do
+                [ "$(stat -c %s "$f")" -lt 65536 ] || continue
+                { printf '\000'; cat "$f"; } > "$corpus/$(basename "$f")"
+              done ;;
+            interpretation)
+              find fixtures/hostile/interpretations -type f -size -64k -exec cp {} "$corpus/" \;
+              cp fixtures/stand/interpretation.yaml "$corpus/stand.yaml"
+              cp fixtures/synthetic/interpretation.yaml "$corpus/synthetic.yaml" ;;
+            expr)
+              cp fuzz/seeds/expr/* "$corpus/" ;;
+            framing)
+              # Первый байт — выбор описания и дефектов потока, дальше — байты потока.
+              i=0
+              for f in fixtures/synthetic/*.pcapng; do
+                head -c 2048 "$f" | tail -c 1024 > "$corpus/stream-$i"
+                i=$((i + 1))
+              done ;;
+          esac
+          echo "образцов: $(ls "$corpus" | wc -l)"
+      - name: Прогон
+        env:
+          SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '40' || inputs.seconds || '150' }}
+        run: |
+          cargo +nightly fuzz run "${{ matrix.target }}" -- \
+            -max_total_time="$SECONDS_PER_TARGET" -max_len=65536 -rss_limit_mb=2048 -timeout=20 -print_final_stats=1
+      - name: Найденные падения
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
