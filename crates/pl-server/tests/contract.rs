@@ -420,6 +420,14 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
 
+    api.post(
+        "/api/interpretation/fix-hints",
+        "/api/interpretation/fix-hints",
+        json!({ "yaml": wrong, "hypothesis": "H2" }),
+        200,
+    )
+    .await;
+
     api.get("/api/runs", "/api/runs?limit=10").await;
     for run in ["run-0001", "run-0002"] {
         api.get("/api/runs/{id}", &format!("/api/runs/{run}")).await;
