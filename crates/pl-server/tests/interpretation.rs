@@ -756,3 +756,63 @@ async fn compare_shows_what_changed_between_two_recordings() {
     let (status, _) = ask(json!({ "a": [main], "b": [extra] })).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exchange_graph_shows_answers_and_transitions() {
+    let state = project_state("graph");
+    import_stand(&state, "main.pcapng").await;
+    let (status, g) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/graph",
+        Some(json!({ "yaml": answer_key() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{g}");
+    assert_eq!(g["incomplete"], false);
+    assert!(g["connections"].as_u64().unwrap() >= 1);
+    // Сумма по узлам — все сообщения.
+    let nodes = g["nodes"].as_array().unwrap();
+    let total: u64 = nodes
+        .iter()
+        .map(|n| n["requests"].as_u64().unwrap() + n["responses"].as_u64().unwrap())
+        .sum();
+    assert_eq!(total, g["messages"].as_u64().unwrap());
+    // На запрос уставки устройство отвечает своим типом ответа — и только им.
+    let answers = g["answers"].as_array().unwrap();
+    let to_set: Vec<&Value> = answers
+        .iter()
+        .filter(|e| e["from"] == "set_param_req")
+        .collect();
+    assert_eq!(to_set.len(), 1, "{g}");
+    assert_eq!(to_set[0]["to"], "set_param_resp");
+    let requests = nodes.iter().find(|n| n["id"] == "set_param_req").unwrap()["requests"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(to_set[0]["count"].as_u64().unwrap(), requests);
+    // Переходов между запросами на один меньше, чем запросов в соединении.
+    let next: u64 = g["next"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["count"].as_u64().unwrap())
+        .sum();
+    let all_requests: u64 = nodes.iter().map(|n| n["requests"].as_u64().unwrap()).sum();
+    assert_eq!(next + g["connections"].as_u64().unwrap(), all_requests);
+    assert_eq!(g["starts"][0]["from"], "начало");
+    let dot = g["dot"].as_str().unwrap();
+    assert!(
+        dot.starts_with("digraph exchange {")
+            && dot.contains("\"set_param_req\" -> \"set_param_resp\""),
+        "{dot}"
+    );
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/graph",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}
