@@ -180,14 +180,43 @@ pub fn research_suggestions(
                 1000 => 3,
                 _ => continue,
             };
-            // Поле описания ровно на этих байтах — тест опирается на него.
-            let existing = message.fields.iter().find(|f| {
-                f.at.abs() == Some(v.at)
-                    && fixed_size(f) == Some(u64::from(v.size))
-                    && f.mask == v.mask
+            // Одни и те же совпадения дают несколько чтений: «u16 по смещению 8» и «u8 по смещению 9»,
+            // если старший байт — ноль. Поле описания ровно на байтах одного из них — тест опирается
+            // на него; иначе предлагается самое узкое чтение, чтобы не поглотить соседний байт.
+            let mut readings: Vec<(u32, String, u32)> = vec![(v.at, v.ty.to_owned(), v.size)];
+            if v.mask.is_none() {
+                for alt in &v.equivalent {
+                    if let Some((ty, at)) = alt.split_once('@')
+                        && let (Ok(at), Some(size)) =
+                            (at.parse::<u32>(), crate::draft::type_size(ty))
+                    {
+                        readings.push((at, ty.to_owned(), size as u32));
+                    }
+                }
+            }
+            let described = readings.iter().find_map(|(at, ty, size)| {
+                message
+                    .fields
+                    .iter()
+                    .find(|f| {
+                        f.at.abs() == Some(*at)
+                            && fixed_size(f) == Some(u64::from(*size))
+                            && f.mask == v.mask
+                    })
+                    .map(|f| (f, *at, ty.clone(), *size))
             });
+            let existing = described.as_ref().map(|(f, ..)| *f);
+            let (at, ty, size) = match &described {
+                Some((_, at, ty, size)) => (*at, ty.clone(), *size),
+                None if v.mask.is_none() => {
+                    let (at, ty) = crate::draft::narrowest(v.at, v.ty, &v.equivalent);
+                    let size = crate::draft::type_size(&ty).map_or(v.size, |s| s as u32);
+                    (at, ty, size)
+                }
+                None => (v.at, v.ty.to_owned(), v.size),
+            };
             let name = existing.map_or_else(|| safe_name(&v.param), |f| f.name.clone());
-            let float = v.ty.starts_with('f');
+            let float = ty.starts_with('f');
             let test = if float {
                 format!("dec({name}, 3) == dec(action.{}, 3)", v.param)
             } else if digits == 0 {
@@ -200,10 +229,10 @@ pub fn research_suggestions(
             } else {
                 format!(", умноженному на {}", v.scale)
             };
-            let bytes = if v.size == 1 {
-                format!("Байт {}", v.at)
+            let bytes = if size == 1 {
+                format!("Байт {at}")
             } else {
-                format!("Байты {}–{}", v.at, v.at + v.size - 1)
+                format!("Байты {at}–{}", at + size - 1)
             };
             out.items.push(Suggestion {
                 message_id: message.id.clone(),
@@ -213,11 +242,11 @@ pub fn research_suggestions(
                 observation: ObservationDraft {
                     source: source.clone(),
                     stream: stream.to_owned(),
-                    start: start + u64::from(v.at),
-                    end: start + u64::from(v.at) + u64::from(v.size),
+                    start: start + u64::from(at),
+                    end: start + u64::from(at) + u64::from(size),
                     comment: format!(
                         "{bytes} сообщения {} ({}) равны значению «{}» из журнала действий{scale}: совпало в {} из {} сообщений.",
-                        message.id, v.ty, v.param, v.matches, v.samples
+                        message.id, ty, v.param, v.matches, v.samples
                     ),
                 },
                 hypothesis: HypothesisDraft {
@@ -230,9 +259,9 @@ pub fn research_suggestions(
                 field: existing.map(|f| f.name.clone()),
                 new_field: existing.is_none().then(|| FieldDraft {
                     name,
-                    at: v.at,
-                    ty: v.ty.to_owned(),
-                    len: (v.ty == "bcd").then_some(v.size),
+                    at,
+                    len: (ty == "bcd").then_some(size),
+                    ty,
                     mask: v.mask,
                 }),
             });

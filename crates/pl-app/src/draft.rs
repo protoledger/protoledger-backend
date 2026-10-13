@@ -114,7 +114,7 @@ fn quoted(text: &str) -> String {
     out
 }
 
-fn type_size(ty: &str) -> Option<u64> {
+pub(crate) fn type_size(ty: &str) -> Option<u64> {
     match ty
         .trim_start_matches(['u', 'i'])
         .trim_end_matches(['b', 'l', 'e'])
@@ -178,7 +178,7 @@ fn field_name(param: &str, taken: &BTreeSet<String>) -> String {
 
 /// Самое узкое из равнозначных чтений связи: широкое поле с нулём в старшем байте поглотило бы
 /// соседний байт, смысл которого ещё не известен.
-fn narrowest(at: u32, ty: &str, equivalent: &[String]) -> (u32, String) {
+pub(crate) fn narrowest(at: u32, ty: &str, equivalent: &[String]) -> (u32, String) {
     let mut best = (at, ty.to_owned());
     for alt in equivalent {
         let Some((alt_ty, alt_at)) = alt.split_once('@') else {

@@ -416,6 +416,10 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                     let mut matches = 0u64;
                     let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
                     let mut counter: Option<CorrCounter> = None;
+                    // Совпало ли хотя бы на двух разных значениях параметра. Если нет, байты могут быть
+                    // постоянными и просто равняться самому частому значению — это не связь.
+                    let mut first: Option<Decimal> = None;
+                    let mut varied = false;
                     for (i, s, p, d) in &readable {
                         let (equal, got) = match d {
                             Reading::Int(v) => (p.times_equals(scale, *v), *v),
@@ -424,6 +428,10 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                         if equal {
                             matches += 1;
                             fingerprint = fnv(fingerprint, *i as u64);
+                            match first {
+                                None => first = Some(*p),
+                                Some(seen) => varied |= seen != *p,
+                            }
                         } else if counter.is_none() {
                             counter = Some(CorrCounter {
                                 stream: s.stream.clone(),
@@ -435,7 +443,7 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                         }
                     }
                     let share = permille(matches, total);
-                    if matches >= MIN_SAMPLES && share >= MIN_SHARE {
+                    if matches >= MIN_SAMPLES && share >= MIN_SHARE && varied {
                         found.push(Found {
                             rank: encoding.rank(),
                             hint: ValueHint {
