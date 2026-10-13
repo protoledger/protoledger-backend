@@ -496,7 +496,7 @@ impl Interpretation {
         let mut options = serde_saphyr::Options::default();
         options.budget = Some(budget);
         let it: Interpretation = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|e| SchemaError::Yaml(e.to_string()))?;
+            .map_err(|e| SchemaError::Yaml(crate::yaml_error::localized(&e.to_string())))?;
         it.validate()?;
         Ok(it)
     }

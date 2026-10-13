@@ -31,7 +31,12 @@ pub fn read_text(path: &Path) -> Result<String, String> {
             path.display()
         ));
     }
-    std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::read_to_string(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => {
+            format!("{}: файл не в кодировке UTF-8", path.display())
+        }
+        _ => format!("{}: {e}", path.display()),
+    })
 }
 
 /// Ошибка движка в виде строки для пользователя: файл и причина.
