@@ -944,3 +944,62 @@ async fn every_action_of_the_journal_gets_its_exchange() {
         assert_eq!(status, expected, "{path}");
     }
 }
+
+#[tokio::test]
+async fn next_steps_follow_the_state_of_the_project() {
+    let ids = |v: &Value| -> Vec<String> {
+        v["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // Пустой проект: только импорт записи.
+    let empty = project_state("next-empty");
+    let (status, next) = call(&empty, Method::GET, "/api/project/next-steps", None).await;
+    assert_eq!(status, StatusCode::OK, "{next}");
+    assert_eq!(ids(&next), ["import_capture"]);
+    assert_eq!(next["steps"][0]["screen"], "sources");
+
+    // Запись есть, описания нет: сначала границы, журнал — следом.
+    let (state, _, _, _) = setup("next-capture").await;
+    let (_, next) = call(&state, Method::GET, "/api/project/next-steps", None).await;
+    assert_eq!(ids(&next), ["find_framing", "import_journal"]);
+
+    // Запись, журнал и описание: пора запускать проверку.
+    let (state, _) = with_log("next-run").await;
+    let (_, next) = call(&state, Method::GET, "/api/project/next-steps", None).await;
+    assert_eq!(ids(&next)[0], "first_run", "{next}");
+    assert_eq!(next["state"]["hasInterpretation"], true);
+    assert_eq!(next["state"]["runs"], 0);
+
+    // После прогона первый шаг — уже не запуск; состояние называет прогон.
+    call(&state, Method::POST, "/api/runs", Some(json!({}))).await;
+    wait_jobs(&state).await;
+    let (_, next) = call(&state, Method::GET, "/api/project/next-steps", None).await;
+    assert!(!ids(&next).contains(&"first_run".to_owned()), "{next}");
+    assert_eq!(next["state"]["lastRun"], "run-0001");
+    assert_eq!(next["state"]["lastRunStale"], false);
+
+    // Описание изменили по существу: прогон устарел, шаг — перезапуск.
+    let yaml = std::fs::read_to_string(stand("interpretation.yaml"))
+        .unwrap()
+        .replace("type: i32be", "type: u32be");
+    let (status, _) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, next) = call(&state, Method::GET, "/api/project/next-steps", None).await;
+    assert_eq!(ids(&next)[0], "rerun", "{next}");
+    assert!(
+        next["steps"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("run-0001")
+    );
+}

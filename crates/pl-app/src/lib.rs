@@ -12,6 +12,7 @@ mod graph;
 mod hypothesis;
 mod interp;
 mod jobs;
+mod next_step;
 mod report;
 mod research;
 mod session;
@@ -54,6 +55,7 @@ pub use jobs::{
     Job, JobContext, JobKind, JobProgress, JobRegistry, JobState, MAX_CONCURRENT_JOBS,
     ProgressStage, ProgressUnit,
 };
+pub use next_step::{NextStep, NextSteps, ProjectState, Screen, next_steps};
 pub use report::collect as collect_report;
 pub use research::{
     AnchorRef, AnchorState, Hypothesis, HypothesisInput, HypothesisStatus, Observation, Question,
