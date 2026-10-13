@@ -2,6 +2,7 @@ mod apply;
 mod bench;
 mod common;
 mod draft;
+mod export;
 mod inspect;
 mod report;
 mod verify;
@@ -45,6 +46,8 @@ enum Command {
     Apply(apply::ApplyArgs),
     /// Собрать черновик описания протокола по записям: границы, типы, поля, связи с журналом
     Draft(draft::DraftArgs),
+    /// Выгрузить описание как диссектор Wireshark (Lua)
+    Export(export::ExportArgs),
     /// Карта покрытия: какие байты сообщений описаны правилом, гипотезой или не описаны
     Coverage(inspect::CoverageArgs),
     /// Сравнить поведение в двух наборах записей (0 — отличий нет, 1 — есть, 2 — ошибка)
@@ -104,6 +107,7 @@ async fn main() -> ExitCode {
         }
         Command::Apply(args) => finish(apply::run(args)),
         Command::Draft(args) => finish(draft::run(args)),
+        Command::Export(args) => finish(export::run(args)),
         Command::Coverage(args) => finish(inspect::coverage(args)),
         Command::Compare(args) => finish(inspect::compare(args)),
         Command::Graph(args) => finish(inspect::graph(args)),

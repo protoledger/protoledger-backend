@@ -13,6 +13,7 @@
 
 pub mod apply;
 pub mod checksum;
+pub mod export;
 pub mod expr;
 pub mod framing;
 pub mod input;
