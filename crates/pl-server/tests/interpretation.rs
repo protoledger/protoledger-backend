@@ -576,3 +576,85 @@ async fn fix_hints_propose_the_edit_that_removes_counterexamples() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn coverage_shows_what_is_described_and_what_is_not() {
+    let state = project_state("coverage");
+    import_stand(&state, "main.pcapng").await;
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/coverage",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, map) = ask(json!({ "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK, "{map}");
+    assert_eq!(map["incomplete"], false);
+    assert_eq!(map["sources"], 1);
+    // Суммы сходятся на каждом уровне: байт учтён ровно одним видом описания.
+    let sums = |b: &Value| {
+        ["rule", "hypothesis", "unknown", "none"]
+            .iter()
+            .map(|k| b[*k].as_u64().unwrap())
+            .sum::<u64>()
+    };
+    assert_eq!(sums(&map["bytes"]), map["bytes"]["total"].as_u64().unwrap());
+    let types = map["types"].as_array().unwrap();
+    assert!(types.len() >= 4, "{map}");
+    let mut messages = 0;
+    let mut bytes = 0;
+    for t in types {
+        assert_eq!(
+            sums(&t["bytes"]),
+            t["bytes"]["total"].as_u64().unwrap(),
+            "{t}"
+        );
+        messages += t["messages"].as_u64().unwrap();
+        bytes += t["bytes"]["total"].as_u64().unwrap();
+        // Области идут подряд и без пересечений.
+        let mut end = 0;
+        for r in t["regions"].as_array().unwrap() {
+            assert_eq!(r["start"].as_u64().unwrap(), end, "{t}");
+            end = r["end"].as_u64().unwrap();
+        }
+    }
+    assert_eq!(messages, map["messages"].as_u64().unwrap());
+    assert_eq!(bytes, map["bytes"]["total"].as_u64().unwrap());
+    // Запрос уставки описан целиком: сигнатура — правило, значение — гипотеза H2.
+    let set = types
+        .iter()
+        .find(|t| t["messageId"] == "set_param_req")
+        .unwrap();
+    assert_eq!(set["bytes"]["none"], 0, "{set}");
+    let regions = set["regions"].as_array().unwrap();
+    assert_eq!(regions[0]["status"], "rule");
+    let value = regions.iter().find(|r| r["field"] == "value").unwrap();
+    assert_eq!(
+        (
+            &value["status"],
+            &value["hypothesis"],
+            &value["sharePermille"]
+        ),
+        (&json!("hypothesis"), &json!("H2"), &json!(1000))
+    );
+    assert!(set["hypotheses"].as_array().unwrap().contains(&json!("H2")));
+
+    // Описание только из границ: тип ни у одного сообщения не определён, всё без описания.
+    let bare = "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: rule }\nmessages: []\n";
+    let (status, empty) = ask(json!({ "yaml": bare })).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["describedPermille"], 0);
+    assert_eq!(empty["types"][0]["messageId"], Value::Null);
+    assert_eq!(empty["bytes"]["none"], empty["bytes"]["total"]);
+
+    let (status, _) = ask(json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+    let (status, _) = ask(json!({ "yaml": answer_key(), "sources": ["нет"] })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
