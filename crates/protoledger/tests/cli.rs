@@ -665,3 +665,67 @@ fn draft_builds_a_description_that_apply_accepts_on_another_recording() {
     let missing = run(&["draft", "--input", dir.join("нет.pcap").to_str().unwrap()]);
     assert_eq!(missing.status.code(), Some(2));
 }
+
+#[test]
+fn coverage_compare_and_graph_work_without_a_project() {
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let (main, extra) = (
+        repo("fixtures/stand/main.pcapng"),
+        repo("fixtures/stand/extra.pcapng"),
+    );
+    let (spec, main, extra) = (
+        spec.to_str().unwrap(),
+        main.to_str().unwrap(),
+        extra.to_str().unwrap(),
+    );
+
+    let coverage = run(&["coverage", "--interpretation", spec, "--input", main]);
+    assert_eq!(
+        coverage.status.code(),
+        Some(0),
+        "{}",
+        text(&coverage.stderr)
+    );
+    let map: serde_json::Value = serde_json::from_str(&text(&coverage.stdout)).unwrap();
+    assert!(map["describedPermille"].as_u64().unwrap() > 0);
+    assert!(text(&coverage.stderr).contains("описано байтов"));
+
+    // Записи отличаются значениями уставки: код 1 и строка о новых значениях.
+    let differs = run(&[
+        "compare",
+        "--interpretation",
+        spec,
+        "--a",
+        main,
+        "--b",
+        extra,
+    ]);
+    assert_eq!(differs.status.code(), Some(1), "{}", text(&differs.stderr));
+    assert!(text(&differs.stderr).contains("set_param_req.value"));
+    let same = run(&[
+        "compare",
+        "--interpretation",
+        spec,
+        "--a",
+        main,
+        "--b",
+        main,
+    ]);
+    assert_eq!(same.status.code(), Some(0));
+
+    let graph = run(&["graph", "--interpretation", spec, "--input", main, "--dot"]);
+    assert_eq!(graph.status.code(), Some(0));
+    let dot = text(&graph.stdout);
+    assert!(dot.starts_with("digraph exchange {"), "{dot}");
+    assert!(dot.contains("\"set_param_req\" -> \"set_param_resp\""));
+    let full = run(&["graph", "--interpretation", spec, "--input", main]);
+    let json: serde_json::Value = serde_json::from_str(&text(&full.stdout)).unwrap();
+    assert!(json["nodes"].as_array().unwrap().len() >= 4);
+
+    let broken = run(&["coverage", "--interpretation", main, "--input", main]);
+    assert_eq!(
+        broken.status.code(),
+        Some(2),
+        "запись вместо описания — ошибка"
+    );
+}

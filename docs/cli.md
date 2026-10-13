@@ -45,6 +45,20 @@ protoledger draft --input research.pcap --action-log log.csv --mapping mapping.y
 protoledger apply --interpretation description.yaml --input new.pcapng --strict
 ```
 
+## coverage, compare, graph — взгляд на записи через описание
+
+Три команды применяют готовое описание к записям без проекта. Результат — JSON в стандартный вывод или `--out` (те же структуры, что у одноимённых запросов API), короткая сводка — в stderr.
+
+```bash
+protoledger coverage --interpretation spec.yaml --input capture.pcap [--input …]
+protoledger compare  --interpretation spec.yaml --a before.pcap [--a …] --b after.pcap [--b …]
+protoledger graph    --interpretation spec.yaml --input capture.pcap [--input …] [--dot]
+```
+
+- `coverage` — карта покрытия: по каждому типу сообщений — сколько байтов описано правилом, гипотезой, помечено неизвестным и не описано вовсе; раскладка первых 256 байт по полям.
+- `compare` — чем второй набор записей отличается от первого: новые и пропавшие типы сообщений, поля с другими значениями, время ответа. Код возврата 1, если отличия есть, — удобно для проверки «до и после обновления».
+- `graph` — граф обмена: чем отвечают на каждый запрос и какой запрос идёт следом. С `--dot` печатается только граф в формате Graphviz: `protoledger graph … --dot | dot -Tsvg > exchange.svg`.
+
 ## verify — перепроверка проекта
 
 ```bash

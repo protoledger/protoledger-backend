@@ -20,7 +20,7 @@ cargo clippy --workspace --all-targets --features protoledger/dev-tools -- -D wa
 
 | Крейт | Что делает |
 |---|---|
-| `protoledger` | Командная строка: `serve`, `apply`, `draft`, `verify`, `report`, `bench` |
+| `protoledger` | Командная строка: `serve`, `apply`, `draft`, `coverage`, `compare`, `graph`, `verify`, `report`, `bench` |
 | `pl-server` | Локальный HTTP API, защита запросов, раздача встроенного интерфейса |
 | `pl-app` | Сценарии поверх библиотек: импорт, прогон, тесты гипотез, подсказки, задачи с прогрессом и отменой |
 | `pl-project` | Папка проекта на диске: манифест, неизменные копии записей, ревизии, прогоны; атомарная запись |

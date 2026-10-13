@@ -2,6 +2,7 @@ mod apply;
 mod bench;
 mod common;
 mod draft;
+mod inspect;
 mod report;
 mod verify;
 
@@ -44,6 +45,12 @@ enum Command {
     Apply(apply::ApplyArgs),
     /// Собрать черновик описания протокола по записям: границы, типы, поля, связи с журналом
     Draft(draft::DraftArgs),
+    /// Карта покрытия: какие байты сообщений описаны правилом, гипотезой или не описаны
+    Coverage(inspect::CoverageArgs),
+    /// Сравнить поведение в двух наборах записей (0 — отличий нет, 1 — есть, 2 — ошибка)
+    Compare(inspect::CompareArgs),
+    /// Граф обмена: типы сообщений, ответы и переходы; с --dot — в формате Graphviz
+    Graph(inspect::GraphArgs),
     /// Перепроверить проект: источники целы, прогоны воспроизводятся (0 — совпало, 1 — отличия, 2 — ошибка)
     Verify(verify::VerifyArgs),
     /// Сформировать отчёт
@@ -97,6 +104,9 @@ async fn main() -> ExitCode {
         }
         Command::Apply(args) => finish(apply::run(args)),
         Command::Draft(args) => finish(draft::run(args)),
+        Command::Coverage(args) => finish(inspect::coverage(args)),
+        Command::Compare(args) => finish(inspect::compare(args)),
+        Command::Graph(args) => finish(inspect::graph(args)),
         Command::Verify(args) => finish(verify::run(args)),
         Command::Report(args) => finish(report::run(args)),
         Command::Bench(args) => finish(bench::run(args)),
