@@ -25,6 +25,17 @@ const MAX_FIELD_BYTES: usize = 64 << 10;
 const MAX_COLUMNS: usize = 256;
 /// Сколько ошибок строк показываем подробно.
 pub const MAX_REPORTED_ERRORS: usize = 100;
+/// Сколько символов значения из журнала попадает в текст ошибки.
+const MAX_QUOTED_CHARS: usize = 80;
+
+/// Значение из журнала для текста ошибки: ячейка бывает до 64 КиБ, а сообщение читает человек.
+fn excerpt(text: &str) -> String {
+    let mut out: String = text.chars().take(MAX_QUOTED_CHARS).collect();
+    if text.chars().nth(MAX_QUOTED_CHARS).is_some() {
+        out.push('…');
+    }
+    out
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LogError {
@@ -482,7 +493,7 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
         header
             .iter()
             .position(|h| h == name)
-            .ok_or_else(|| LogError::MissingColumn(name.to_owned(), header.join(", ")))
+            .ok_or_else(|| LogError::MissingColumn(excerpt(name), excerpt(&header.join(", "))))
     };
     let (c_time, c_action) = (column(&mapping.time)?, column(&mapping.action)?);
     let c_params = mapping.params.as_deref().map(column).transpose()?;
@@ -509,7 +520,7 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
         else {
             fail(format!(
                 "время «{}» не разобрано как {:?}",
-                get(c_time),
+                excerpt(get(c_time)),
                 mapping.time_format
             ));
             continue;
@@ -529,7 +540,7 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
         ) else {
             fail(format!(
                 "параметры «{}» не разобраны",
-                get(c_params.unwrap_or(0))
+                excerpt(get(c_params.unwrap_or(0)))
             ));
             continue;
         };
@@ -579,6 +590,28 @@ mod tests {
             clock_offset_ms: 0,
             source: None,
         }
+    }
+
+    #[test]
+    fn long_values_are_cut_in_error_texts() {
+        let cell = "[".repeat(5000);
+        let csv = format!("time,action,params,result\n2026-10-01T00:00:00Z,a,\"{cell}\",ok\n");
+        let mut m = mapping();
+        m.params_format = PairsFormat::Json;
+        let text = parse(csv.as_bytes(), &m).unwrap_err().to_string();
+        assert!(text.contains("параметры «[[["), "{text}");
+        assert!(text.contains("…» не разобраны"), "{text}");
+        assert!(text.chars().count() < 300, "{}", text.chars().count());
+
+        let wide = (0..200)
+            .map(|i| format!("column_{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let text = parse(format!("{wide}\n").as_bytes(), &mapping())
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("нет колонки «time»"), "{text}");
+        assert!(text.chars().count() < 300, "{}", text.chars().count());
     }
 
     #[test]
