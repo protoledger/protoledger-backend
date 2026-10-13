@@ -5,7 +5,7 @@
 //! в сообщении нет нужных данных, к нему не применяется — это не успех и не неудача. Совпадение на k из n
 //! примеров не доказывает гипотезу: итог — «контрпримеров нет» или «опровергнута».
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use pl_actions::{Action, Param};
@@ -177,30 +177,88 @@ impl Times {
     }
 }
 
-/// Пары «сообщение → ответ встречного потока» по порядку: k-е сообщение — следующий по порядку
-/// ответ, отправленный не раньше него (запросы могут идти конвейером, ответы — пачкой).
-/// `unsure[j]` — у ответа j нет байтов или они неоднозначны: сколько сообщений скрыто в дыре,
-/// неизвестно, поэтому начиная с него пары не строятся (тест — неприменим, а не опровергнут).
-pub(crate) fn pair_responses(
-    stamps: &[u64],
-    partner: &[u64],
-    unsure: &[bool],
-) -> Vec<Option<usize>> {
-    let mut next = 0usize;
-    let mut lost = false;
-    stamps
+/// Пары запрос→ответ в соединении, по ходам: подряд идущие сообщения одной стороны — ход, ход
+/// запросов сопоставляется со следующим ходом ответов. Пара есть, только когда запросов и ответов
+/// в соседних ходах поровну; запрос без ответа и ответ без запроса пары не получают и не сдвигают
+/// остальные.
+pub(crate) struct Links {
+    /// Для сообщения начавшей стороны — номер его ответа в потоке встречной.
+    pub(crate) response_of: Vec<Option<usize>>,
+    /// Для сообщения встречной стороны — на что оно отвечает.
+    pub(crate) request_of: Vec<Answer>,
+}
+
+/// Чей это ответ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answer {
+    /// Ответ на запрос с этим номером.
+    To(usize),
+    /// Запросов в ходе не меньше, чем ответов: каждый ответ — чей-то, но чей именно, по порядку
+    /// не определить. Действие подбирается по времени.
+    Someone,
+    /// Запроса нет или ответов больше, чем запросов: сообщение могло прийти само.
+    Nobody,
+}
+
+pub(crate) fn pair_turns(requests: &[u64], responses: &[u64]) -> Links {
+    let msgs: Vec<pl_analysis::Msg> = requests
         .iter()
-        .map(|ts| {
-            while partner.get(next).is_some_and(|p| p < ts) {
-                lost |= unsure.get(next).copied().unwrap_or(false);
-                next += 1;
-            }
-            lost |= unsure.get(next).copied().unwrap_or(false);
-            let found = (!lost && next < partner.len()).then_some(next);
-            next += 1;
-            found
+        .map(|ts| (*ts, true))
+        .chain(responses.iter().map(|ts| (*ts, false)))
+        .enumerate()
+        .map(|(id, (ts, from_initiator))| pl_analysis::Msg {
+            id,
+            from_initiator,
+            first_ts_ns: ts,
+            last_ts_ns: ts,
         })
-        .collect()
+        .collect();
+    let mut links = Links {
+        response_of: vec![None; requests.len()],
+        request_of: vec![Answer::Nobody; responses.len()],
+    };
+    for pair in pl_analysis::pair_exchanges(&msgs).0 {
+        if pair.certainty == pl_analysis::Certainty::Ambiguous
+            && pair.requests.len() >= pair.responses.len()
+        {
+            for resp in &pair.responses {
+                if let Some(slot) = resp
+                    .checked_sub(requests.len())
+                    .and_then(|r| links.request_of.get_mut(r))
+                {
+                    *slot = Answer::Someone;
+                }
+            }
+        }
+        if !matches!(
+            pair.certainty,
+            pl_analysis::Certainty::Certain | pl_analysis::Certainty::Ordered
+        ) {
+            continue;
+        }
+        let (Some(req), Some(resp)) = (pair.requests.first(), pair.responses.first()) else {
+            continue;
+        };
+        let Some(resp) = resp.checked_sub(requests.len()) else {
+            continue;
+        };
+        if let Some(slot) = links.response_of.get_mut(*req) {
+            *slot = Some(resp);
+        }
+        if let Some(slot) = links.request_of.get_mut(resp) {
+            *slot = Answer::To(*req);
+        }
+    }
+    links
+}
+
+fn exchange_links(per_stream: &[Vec<Msg<'_>>], initiator: usize) -> Links {
+    let stamps = |i: usize| -> Vec<u64> {
+        per_stream
+            .get(i)
+            .map_or_else(Vec::new, |m| m.iter().map(|x| x.first_ts).collect())
+    };
+    pair_turns(&stamps(initiator), &stamps(1 - initiator))
 }
 
 /// Назначает действия сообщениям одного потока: сообщению — ближайшее предшествующее
@@ -243,6 +301,83 @@ pub(crate) fn assign<'a>(
     out
 }
 
+/// К какой записи относится каждый журнал без колонки записи: sha256 записи или `None`.
+///
+/// Такой журнал описывает один сеанс, но не говорит чей. Если записи сняты в одно время, его
+/// действия по времени подходят к сообщениям каждой, и тесты гипотез сравнивали бы сообщения
+/// одной записи с параметрами действий другой. Журнал относится к записи, в которой сообщение
+/// в окне времени нашлось для наибольшего числа его действий. При равенстве выбора нет: действия
+/// остаются общими, как у журнала на одну запись.
+pub(crate) fn log_scopes(
+    sources: &[Arc<SourceData>],
+    it: &Interpretation,
+    logs: &[&LoadedLog],
+    window_ns: u64,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<Option<String>>, Problem> {
+    let mut chosen: Vec<Option<String>> = vec![None; logs.len()];
+    let free: Vec<(usize, Vec<&Action>)> = logs
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| !l.actions.is_empty() && l.actions.iter().all(|a| a.source.is_none()))
+        .map(|(i, l)| {
+            let mut actions: Vec<&Action> = l.actions.iter().collect();
+            actions.sort_by_key(|a| (a.ts_ns, a.line));
+            (i, actions)
+        })
+        .collect();
+    if sources.len() < 2 || free.is_empty() {
+        return Ok(chosen);
+    }
+    // Строки журнала, для которых в записи нашлось сообщение: [журнал][запись].
+    let mut matched: Vec<Vec<BTreeSet<u64>>> =
+        vec![vec![BTreeSet::new(); sources.len()]; free.len()];
+    for (number, data) in sources.iter().enumerate() {
+        for connection in &data.connections {
+            for (i, stream) in connection.streams.iter().enumerate() {
+                let input = stream_input(&data.file, connection, stream, i);
+                let result = pl_interp::apply(it, &input, cancelled).map_err(|e| {
+                    Problem::new(
+                        ProblemKind::LimitExceeded,
+                        format!("Разбор остановлен: {e}."),
+                    )
+                })?;
+                let times = Times::new(data, stream);
+                let timed: Vec<u64> = result
+                    .messages
+                    .iter()
+                    .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
+                    .collect();
+                for ((_, actions), per_source) in free.iter().zip(&mut matched) {
+                    let Some(lines) = per_source.get_mut(number) else {
+                        continue;
+                    };
+                    lines.extend(
+                        assign(&timed, actions, window_ns)
+                            .into_iter()
+                            .flatten()
+                            .map(|a| a.line),
+                    );
+                }
+            }
+        }
+    }
+    for ((log, _), per_source) in free.iter().zip(&matched) {
+        let best = per_source.iter().map(BTreeSet::len).max().unwrap_or(0);
+        let mut leaders = per_source
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.len() == best);
+        if best > 0
+            && let (Some((number, _)), None) = (leaders.next(), leaders.next())
+            && let (Some(slot), Some(data)) = (chosen.get_mut(*log), sources.get(number))
+        {
+            *slot = Some(data.sha256.clone());
+        }
+    }
+    Ok(chosen)
+}
+
 pub struct TestOptions {
     pub window_ms: u64,
     /// Потоки, чьи сообщения проверяются; без значения — все. Парный ответ берётся из встречного
@@ -274,9 +409,15 @@ pub fn test_hypothesis(
         )
     })?;
     let names = expr.names();
-    let mut actions: Vec<&Action> = logs.iter().flat_map(|l| l.actions.iter()).collect();
-    actions.sort_by_key(|a| (a.ts_ns, a.line));
     let window_ns = options.window_ms.saturating_mul(1_000_000);
+    let plain: Vec<&LoadedLog> = logs.iter().map(AsRef::as_ref).collect();
+    let scopes = log_scopes(sources, it, &plain, window_ns, &|| false)?;
+    let mut actions: Vec<(&Action, Option<&str>)> = logs
+        .iter()
+        .zip(&scopes)
+        .flat_map(|(l, scope)| l.actions.iter().map(move |a| (a, scope.as_deref())))
+        .collect();
+    actions.sort_by_key(|(a, _)| (a.ts_ns, a.line));
 
     let mut evidence = Evidence {
         test: expr_text.to_owned(),
@@ -294,8 +435,10 @@ pub fn test_hypothesis(
     for data in sources {
         let actions: Vec<&Action> = actions
             .iter()
-            .copied()
-            .filter(|a| a.belongs_to(&data.name))
+            .filter(|(a, scope)| {
+                a.belongs_to(&data.name) && scope.is_none_or(|sha| sha == data.sha256)
+            })
+            .map(|(a, _)| *a)
             .collect();
         for connection in &data.connections {
             let id = connection.id(&data.sha256);
@@ -350,6 +493,43 @@ pub fn test_hypothesis(
                         .collect(),
                 );
             }
+            // Кто начинает обмен: сторона, чьё первое сообщение раньше. Сообщения без времени
+            // (целиком в дыре, время 0) не в счёт.
+            let first_real = |msgs: &Vec<Msg<'_>>| msgs.iter().map(|m| m.first_ts).find(|t| *t > 0);
+            let initiator = match (
+                per_stream.first().and_then(first_real),
+                per_stream.get(1).and_then(first_real),
+            ) {
+                (Some(a), Some(b)) => Some(usize::from(a > b)),
+                _ => None,
+            };
+            let links = initiator.map(|side| exchange_links(&per_stream, side));
+            // Ответ проверяется с действием своего запроса. Сообщение, которое встречная сторона
+            // могла прислать сама, действия не получает: по времени ему досталось бы чужое.
+            if let (Some(side), Some(links)) = (initiator, &links) {
+                let request_action = |k: usize| {
+                    per_stream
+                        .get(side)
+                        .and_then(|m| m.get(k))
+                        .and_then(|m| m.action)
+                };
+                let decided: Vec<Option<Option<&Action>>> = links
+                    .request_of
+                    .iter()
+                    .map(|answer| match answer {
+                        Answer::To(k) => Some(request_action(*k)),
+                        Answer::Nobody => Some(None),
+                        Answer::Someone => None,
+                    })
+                    .collect();
+                if let Some(answers) = per_stream.get_mut(1 - side) {
+                    for (m, action) in answers.iter_mut().zip(decided) {
+                        if let Some(action) = action {
+                            m.action = action;
+                        }
+                    }
+                }
+            }
             for (i, msgs) in per_stream.iter().enumerate() {
                 let (src, dst) = if i == 0 {
                     (connection.a.port(), connection.b.port())
@@ -365,8 +545,6 @@ pub fn test_hypothesis(
                 }
                 let partner = per_stream.get(1 - i);
                 let stamps: Vec<u64> = msgs.iter().map(|m| m.first_ts).collect();
-                let partner_stamps: Vec<u64> =
-                    partner.map_or_else(Vec::new, |p| p.iter().map(|m| m.first_ts).collect());
                 let partner_unsure: Vec<bool> = partner.map_or_else(Vec::new, |p| {
                     p.iter()
                         // Граница неизвестна (тип не определить: заголовок в дыре) — сколько ответов
@@ -381,17 +559,16 @@ pub fn test_hypothesis(
                         })
                         .collect()
                 });
-                // Ответы ищутся только для стороны, которая начинает обмен (её первое сообщение раньше);
-                // сообщения без времени (целиком в дыре, время 0) не в счёт.
-                let first_real = |v: &[u64]| v.iter().find(|t| **t > 0).copied();
-                let initiates = match (first_real(&stamps), first_real(&partner_stamps)) {
-                    (Some(own), Some(other)) => own <= other,
-                    _ => false,
-                };
-                let pairs = if initiates {
-                    pair_responses(&stamps, &partner_stamps, &partner_unsure)
-                } else {
-                    vec![None; stamps.len()]
+                // Ответы ищутся только для стороны, которая начинает обмен. После сообщения
+                // встречной стороны с неизвестной границей счёт ответов ненадёжен: пар дальше нет.
+                let unsure_from = partner_unsure.iter().position(|u| *u);
+                let pairs: Vec<Option<usize>> = match (&links, initiator == Some(i)) {
+                    (Some(links), true) => links
+                        .response_of
+                        .iter()
+                        .map(|r| r.filter(|j| unsure_from.is_none_or(|u| *j < u)))
+                        .collect(),
+                    _ => vec![None; stamps.len()],
                 };
                 for (k, m) in msgs.iter().enumerate() {
                     if m.result.message_id.is_none() {
@@ -406,7 +583,7 @@ pub fn test_hypothesis(
                         evidence.not_applicable += 1;
                         continue;
                     }
-                    // Парный ответ — по времени (pair_responses); ответ без байтов или с неоднозначными
+                    // Парный ответ — по ходам обмена (exchange_links); ответ без байтов или с неоднозначными
                     // байтами парой не считается.
                     let response = pairs
                         .get(k)
@@ -490,6 +667,198 @@ pub fn test_hypothesis(
     Ok(evidence)
 }
 
+/// Сообщение, найденное для действия журнала.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionMessage {
+    pub source: String,
+    pub stream: String,
+    pub start: u64,
+    pub end: u64,
+    pub message_id: Option<String>,
+    pub category: pl_interp::Category,
+    pub ts_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionExchangeState {
+    /// Найдены запрос и его ответ.
+    Paired,
+    /// Запрос найден, ответ определить нельзя: его нет или пара неоднозначна.
+    RequestOnly,
+    /// В окне времени действия нет ни одного запроса.
+    NotFound,
+}
+
+/// Обмен, соответствующий одному действию журнала.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionExchange {
+    /// Номер строки журнала.
+    pub line: u64,
+    pub action: String,
+    pub ts_ns: u64,
+    pub state: ActionExchangeState,
+    pub request: Option<ActionMessage>,
+    pub response: Option<ActionMessage>,
+    /// Время от запроса до ответа.
+    pub delay_ns: Option<u64>,
+    /// Сколько запросов в разных соединениях подошли по времени: больше одного — выбор неоднозначен,
+    /// показан первый. Журнал без колонки записи сначала относится к записи, где нашлось больше
+    /// всего его действий; запросы других записей в счёт не идут.
+    pub candidates: u32,
+}
+
+/// Обмены для всех действий журнала разом: каждому действию — запрос стороны, начавшей соединение,
+/// и ответ на него. Сопоставление то же, что в тестах гипотез.
+pub fn action_exchanges(
+    sources: &[Arc<SourceData>],
+    it: &Interpretation,
+    log: &LoadedLog,
+    options: &TestOptions,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<ActionExchange>, Problem> {
+    let mut actions: Vec<&Action> = log.actions.iter().collect();
+    actions.sort_by_key(|a| (a.ts_ns, a.line));
+    let window_ns = options.window_ms.saturating_mul(1_000_000);
+    let mut found: BTreeMap<u64, ActionExchange> = BTreeMap::new();
+    let scope = log_scopes(sources, it, &[log], window_ns, cancelled)?
+        .into_iter()
+        .next()
+        .flatten();
+
+    for data in sources {
+        if scope.as_ref().is_some_and(|sha| *sha != data.sha256) {
+            continue;
+        }
+        let own: Vec<&Action> = actions
+            .iter()
+            .copied()
+            .filter(|a| a.belongs_to(&data.name))
+            .collect();
+        if own.is_empty() {
+            continue;
+        }
+        for connection in &data.connections {
+            if cancelled() {
+                return Err(Problem::new(
+                    ProblemKind::Conflict,
+                    "Поиск обменов прерван: слишком много данных.",
+                ));
+            }
+            let id = connection.id(&data.sha256);
+            // Сообщения обоих потоков: место, тип, время первого кадра.
+            let mut per_stream: Vec<Vec<ActionMessage>> = Vec::new();
+            let mut timed: Vec<Vec<u64>> = Vec::new();
+            for (i, stream) in connection.streams.iter().enumerate() {
+                let input = stream_input(&data.file, connection, stream, i);
+                let result = pl_interp::apply(it, &input, cancelled).map_err(|e| {
+                    Problem::new(
+                        ProblemKind::LimitExceeded,
+                        format!("Разбор остановлен: {e}."),
+                    )
+                })?;
+                let times = Times::new(data, stream);
+                let mut last = 0u64;
+                let mut exact = Vec::new();
+                let list = result
+                    .messages
+                    .iter()
+                    .map(|m| {
+                        let t = times.first_ts(m.start, m.end);
+                        exact.push(t.unwrap_or(0));
+                        last = t.unwrap_or(last);
+                        ActionMessage {
+                            source: data.sha256.clone(),
+                            stream: format!("{id}:{}", SUFFIX.get(i).copied().unwrap_or("ab")),
+                            start: m.start,
+                            end: m.end,
+                            message_id: m.message_id.clone(),
+                            category: m.category,
+                            ts_ns: last,
+                        }
+                    })
+                    .collect();
+                per_stream.push(list);
+                timed.push(exact);
+            }
+            let first_real = |v: &Vec<u64>| v.iter().find(|t| **t > 0).copied();
+            let side = match (
+                timed.first().and_then(first_real),
+                timed.get(1).and_then(first_real),
+            ) {
+                (Some(a), Some(b)) => usize::from(a > b),
+                (None, Some(_)) => 1,
+                _ => 0,
+            };
+            let (Some(requests), Some(stamps)) = (per_stream.get(side), timed.get(side)) else {
+                continue;
+            };
+            let answers = per_stream.get(1 - side);
+            let ordered = |i: usize| -> Vec<u64> {
+                per_stream
+                    .get(i)
+                    .map_or_else(Vec::new, |m| m.iter().map(|x| x.ts_ns).collect())
+            };
+            let links = pair_turns(&ordered(side), &ordered(1 - side));
+            for (k, action) in assign(stamps, &own, window_ns).into_iter().enumerate() {
+                let (Some(action), Some(request)) = (action, requests.get(k)) else {
+                    continue;
+                };
+                let response = links
+                    .response_of
+                    .get(k)
+                    .copied()
+                    .flatten()
+                    .and_then(|j| answers.and_then(|a| a.get(j)))
+                    .cloned();
+                let row = found.entry(action.line).or_insert_with(|| ActionExchange {
+                    line: action.line,
+                    action: action.action.clone(),
+                    ts_ns: action.ts_ns,
+                    state: ActionExchangeState::NotFound,
+                    request: None,
+                    response: None,
+                    delay_ns: None,
+                    candidates: 0,
+                });
+                row.candidates += 1;
+                if row.request.is_none() {
+                    row.delay_ns = response
+                        .as_ref()
+                        .map(|r| r.ts_ns.saturating_sub(request.ts_ns));
+                    row.state = if response.is_some() {
+                        ActionExchangeState::Paired
+                    } else {
+                        ActionExchangeState::RequestOnly
+                    };
+                    row.request = Some(request.clone());
+                    row.response = response;
+                }
+            }
+        }
+    }
+
+    // Действия без запроса тоже в таблице: видно, чего в записи нет.
+    Ok(log
+        .actions
+        .iter()
+        .map(|a| {
+            found.remove(&a.line).unwrap_or_else(|| ActionExchange {
+                line: a.line,
+                action: a.action.clone(),
+                ts_ns: a.ts_ns,
+                state: ActionExchangeState::NotFound,
+                request: None,
+                response: None,
+                delay_ns: None,
+                candidates: 0,
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,21 +916,32 @@ mod tests {
     }
 
     #[test]
-    fn responses_pair_in_order_not_earlier_than_the_request() {
+    fn responses_pair_by_turns_and_gaps_do_not_shift_them() {
         // Конвейер: запросы в 6 и 14, оба ответа в 18; пачка запросов в 30 и ответы 31, 31.
+        let links = pair_turns(&[6, 14, 30, 30], &[18, 18, 31, 31]);
+        assert_eq!(links.response_of, [Some(0), Some(1), Some(2), Some(3)]);
         assert_eq!(
-            pair_responses(&[6, 14, 30, 30], &[18, 18, 31, 31], &[false; 4]),
-            [Some(0), Some(1), Some(2), Some(3)]
+            links.request_of,
+            [Answer::To(0), Answer::To(1), Answer::To(2), Answer::To(3)]
         );
-        // Ответ, пришедший раньше запроса, — не его ответ.
+        // Ответ, пришедший раньше запроса, — не его ответ и ничей.
+        let links = pair_turns(&[10, 20], &[5, 12, 25]);
+        assert_eq!(links.response_of, [Some(1), Some(2)]);
         assert_eq!(
-            pair_responses(&[10, 20], &[5, 12, 25], &[false; 3]),
-            [Some(1), Some(2)]
+            links.request_of,
+            [Answer::Nobody, Answer::To(0), Answer::To(1)]
         );
-        // После неполного ответа счёт неизвестен: дальше пар нет.
+        // Четыре запроса без ответа, затем запрос с ответом: какой запрос подтверждён, неизвестно —
+        // пар нет, но следующий обмен не сдвигается.
+        let links = pair_turns(&[1, 2, 3, 4, 10, 20], &[11, 21]);
+        assert_eq!(links.response_of, [None, None, None, None, None, Some(1)]);
+        assert_eq!(links.request_of, [Answer::Someone, Answer::To(5)]);
+        // Сообщение, которое встречная сторона прислала сама, после ответа: запрос один, ответов
+        // два — действие запроса не достаётся ни одному.
+        let links = pair_turns(&[10, 30], &[11, 12, 31]);
         assert_eq!(
-            pair_responses(&[1, 2, 3], &[1, 2, 3], &[false, true, false]),
-            [Some(0), None, None]
+            links.request_of,
+            [Answer::Nobody, Answer::Nobody, Answer::To(1)]
         );
     }
 

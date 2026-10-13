@@ -1,7 +1,9 @@
 //! Фрейминг: границы прикладных сообщений в направленном потоке (TCP-сегмент ≠ сообщение).
 
 use crate::input::{Read, RegionKind, StreamInput};
-use crate::schema::{Framing, FramingKind, IntType, MAX_MESSAGE_BYTES, parse_hex};
+use crate::schema::{
+    Framing, FramingKind, IntType, MAX_MESSAGE_BYTES, MAX_VARINT_BYTES, parse_hex, read_varint,
+};
 
 /// Предел числа сообщений в одном потоке (100 тыс. сообщений в профиле).
 pub const MAX_MESSAGES_PER_STREAM: usize = 1_000_000;
@@ -189,7 +191,7 @@ pub fn frame(
                 return Ok(out);
             };
             let at = u64::from(spec.at);
-            let size = spec.ty.size() as u64;
+            let fixed = spec.ty.int();
             let sync = framing
                 .sync
                 .as_deref()
@@ -229,9 +231,30 @@ pub fn frame(
                     end: len,
                     problem: None,
                 };
-                let header = input.read(pos + at, size);
+                // Поле длины: целое постоянного размера либо varint, который читается по байту
+                // до завершающего. Вместе со значением нужен размер самого поля.
+                let (header, size) = match fixed {
+                    Some(int) => (input.read(pos + at, int.size() as u64), int.size() as u64),
+                    None => {
+                        let mut taken = 0u64;
+                        let mut last = Read::OutOfRange;
+                        while taken < MAX_VARINT_BYTES {
+                            last = input.read(pos + at, taken + 1);
+                            taken += 1;
+                            match &last {
+                                Read::Bytes(b) if b.last().is_some_and(|x| x & 0x80 != 0) => {}
+                                _ => break,
+                            }
+                        }
+                        (last, taken)
+                    }
+                };
                 let value = match header {
-                    Read::Bytes(b) => read_int(&b, spec.ty),
+                    Read::Bytes(b) => match fixed {
+                        Some(int) => read_int(&b, int),
+                        // Длина varint отсчитывается от конца самого поля.
+                        None => read_varint(&b).map(|(v, n)| v + i128::from(at) + n as i128),
+                    },
                     Read::Gap => {
                         let end = if sync.is_some() { resync(pos) } else { len };
                         push(
@@ -469,7 +492,11 @@ mod tests {
     fn prefixed(at: u32, ty: IntType, adjust: i64) -> Framing {
         Framing {
             kind: FramingKind::LengthPrefixed,
-            length: Some(LengthSpec { at, ty, adjust }),
+            length: Some(LengthSpec {
+                at,
+                ty: ty.into(),
+                adjust,
+            }),
             size: None,
             bytes: None,
             sync: None,

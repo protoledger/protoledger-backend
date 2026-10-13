@@ -309,6 +309,18 @@ fn verify_confirms_a_reproducible_project() {
         "{stdout}"
     );
     assert!(stdout.contains("main.pcapng: цела"), "{stdout}");
+
+    // Свой путь пользователь пишет как привык: с «..» и «.» тоже.
+    let roundabout = root.join("..").join(".").join(root.file_name().unwrap());
+    for command in ["verify", "report"] {
+        let out = run(&[command, roundabout.to_str().unwrap()]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{command}: {}",
+            text(&out.stderr)
+        );
+    }
 }
 
 #[test]
@@ -603,6 +615,311 @@ fn verify_reruns_a_run_on_its_own_sources_after_a_later_import() {
         stdout.contains("run-0001: результат воспроизводится"),
         "{stdout}"
     );
+}
+
+#[test]
+fn draft_builds_a_description_that_apply_accepts_on_another_recording() {
+    let dir = temp("draft");
+    let mapping = mapping_file(&dir);
+    let out = dir.join("draft.yaml");
+    let made = run(&[
+        "draft",
+        "--input",
+        repo("fixtures/stand/main.pcapng").to_str().unwrap(),
+        "--action-log",
+        repo("fixtures/stand/main.actions.csv").to_str().unwrap(),
+        "--mapping",
+        mapping.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(made.status.success(), "{}", text(&made.stderr));
+    // Ход сборки — в stderr, по строке на шаг.
+    let steps = text(&made.stderr);
+    for title in [
+        "Границы сообщений:",
+        "Типы сообщений:",
+        "Контрольная сумма:",
+        "Проверка черновика:",
+    ] {
+        assert!(steps.contains(title), "нет шага «{title}»:\n{steps}");
+    }
+    let yaml = std::fs::read_to_string(&out).unwrap();
+    assert!(yaml.contains("format: protoledger/interpretation@1"));
+    assert!(
+        yaml.contains("checksum == sum8(0, message.len - 1)"),
+        "{yaml}"
+    );
+
+    // Черновик, собранный по основной записи, применяется к дополнительной без правки.
+    let applied = run(&[
+        "apply",
+        "--interpretation",
+        out.to_str().unwrap(),
+        "--input",
+        repo("fixtures/stand/extra.pcapng").to_str().unwrap(),
+        "--strict",
+    ]);
+    assert_eq!(applied.status.code(), Some(0), "{}", text(&applied.stderr));
+    let json: serde_json::Value = serde_json::from_str(&text(&applied.stdout)).unwrap();
+    assert_eq!(
+        json["summary"]["counts"]["matched"],
+        json["summary"]["messages"]
+    );
+
+    // Без --out описание идёт в стандартный вывод; запись без данных — понятная ошибка.
+    let printed = run(&[
+        "draft",
+        "--input",
+        repo("fixtures/stand/main.pcapng").to_str().unwrap(),
+    ]);
+    assert!(text(&printed.stdout).starts_with("# Черновик описания"));
+    let missing = run(&["draft", "--input", dir.join("нет.pcap").to_str().unwrap()]);
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn coverage_compare_and_graph_work_without_a_project() {
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let (main, extra) = (
+        repo("fixtures/stand/main.pcapng"),
+        repo("fixtures/stand/extra.pcapng"),
+    );
+    let (spec, main, extra) = (
+        spec.to_str().unwrap(),
+        main.to_str().unwrap(),
+        extra.to_str().unwrap(),
+    );
+
+    let coverage = run(&["coverage", "--interpretation", spec, "--input", main]);
+    assert_eq!(
+        coverage.status.code(),
+        Some(0),
+        "{}",
+        text(&coverage.stderr)
+    );
+    let map: serde_json::Value = serde_json::from_str(&text(&coverage.stdout)).unwrap();
+    assert!(map["describedPermille"].as_u64().unwrap() > 0);
+    assert!(text(&coverage.stderr).contains("описано байтов"));
+
+    // Записи отличаются значениями уставки: код 1 и строка о новых значениях.
+    let differs = run(&[
+        "compare",
+        "--interpretation",
+        spec,
+        "--a",
+        main,
+        "--b",
+        extra,
+    ]);
+    assert_eq!(differs.status.code(), Some(1), "{}", text(&differs.stderr));
+    assert!(text(&differs.stderr).contains("set_param_req.value"));
+    let same = run(&[
+        "compare",
+        "--interpretation",
+        spec,
+        "--a",
+        main,
+        "--b",
+        main,
+    ]);
+    assert_eq!(same.status.code(), Some(0));
+
+    let graph = run(&["graph", "--interpretation", spec, "--input", main, "--dot"]);
+    assert_eq!(graph.status.code(), Some(0));
+    let dot = text(&graph.stdout);
+    assert!(dot.starts_with("digraph exchange {"), "{dot}");
+    assert!(dot.contains("\"set_param_req\" -> \"set_param_resp\""));
+    let full = run(&["graph", "--interpretation", spec, "--input", main]);
+    let json: serde_json::Value = serde_json::from_str(&text(&full.stdout)).unwrap();
+    assert!(json["nodes"].as_array().unwrap().len() >= 4);
+
+    let broken = run(&["coverage", "--interpretation", main, "--input", main]);
+    assert_eq!(
+        broken.status.code(),
+        Some(2),
+        "запись вместо описания — ошибка"
+    );
+}
+
+#[test]
+fn export_writes_a_wireshark_dissector() {
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let out = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "stand",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let lua = text(&out.stdout);
+    assert!(lua.contains(r#"Proto("stand""#), "{lua}");
+    assert!(lua.contains("tcp:add(4710, proto)"));
+    assert!(lua.contains(r#"ProtoField.int32("stand.set_param_req.value""#));
+
+    let bad = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "Stand 1",
+    ]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(text(&bad.stderr).contains("имя протокола"));
+}
+
+fn tshark_available() -> bool {
+    Command::new("tshark")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Диссектор в tshark и `apply` должны увидеть одни и те же сообщения и значения полей.
+/// Тест пропускается, если tshark не установлен; в CI он обязателен (`PL_REQUIRE_TSHARK=1`).
+#[test]
+fn exported_dissector_agrees_with_apply_in_tshark() {
+    if !tshark_available() {
+        assert!(
+            std::env::var_os("PL_REQUIRE_TSHARK").is_none(),
+            "tshark обязателен (PL_REQUIRE_TSHARK), но не найден"
+        );
+        eprintln!("tshark не найден: сверка пропущена");
+        return;
+    }
+    let dir = temp("export-tshark");
+    let lua = dir.join("stand.lua");
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let out = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "stand",
+        "--out",
+        lua.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+
+    // Поля диссектора и то же поле в результате apply: (сообщение, поле).
+    let fields = [
+        ("set_param_req", "value"),
+        ("read_param_resp", "value"),
+        ("set_param_resp", "applied"),
+        ("measure_resp", "count"),
+        ("measure_req", "channel"),
+    ];
+    for name in ["main", "extra"] {
+        let capture = format!("fixtures/stand/{name}.pcapng");
+        let mut args = vec![
+            "-X".to_owned(),
+            format!("lua_script:{}", lua.display()),
+            "-r".to_owned(),
+            repo(&capture).to_str().unwrap().to_owned(),
+            "-Y".to_owned(),
+            "stand".to_owned(),
+            "-T".to_owned(),
+            "fields".to_owned(),
+            "-E".to_owned(),
+            "occurrence=a".to_owned(),
+            "-E".to_owned(),
+            "aggregator=,".to_owned(),
+            "-e".to_owned(),
+            "tcp.srcport".to_owned(),
+            "-e".to_owned(),
+            "stand.message".to_owned(),
+        ];
+        for (message, field) in fields {
+            args.push("-e".to_owned());
+            args.push(format!("stand.{message}.{field}"));
+        }
+        let shown = Command::new("tshark").args(&args).output().unwrap();
+        let (table, errors) = (text(&shown.stdout), text(&shown.stderr));
+        assert!(shown.status.success(), "tshark: {errors}");
+
+        // Сообщения по направлениям в порядке кадров и значения каждого поля.
+        let mut by_port = std::collections::BTreeMap::<String, Vec<String>>::new();
+        let mut values = vec![Vec::<String>::new(); fields.len()];
+        for line in table.lines() {
+            let cols: Vec<&str> = line.split('\t').collect();
+            let list = |i: usize| {
+                cols.get(i)
+                    .into_iter()
+                    .flat_map(|c| c.split(','))
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            by_port.entry(list(0).concat()).or_default().extend(list(1));
+            for (i, column) in values.iter_mut().enumerate() {
+                column.extend(list(i + 2));
+            }
+        }
+        let mut seen: Vec<Vec<String>> = by_port.into_values().collect();
+        seen.sort();
+        values.iter_mut().for_each(|v| v.sort());
+
+        let applied = apply(&capture, &[]);
+        let result: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+        let mut expected = Vec::new();
+        let mut expected_values = vec![Vec::<String>::new(); fields.len()];
+        for stream in result["inputs"][0]["streams"].as_array().unwrap() {
+            let mut ids = Vec::new();
+            for m in stream["messages"].as_array().unwrap() {
+                let id = m["messageId"].as_str().unwrap();
+                ids.push(id.to_owned());
+                for (i, (message, field)) in fields.iter().enumerate() {
+                    if id != *message {
+                        continue;
+                    }
+                    for f in m["fields"].as_array().unwrap() {
+                        if f["name"] == *field {
+                            expected_values[i].push(f["value"].to_string());
+                        }
+                    }
+                }
+            }
+            expected.push(ids);
+        }
+        expected.sort();
+        expected_values.iter_mut().for_each(|v| v.sort());
+
+        assert_eq!(seen, expected, "{name}: сообщения; tshark: {errors}");
+        for (i, (message, field)) in fields.iter().enumerate() {
+            assert!(!expected_values[i].is_empty(), "{name}: {message}.{field}");
+            assert_eq!(
+                values[i], expected_values[i],
+                "{name}: {message}.{field}; tshark: {errors}"
+            );
+        }
+    }
+}
+
+#[test]
+fn apply_says_when_streams_are_outside_the_scope() {
+    let dir = temp("out-of-scope");
+    let spec = dir.join("other-port.yaml");
+    let stand = std::fs::read_to_string(repo("fixtures/stand/interpretation.yaml")).unwrap();
+    std::fs::write(&spec, stand.replace("4710", "1")).unwrap();
+    let capture = repo("fixtures/stand/main.pcapng");
+    let out = run(&[
+        "apply",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--input",
+        capture.to_str().unwrap(),
+    ]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("сообщений 0"), "{err}");
+    assert!(
+        err.contains("Вне области описания (scope): потоков 2 из 2"),
+        "{err}"
+    );
+    // Когда всё в области, строки нет.
+    let inside = apply("fixtures/stand/main.pcapng", &[]);
+    assert!(!text(&inside.stderr).contains("Вне области"));
 }
 
 #[test]

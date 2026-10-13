@@ -482,3 +482,337 @@ async fn field_hints_explain_what_they_cannot_do() {
     let (status, _) = ask(json!({ "yaml": yaml, "messageId": "set_param_req", "field": "value", "windowMs": 9_999_999 })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fix_hints_propose_the_edit_that_removes_counterexamples() {
+    let state = project_state("fix-hints");
+    import_stand(&state, "main.pcapng").await;
+    import_stand(&state, "extra.pcapng").await;
+    for log in ["main.actions.csv", "extra.actions.csv"] {
+        let mapping =
+            json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+        let path = stand(log).to_string_lossy().into_owned();
+        call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path, "mapping": mapping })),
+        )
+        .await;
+    }
+    let ask = |yaml: String| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/fix-hints",
+                Some(json!({ "yaml": yaml, "hypothesis": "H2" })),
+            )
+            .await
+        }
+    };
+
+    // Знак: значение описано беззнаковым, отрицательное из дополнительной записи его опровергает.
+    let (status, hints) = ask(answer_key().replace("type: i32be", "type: u32be")).await;
+    assert_eq!(status, StatusCode::OK, "{hints}");
+    assert_eq!(hints["current"]["verdict"], "refuted", "{hints}");
+    let best = &hints["fixes"][0];
+    assert_eq!(best["kind"], "sign", "{hints}");
+    assert_eq!(
+        (&best["fromType"], &best["toType"]),
+        (&json!("u32be"), &json!("i32be"))
+    );
+    assert_eq!(best["field"], "value");
+    assert_eq!(best["result"]["counterexamples"], 0);
+    assert!(
+        best["summary"]
+            .as_str()
+            .unwrap()
+            .contains("u32be → i32be (знак)")
+    );
+    assert!(
+        best["messages"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("set_param_req"))
+    );
+
+    // Масштаб: тест сравнивает с параметром, умноженным на десять.
+    let test_line = "value == action.params.value";
+    assert!(
+        answer_key().contains(test_line),
+        "тест H2 в описании стенда изменился"
+    );
+    let scaled = answer_key().replace(test_line, "value == dec(action.params.value, 1)");
+    let (status, hints) = ask(scaled).await;
+    assert_eq!(status, StatusCode::OK, "{hints}");
+    let best = &hints["fixes"][0];
+    assert_eq!(best["kind"], "scale", "{hints}");
+    assert_eq!(best["test"], test_line);
+    assert_eq!(best["result"]["counterexamples"], 0);
+
+    // Верное описание: исправлять нечего.
+    let (status, fine) = ask(answer_key()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fine["current"]["counterexamples"], 0, "{fine}");
+    assert_eq!(fine["fixes"], json!([]));
+
+    // Гипотезы нет или у неё нет теста — понятный отказ.
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/fix-hints",
+        Some(json!({ "yaml": answer_key(), "hypothesis": "H999" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/fix-hints",
+        Some(json!({ "hypothesis": "H2" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn coverage_shows_what_is_described_and_what_is_not() {
+    let state = project_state("coverage");
+    import_stand(&state, "main.pcapng").await;
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/coverage",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, map) = ask(json!({ "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK, "{map}");
+    assert_eq!(map["incomplete"], false);
+    assert_eq!(map["sources"], 1);
+    // Суммы сходятся на каждом уровне: байт учтён ровно одним видом описания.
+    let sums = |b: &Value| {
+        ["rule", "hypothesis", "unknown", "none"]
+            .iter()
+            .map(|k| b[*k].as_u64().unwrap())
+            .sum::<u64>()
+    };
+    assert_eq!(sums(&map["bytes"]), map["bytes"]["total"].as_u64().unwrap());
+    let types = map["types"].as_array().unwrap();
+    assert!(types.len() >= 4, "{map}");
+    let mut messages = 0;
+    let mut bytes = 0;
+    for t in types {
+        assert_eq!(
+            sums(&t["bytes"]),
+            t["bytes"]["total"].as_u64().unwrap(),
+            "{t}"
+        );
+        messages += t["messages"].as_u64().unwrap();
+        bytes += t["bytes"]["total"].as_u64().unwrap();
+        // Области идут подряд и без пересечений.
+        let mut end = 0;
+        for r in t["regions"].as_array().unwrap() {
+            assert_eq!(r["start"].as_u64().unwrap(), end, "{t}");
+            end = r["end"].as_u64().unwrap();
+        }
+    }
+    assert_eq!(messages, map["messages"].as_u64().unwrap());
+    assert_eq!(bytes, map["bytes"]["total"].as_u64().unwrap());
+    // Запрос уставки описан целиком: сигнатура — правило, значение — гипотеза H2.
+    let set = types
+        .iter()
+        .find(|t| t["messageId"] == "set_param_req")
+        .unwrap();
+    assert_eq!(set["bytes"]["none"], 0, "{set}");
+    let regions = set["regions"].as_array().unwrap();
+    assert_eq!(regions[0]["status"], "rule");
+    let value = regions.iter().find(|r| r["field"] == "value").unwrap();
+    assert_eq!(
+        (
+            &value["status"],
+            &value["hypothesis"],
+            &value["sharePermille"]
+        ),
+        (&json!("hypothesis"), &json!("H2"), &json!(1000))
+    );
+    assert!(set["hypotheses"].as_array().unwrap().contains(&json!("H2")));
+
+    // Описание только из границ: тип ни у одного сообщения не определён, всё без описания.
+    let bare = "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: rule }\nmessages: []\n";
+    let (status, empty) = ask(json!({ "yaml": bare })).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["describedPermille"], 0);
+    assert_eq!(empty["types"][0]["messageId"], Value::Null);
+    assert_eq!(empty["bytes"]["none"], empty["bytes"]["total"]);
+
+    let (status, _) = ask(json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+    let (status, _) = ask(json!({ "yaml": answer_key(), "sources": ["нет"] })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compare_shows_what_changed_between_two_recordings() {
+    let state = project_state("compare");
+    import_stand(&state, "main.pcapng").await;
+    import_stand(&state, "extra.pcapng").await;
+    let (_, sources) = call(&state, Method::GET, "/api/sources?limit=10", None).await;
+    let sha = |name: &str| {
+        sources["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
+            .unwrap_or_else(|| panic!("нет записи {name}: {sources}"))["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (main, extra) = (sha("main.pcapng"), sha("extra.pcapng"));
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/compare",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, diff) = ask(json!({ "a": [main], "b": [extra], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    assert_eq!(diff["incomplete"], false);
+    assert_eq!(
+        (&diff["a"]["sources"], &diff["b"]["sources"]),
+        (&json!(1), &json!(1))
+    );
+    // Дополнительная запись сделана другим клиентом: уставки −5, 70000 и 123456 в основной не встречались.
+    let value = diff["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["messageId"] == "set_param_req" && f["field"] == "value")
+        .unwrap_or_else(|| panic!("нет отличия в значении уставки: {diff}"));
+    assert_eq!(value["change"], "values");
+    let new: Vec<&str> = value["newValues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(new.contains(&"-5") && new.contains(&"70000"), "{value}");
+    assert!(value["b"]["min"].as_i64().unwrap() < 0);
+    let summary = diff["summary"].as_array().unwrap();
+    assert!(
+        summary.iter().any(|s| s
+            .as_str()
+            .unwrap()
+            .starts_with("set_param_req.value: во втором наборе новые значения")),
+        "{summary:?}"
+    );
+    // Чтений измерений в дополнительной записи нет: тип отмечен пропавшим.
+    let types = diff["types"].as_array().unwrap();
+    let total: u64 = types.iter().map(|t| t["a"].as_u64().unwrap()).sum();
+    assert_eq!(total, diff["a"]["messages"].as_u64().unwrap());
+    for t in types {
+        let expected = match (t["a"].as_u64().unwrap(), t["b"].as_u64().unwrap()) {
+            (0, _) => "new",
+            (_, 0) => "missing",
+            _ => "same",
+        };
+        assert_eq!(t["change"], expected, "{t}");
+    }
+
+    // Запись, сравнённая сама с собой, отличий не даёт.
+    let (status, same) = ask(json!({ "a": [main], "b": [main], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(same["fields"], json!([]));
+    assert!(
+        same["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["change"] == "same")
+    );
+    assert_eq!(same["summary"].as_array().unwrap().len(), 1);
+    for t in same["timing"].as_array().unwrap() {
+        assert_eq!(t["ratioPermille"], 1000, "{t}");
+    }
+
+    let (status, _) = ask(json!({ "a": [], "b": [main], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = ask(json!({ "a": [main], "b": ["нет"], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = ask(json!({ "a": [main], "b": [extra] })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exchange_graph_shows_answers_and_transitions() {
+    let state = project_state("graph");
+    import_stand(&state, "main.pcapng").await;
+    let (status, g) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/graph",
+        Some(json!({ "yaml": answer_key() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{g}");
+    assert_eq!(g["incomplete"], false);
+    assert!(g["connections"].as_u64().unwrap() >= 1);
+    // Сумма по узлам — все сообщения.
+    let nodes = g["nodes"].as_array().unwrap();
+    let total: u64 = nodes
+        .iter()
+        .map(|n| n["requests"].as_u64().unwrap() + n["responses"].as_u64().unwrap())
+        .sum();
+    assert_eq!(total, g["messages"].as_u64().unwrap());
+    // На запрос уставки устройство отвечает своим типом ответа — и только им.
+    let answers = g["answers"].as_array().unwrap();
+    let to_set: Vec<&Value> = answers
+        .iter()
+        .filter(|e| e["from"] == "set_param_req")
+        .collect();
+    assert_eq!(to_set.len(), 1, "{g}");
+    assert_eq!(to_set[0]["to"], "set_param_resp");
+    let requests = nodes.iter().find(|n| n["id"] == "set_param_req").unwrap()["requests"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(to_set[0]["count"].as_u64().unwrap(), requests);
+    // Переходов между запросами на один меньше, чем запросов в соединении.
+    let next: u64 = g["next"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["count"].as_u64().unwrap())
+        .sum();
+    let all_requests: u64 = nodes.iter().map(|n| n["requests"].as_u64().unwrap()).sum();
+    assert_eq!(next + g["connections"].as_u64().unwrap(), all_requests);
+    assert_eq!(g["starts"][0]["from"], "начало");
+    let dot = g["dot"].as_str().unwrap();
+    assert!(
+        dot.starts_with("digraph exchange {")
+            && dot.contains("\"set_param_req\" -> \"set_param_resp\""),
+        "{dot}"
+    );
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/graph",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}

@@ -1,6 +1,6 @@
 //! Общее для команд: коды возврата и чтение файлов.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use pl_core::Problem;
 
@@ -20,6 +20,32 @@ impl Exit {
     }
 }
 
+/// Путь к проекту из командной строки: «..» и «.» раскрываются от текущего каталога.
+/// Внутри проекта «..» запрещены, но свой путь пользователь вправе написать как угодно.
+pub fn project_path(path: &Path) -> PathBuf {
+    if !path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
+        return path.to_path_buf();
+    }
+    let mut out = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir().unwrap_or_default()
+    };
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Размер текстовых входов CLI (интерпретация, сопоставление): те же пределы, что у API.
 const MAX_TEXT: u64 = 4 << 20;
 
@@ -31,7 +57,12 @@ pub fn read_text(path: &Path) -> Result<String, String> {
             path.display()
         ));
     }
-    std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::read_to_string(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => {
+            format!("{}: файл не в кодировке UTF-8", path.display())
+        }
+        _ => format!("{}: {e}", path.display()),
+    })
 }
 
 /// Ошибка движка в виде строки для пользователя: файл и причина.

@@ -16,8 +16,11 @@
 
 mod checksum;
 mod correlation;
+mod entropy;
 mod exchanges;
+mod fields;
 mod framing;
+mod types;
 mod variability;
 
 pub use checksum::{
@@ -28,10 +31,21 @@ pub use correlation::{
     ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, Decimal, MAX_CORR_SAMPLES,
     ValueHint, correlate,
 };
+pub use entropy::{
+    ENTROPY_WINDOW, EntropyKind, EntropyMap, EntropyRegion, MAX_ENTROPY_BYTES, entropy_map,
+    entropy_millibits,
+};
 pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
+pub use fields::{
+    FieldAlt, FieldHint, FieldHints, FieldKind, FieldSample, MAX_FIELD_MESSAGES, find_fields,
+};
 pub use framing::{
     Counter, CounterReason, DelimiterHint, FieldRef, FixedHint, FramingHints, FramingSpec,
     LengthHint, LengthSpecHint, SignatureHint, find_framing,
+};
+pub use types::{
+    ConstBytes, KeyHint, KeyValue, MAX_TYPE_MESSAGES, TypeGroup, TypeHints, TypeKey, TypeOptions,
+    TypeSample, find_types,
 };
 pub use variability::{
     Column, CounterHint, LengthClass, Region, RegionKind, TopValue, Variability,

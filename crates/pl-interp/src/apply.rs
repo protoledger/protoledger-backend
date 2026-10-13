@@ -10,8 +10,8 @@ use crate::expr::{Context, Expr, ExprError, Value};
 use crate::framing::{self, Frame, FrameError, Problem, Unknown, read_int};
 use crate::input::{Read, StreamInput};
 use crate::schema::{
-    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MAX_REPEAT, MessageDef,
-    Offset, Repeat, Status, parse_hex,
+    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MAX_REPEAT,
+    MAX_VARINT_BYTES, MessageDef, Offset, Repeat, Status, parse_hex, read_varint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -207,23 +207,60 @@ impl View<'_, '_> {
         self.end - self.start
     }
 
-    fn resolve(&self, at: &At) -> Option<u64> {
+    /// Место поля в потоке; `cursor` — конец предыдущего поля описания, если он известен.
+    fn resolve(&self, at: &At, cursor: Option<u64>) -> Option<u64> {
         match at.offset()? {
             Offset::FromStart(n) => self.start.checked_add(u64::from(n)),
             Offset::FromEnd(n) => self.end.checked_sub(u64::from(n)),
+            Offset::Next => cursor,
         }
     }
 }
 
-fn decode(ty: FieldType, bytes: &[u8]) -> Option<Value> {
+fn decode(field: &FieldDef, bytes: &[u8]) -> Option<Value> {
+    let ty = field.ty;
     if let Some(int) = ty.int() {
-        return read_int(bytes, int).map(Value::Int);
+        let value = read_int(bytes, int)?;
+        return Some(Value::Int(match field.mask {
+            // Биты маски, сдвинутые к младшему: `mask: 0x38` даёт число от 0 до 7.
+            Some(mask) => (value & i128::from(mask)) >> mask.trailing_zeros(),
+            None => value,
+        }));
+    }
+    if let Some((_, big_endian)) = ty.float() {
+        return float_text(bytes, big_endian).map(Value::Str);
     }
     match ty {
         FieldType::Bytes => Some(Value::Bytes(bytes.to_vec())),
         FieldType::String => Some(Value::Str(String::from_utf8_lossy(bytes).into_owned())),
+        FieldType::Bcd => bcd(bytes).map(Value::Int),
+        FieldType::Varint => read_varint(bytes).map(|(v, _)| Value::Int(v)),
         _ => None,
     }
+}
+
+/// Кратчайшая десятичная запись, которая читается обратно в то же число: язык выражений остаётся
+/// целочисленным и точным, а сравнение с журналом идёт через `dec(x, n)`.
+fn float_text(bytes: &[u8], big_endian: bool) -> Option<String> {
+    let mut ordered = bytes.to_vec();
+    if !big_endian {
+        ordered.reverse();
+    }
+    match ordered.as_slice() {
+        [a, b, c, d] => Some(f32::from_be_bytes([*a, *b, *c, *d]).to_string()),
+        [a, b, c, d, e, f, g, h] => {
+            Some(f64::from_be_bytes([*a, *b, *c, *d, *e, *f, *g, *h]).to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Двоично-десятичное число, старшая цифра первой; полубайт больше 9 — не число.
+fn bcd(bytes: &[u8]) -> Option<i128> {
+    bytes.iter().try_fold(0i128, |acc, byte| {
+        let (high, low) = (byte >> 4, byte & 0x0f);
+        (high <= 9 && low <= 9).then(|| acc * 100 + i128::from(high * 10 + low))
+    })
 }
 
 /// Контекст `when`: поля с известным местом и размером читаются по требованию;
@@ -238,10 +275,10 @@ impl Context for WhenCtx<'_, '_> {
         let Some(field) = self.def.fields.iter().find(|f| f.name == name) else {
             return StreamCtx(&self.view.input.meta).get(name);
         };
-        let at = self.view.resolve(&field.at)?;
+        let at = self.view.resolve(&field.at, None)?;
         let len = fixed_len(field)?;
         match self.view.input.read(at, len) {
-            Read::Bytes(b) if at + len <= self.view.end => decode(field.ty, &b),
+            Read::Bytes(b) if at + len <= self.view.end => decode(field, &b),
             _ => None,
         }
     }
@@ -255,10 +292,14 @@ fn fixed_len(f: &FieldDef) -> Option<u64> {
     if let Some(int) = f.ty.int() {
         return Some(int.size() as u64);
     }
+    if let Some((size, _)) = f.ty.float() {
+        return Some(size as u64);
+    }
     match (&f.len, f.ty) {
-        (Some(Len::Fixed(n)), FieldType::Bytes | FieldType::String | FieldType::Unknown) => {
-            Some(u64::from(*n))
-        }
+        (
+            Some(Len::Fixed(n)),
+            FieldType::Bytes | FieldType::String | FieldType::Unknown | FieldType::Bcd,
+        ) => Some(u64::from(*n)),
         _ => None,
     }
 }
@@ -413,7 +454,10 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
     // Поля по порядку описания.
     let mut values: BTreeMap<String, Value> = BTreeMap::new();
     let mut covered: Vec<(u64, u64)> = Vec::new();
+    // Конец предыдущего поля: от него отсчитывается поле с `at: next`.
+    let mut cursor: Option<u64> = Some(view.start);
     for field in &def.fields {
+        let previous = cursor.take();
         let mut fr = FieldResult {
             name: field.name.clone(),
             at: 0,
@@ -423,7 +467,16 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             state: FieldState::OutOfMessage,
             value: None,
         };
-        let Some(at) = view.resolve(&field.at) else {
+        let Some(at) = view.resolve(&field.at, previous) else {
+            if matches!(field.at.offset(), Some(Offset::Next)) && field.status != Status::Unknown {
+                result.violations.push(violation(
+                    ViolationKind::FieldRange,
+                    &field.name,
+                    field.status,
+                    "место поля неизвестно: размер предыдущего поля вычислить не удалось"
+                        .to_owned(),
+                ));
+            }
             result.fields.push(fr);
             continue;
         };
@@ -440,9 +493,24 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
                 &mut covered,
                 &mut result,
             );
+            cursor = result
+                .fields
+                .iter()
+                .rev()
+                .find(|f| f.name == field.name && f.state != FieldState::OutOfMessage)
+                .map(|f| f.at + f.len);
             continue;
         }
         let len = match (&field.len, fixed_len(field)) {
+            // Размер varint виден только по байтам: до первого без признака продолжения.
+            _ if field.ty == FieldType::Varint => {
+                let room = view.end.saturating_sub(at).min(MAX_VARINT_BYTES);
+                match input.read(at, room) {
+                    Read::Bytes(b) => read_varint(&b).map(|(_, n)| n as u64),
+                    // Дыра или неоднозначность внутри: размер неизвестен, поле помечается целиком.
+                    _ => None,
+                }
+            }
             (_, Some(n)) => Some(n),
             (Some(Len::Text(t)), _) if t == "to_end" => Some(view.end.saturating_sub(at)),
             (Some(Len::Text(t)), _) => Expr::parse(t)
@@ -467,6 +535,7 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             continue;
         };
         fr.len = len;
+        cursor = at.checked_add(len).filter(|end| *end <= view.end);
         if at < view.start || at.saturating_add(len) > view.end {
             if frame.problem.is_none() && field.status != Status::Unknown {
                 result.violations.push(violation(
@@ -648,7 +717,7 @@ fn read_field(
     match input.read(at, len) {
         Read::Bytes(bytes) => {
             fr.state = FieldState::Decoded;
-            fr.value = decode(field.ty, &bytes);
+            fr.value = decode(field, &bytes);
             covered.push((at, at + len));
             if let Some(value) = &fr.value {
                 if let Some(expect) = &field.expect

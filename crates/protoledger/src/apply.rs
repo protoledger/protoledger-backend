@@ -235,7 +235,7 @@ fn message_view(m: &MessageResult) -> MessageView {
     }
 }
 
-fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
+pub fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
     let text = read_text(path)?;
     serde_saphyr::from_str(&text).map_err(|e| {
         format!(
@@ -272,8 +272,11 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         let applied =
             pl_app::apply_to_source(&interpretation, data, &|| false).map_err(|e| e.to_string())?;
         let mut streams = Vec::new();
+        // Поиск соединения по номеру: перебор на каждый поток — квадрат на записи со 100 тыс. соединений.
+        let by_number: std::collections::HashMap<_, _> =
+            data.connections.iter().map(|c| (c.number, c)).collect();
         for a in applied {
-            let connection = data.connections.iter().find(|c| c.number == a.connection);
+            let connection = by_number.get(&a.connection).copied();
             let id = connection.map_or_else(String::new, |c| {
                 format!(
                     "{}:{}",
@@ -423,6 +426,13 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         not_matched,
         output.summary.unknown_bytes,
     );
+    // Ноль сообщений без этой строки выглядит как сбой, а не как «описание не про эти потоки».
+    if output.summary.out_of_scope_streams > 0 {
+        eprintln!(
+            "Вне области описания (scope): потоков {} из {} — к ним описание не применялось.",
+            output.summary.out_of_scope_streams, output.summary.streams
+        );
+    }
     Ok(if args.strict && not_matched > 0 {
         Exit::Differences
     } else {

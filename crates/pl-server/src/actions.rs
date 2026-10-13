@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/action-logs/{id}/actions", get(actions))
         .route("/action-logs/{id}/actions/{line}/exchange", get(exchange))
+        .route("/action-logs/{id}/exchanges", get(exchanges))
 }
 
 fn bad_request(detail: impl Into<String>) -> ApiError {
@@ -472,6 +473,81 @@ struct ExchangeDto {
     interpretation_applied: bool,
     frames: Vec<FrameHitDto>,
     messages: Vec<MessageHitDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangesQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    window_ms: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangesPage {
+    items: Vec<pl_app::ActionExchange>,
+    total: usize,
+    limit: usize,
+    offset: usize,
+    /// Сколько действий получили запрос и ответ, только запрос, ничего.
+    paired: usize,
+    request_only: usize,
+    not_found: usize,
+}
+
+/// Обмены для всех действий журнала: по строке на действие.
+async fn exchanges(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    q: Result<Query<ExchangesQuery>, QueryRejection>,
+) -> Result<Json<ExchangesPage>, ApiError> {
+    let q = query(q)?;
+    let limit = q.limit.unwrap_or(50);
+    if !(1..=500).contains(&limit) {
+        return Err(bad_request("limit — от 1 до 500."));
+    }
+    let window_ms = q.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS);
+    if window_ms > MAX_WINDOW_MS {
+        return Err(bad_request(format!(
+            "windowMs — не больше {MAX_WINDOW_MS}."
+        )));
+    }
+    let offset = q.offset.unwrap_or(0);
+    let log = log(&state, &id)?;
+    let rows = tokio::task::spawn_blocking(move || {
+        let Some(it) = pl_app::current_interpretation(&state.session) else {
+            return Err(pl_core::Problem::new(
+                ProblemKind::Conflict,
+                "Нужна сохранённая интерпретация: по ней поток делится на сообщения.",
+            ));
+        };
+        let started = std::time::Instant::now();
+        pl_app::action_exchanges(
+            &pl_app::all_sources(&state.sources),
+            &it,
+            &log,
+            &pl_app::TestOptions {
+                window_ms,
+                ..pl_app::TestOptions::default()
+            },
+            &|| started.elapsed() > std::time::Duration::from_secs(20),
+        )
+    })
+    .await
+    .map_err(|_| blocking_failed())?
+    .map_err(ApiError)?;
+    let count =
+        |state: pl_app::ActionExchangeState| rows.iter().filter(|r| r.state == state).count();
+    Ok(Json(ExchangesPage {
+        total: rows.len(),
+        paired: count(pl_app::ActionExchangeState::Paired),
+        request_only: count(pl_app::ActionExchangeState::RequestOnly),
+        not_found: count(pl_app::ActionExchangeState::NotFound),
+        items: rows.into_iter().skip(offset).take(limit).collect(),
+        limit,
+        offset,
+    }))
 }
 
 async fn exchange(
