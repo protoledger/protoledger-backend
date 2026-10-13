@@ -272,8 +272,11 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         let applied =
             pl_app::apply_to_source(&interpretation, data, &|| false).map_err(|e| e.to_string())?;
         let mut streams = Vec::new();
+        // Поиск соединения по номеру: перебор на каждый поток — квадрат на записи со 100 тыс. соединений.
+        let by_number: std::collections::HashMap<_, _> =
+            data.connections.iter().map(|c| (c.number, c)).collect();
         for a in applied {
-            let connection = data.connections.iter().find(|c| c.number == a.connection);
+            let connection = by_number.get(&a.connection).copied();
             let id = connection.map_or_else(String::new, |c| {
                 format!(
                     "{}:{}",
