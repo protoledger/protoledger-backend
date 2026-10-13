@@ -613,6 +613,8 @@ async fn responses_match_the_contract_schemas() {
         )
         .await;
     }
+    api.get("/api/project/next-steps", "/api/project/next-steps")
+        .await;
     api.call(
         Method::PATCH,
         "/api/project/settings",

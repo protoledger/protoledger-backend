@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.33
+  version: 0.1.34
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -109,6 +109,49 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/project/next-steps:
+    get:
+      tags: [project]
+      operationId: getNextSteps
+      summary: Что дальше — следующие шаги исследования
+      description: |
+        По состоянию проекта подсказывает, что делать дальше, и объясняет почему: нет записей — импортировать;
+        нет описания — искать границы или собрать черновик; нет прогона или он устарел — запустить проверку;
+        есть опровергнутые гипотезы или контрпримеры — разобрать их; у гипотез нет тестов — добавить; остались
+        неизвестные зоны и открытые вопросы — вернуться к ним; всё сошлось — сформировать отчёт. `steps` идут
+        по убыванию пользы, у каждого `screen` — экран, где шаг делается. `state` — числа, по которым шаги
+        выбраны. Подсказка ничего не делает сама.
+      responses:
+        '200':
+          description: Шаги и состояние проекта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NextSteps' }
+              example:
+                steps:
+                  - id: fix_refuted
+                    screen: hypotheses
+                    title: Разберите опровергнутые гипотезы
+                    detail: 'В последнем прогоне опровергнуты: H6. Посмотрите контрпримеры и подсказку исправления.'
+                state:
+                  sources: 12
+                  actionLogs: 1
+                  hasInterpretation: true
+                  messageTypes: 7
+                  hypotheses: 12
+                  hypothesesWithoutTest: 1
+                  unknownFields: 1
+                  runs: 1
+                  lastRun: run-0001
+                  lastRunStale: false
+                  counterexamples: 0
+                  refuted: [H6]
+                  untested: []
+                  openQuestions: 2
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
 
   /api/project/settings:
     patch:
@@ -2746,6 +2789,39 @@ components:
         paired: { type: integer, minimum: 0 }
         requestOnly: { type: integer, minimum: 0 }
         notFound: { type: integer, minimum: 0 }
+
+    NextSteps:
+      type: object
+      required: [steps, state]
+      properties:
+        steps:
+          type: array
+          items:
+            type: object
+            required: [id, screen, title, detail]
+            properties:
+              id: { type: string, description: 'Устойчивый идентификатор шага' }
+              screen: { type: string, enum: [sources, actions, framing, interpretation, hypotheses, verification, questions, report] }
+              title: { type: string }
+              detail: { type: string }
+        state:
+          type: object
+          required: [sources, actionLogs, hasInterpretation, messageTypes, hypotheses, hypothesesWithoutTest, unknownFields, runs, lastRun, lastRunStale, counterexamples, refuted, untested, openQuestions]
+          properties:
+            sources: { type: integer, minimum: 0 }
+            actionLogs: { type: integer, minimum: 0 }
+            hasInterpretation: { type: boolean }
+            messageTypes: { type: integer, minimum: 0 }
+            hypotheses: { type: integer, minimum: 0 }
+            hypothesesWithoutTest: { type: integer, minimum: 0 }
+            unknownFields: { type: integer, minimum: 0 }
+            runs: { type: integer, minimum: 0 }
+            lastRun: { type: [string, 'null'] }
+            lastRunStale: { type: boolean }
+            counterexamples: { type: integer, minimum: 0 }
+            refuted: { type: array, items: { type: string } }
+            untested: { type: array, items: { type: string } }
+            openQuestions: { type: integer, minimum: 0 }
 
     CoverageRequest:
       type: object
