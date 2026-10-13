@@ -1,6 +1,7 @@
 mod apply;
 mod bench;
 mod common;
+mod draft;
 mod report;
 mod verify;
 
@@ -41,6 +42,8 @@ enum Command {
     Openapi,
     /// Применить интерпретацию к записям: результат JSON и диагностика, без проекта
     Apply(apply::ApplyArgs),
+    /// Собрать черновик описания протокола по записям: границы, типы, поля, связи с журналом
+    Draft(draft::DraftArgs),
     /// Перепроверить проект: источники целы, прогоны воспроизводятся (0 — совпало, 1 — отличия, 2 — ошибка)
     Verify(verify::VerifyArgs),
     /// Сформировать отчёт
@@ -93,6 +96,7 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Apply(args) => finish(apply::run(args)),
+        Command::Draft(args) => finish(draft::run(args)),
         Command::Verify(args) => finish(verify::run(args)),
         Command::Report(args) => finish(report::run(args)),
         Command::Bench(args) => finish(bench::run(args)),

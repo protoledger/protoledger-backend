@@ -235,7 +235,7 @@ fn message_view(m: &MessageResult) -> MessageView {
     }
 }
 
-fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
+pub fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
     let text = read_text(path)?;
     serde_saphyr::from_str(&text).map_err(|e| {
         format!(

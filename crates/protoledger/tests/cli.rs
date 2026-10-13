@@ -604,3 +604,64 @@ fn verify_reruns_a_run_on_its_own_sources_after_a_later_import() {
         "{stdout}"
     );
 }
+
+#[test]
+fn draft_builds_a_description_that_apply_accepts_on_another_recording() {
+    let dir = temp("draft");
+    let mapping = mapping_file(&dir);
+    let out = dir.join("draft.yaml");
+    let made = run(&[
+        "draft",
+        "--input",
+        repo("fixtures/stand/main.pcapng").to_str().unwrap(),
+        "--action-log",
+        repo("fixtures/stand/main.actions.csv").to_str().unwrap(),
+        "--mapping",
+        mapping.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(made.status.success(), "{}", text(&made.stderr));
+    // Ход сборки — в stderr, по строке на шаг.
+    let steps = text(&made.stderr);
+    for title in [
+        "Границы сообщений:",
+        "Типы сообщений:",
+        "Контрольная сумма:",
+        "Проверка черновика:",
+    ] {
+        assert!(steps.contains(title), "нет шага «{title}»:\n{steps}");
+    }
+    let yaml = std::fs::read_to_string(&out).unwrap();
+    assert!(yaml.contains("format: protoledger/interpretation@1"));
+    assert!(
+        yaml.contains("checksum == sum8(0, message.len - 1)"),
+        "{yaml}"
+    );
+
+    // Черновик, собранный по основной записи, применяется к дополнительной без правки.
+    let applied = run(&[
+        "apply",
+        "--interpretation",
+        out.to_str().unwrap(),
+        "--input",
+        repo("fixtures/stand/extra.pcapng").to_str().unwrap(),
+        "--strict",
+    ]);
+    assert_eq!(applied.status.code(), Some(0), "{}", text(&applied.stderr));
+    let json: serde_json::Value = serde_json::from_str(&text(&applied.stdout)).unwrap();
+    assert_eq!(
+        json["summary"]["counts"]["matched"],
+        json["summary"]["messages"]
+    );
+
+    // Без --out описание идёт в стандартный вывод; запись без данных — понятная ошибка.
+    let printed = run(&[
+        "draft",
+        "--input",
+        repo("fixtures/stand/main.pcapng").to_str().unwrap(),
+    ]);
+    assert!(text(&printed.stdout).starts_with("# Черновик описания"));
+    let missing = run(&["draft", "--input", dir.join("нет.pcap").to_str().unwrap()]);
+    assert_eq!(missing.status.code(), Some(2));
+}
