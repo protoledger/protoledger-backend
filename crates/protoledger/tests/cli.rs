@@ -729,3 +729,157 @@ fn coverage_compare_and_graph_work_without_a_project() {
         "запись вместо описания — ошибка"
     );
 }
+
+#[test]
+fn export_writes_a_wireshark_dissector() {
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let out = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "stand",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let lua = text(&out.stdout);
+    assert!(lua.contains(r#"Proto("stand""#), "{lua}");
+    assert!(lua.contains("tcp:add(4710, proto)"));
+    assert!(lua.contains(r#"ProtoField.int32("stand.set_param_req.value""#));
+
+    let bad = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "Stand 1",
+    ]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(text(&bad.stderr).contains("имя протокола"));
+}
+
+fn tshark_available() -> bool {
+    Command::new("tshark")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Диссектор в tshark и `apply` должны увидеть одни и те же сообщения и значения полей.
+/// Тест пропускается, если tshark не установлен; в CI он обязателен (`PL_REQUIRE_TSHARK=1`).
+#[test]
+fn exported_dissector_agrees_with_apply_in_tshark() {
+    if !tshark_available() {
+        assert!(
+            std::env::var_os("PL_REQUIRE_TSHARK").is_none(),
+            "tshark обязателен (PL_REQUIRE_TSHARK), но не найден"
+        );
+        eprintln!("tshark не найден: сверка пропущена");
+        return;
+    }
+    let dir = temp("export-tshark");
+    let lua = dir.join("stand.lua");
+    let spec = repo("fixtures/stand/interpretation.yaml");
+    let out = run(&[
+        "export",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--name",
+        "stand",
+        "--out",
+        lua.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+
+    // Поля диссектора и то же поле в результате apply: (сообщение, поле).
+    let fields = [
+        ("set_param_req", "value"),
+        ("read_param_resp", "value"),
+        ("set_param_resp", "applied"),
+        ("measure_resp", "count"),
+        ("measure_req", "channel"),
+    ];
+    for name in ["main", "extra"] {
+        let capture = format!("fixtures/stand/{name}.pcapng");
+        let mut args = vec![
+            "-X".to_owned(),
+            format!("lua_script:{}", lua.display()),
+            "-r".to_owned(),
+            repo(&capture).to_str().unwrap().to_owned(),
+            "-Y".to_owned(),
+            "stand".to_owned(),
+            "-T".to_owned(),
+            "fields".to_owned(),
+            "-E".to_owned(),
+            "occurrence=a".to_owned(),
+            "-E".to_owned(),
+            "aggregator=,".to_owned(),
+            "-e".to_owned(),
+            "tcp.srcport".to_owned(),
+            "-e".to_owned(),
+            "stand.message".to_owned(),
+        ];
+        for (message, field) in fields {
+            args.push("-e".to_owned());
+            args.push(format!("stand.{message}.{field}"));
+        }
+        let shown = Command::new("tshark").args(&args).output().unwrap();
+        let (table, errors) = (text(&shown.stdout), text(&shown.stderr));
+        assert!(shown.status.success(), "tshark: {errors}");
+
+        // Сообщения по направлениям в порядке кадров и значения каждого поля.
+        let mut by_port = std::collections::BTreeMap::<String, Vec<String>>::new();
+        let mut values = vec![Vec::<String>::new(); fields.len()];
+        for line in table.lines() {
+            let cols: Vec<&str> = line.split('\t').collect();
+            let list = |i: usize| {
+                cols.get(i)
+                    .into_iter()
+                    .flat_map(|c| c.split(','))
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            by_port.entry(list(0).concat()).or_default().extend(list(1));
+            for (i, column) in values.iter_mut().enumerate() {
+                column.extend(list(i + 2));
+            }
+        }
+        let mut seen: Vec<Vec<String>> = by_port.into_values().collect();
+        seen.sort();
+        values.iter_mut().for_each(|v| v.sort());
+
+        let applied = apply(&capture, &[]);
+        let result: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+        let mut expected = Vec::new();
+        let mut expected_values = vec![Vec::<String>::new(); fields.len()];
+        for stream in result["inputs"][0]["streams"].as_array().unwrap() {
+            let mut ids = Vec::new();
+            for m in stream["messages"].as_array().unwrap() {
+                let id = m["messageId"].as_str().unwrap();
+                ids.push(id.to_owned());
+                for (i, (message, field)) in fields.iter().enumerate() {
+                    if id != *message {
+                        continue;
+                    }
+                    for f in m["fields"].as_array().unwrap() {
+                        if f["name"] == *field {
+                            expected_values[i].push(f["value"].to_string());
+                        }
+                    }
+                }
+            }
+            expected.push(ids);
+        }
+        expected.sort();
+        expected_values.iter_mut().for_each(|v| v.sort());
+
+        assert_eq!(seen, expected, "{name}: сообщения; tshark: {errors}");
+        for (i, (message, field)) in fields.iter().enumerate() {
+            assert!(!expected_values[i].is_empty(), "{name}: {message}.{field}");
+            assert_eq!(
+                values[i], expected_values[i],
+                "{name}: {message}.{field}; tshark: {errors}"
+            );
+        }
+    }
+}

@@ -116,6 +116,87 @@ pub trait Context {
     fn checksum(&self, algorithm: &Algorithm, from: i128, to: i128) -> Result<i128, ExprError>;
 }
 
+/// Как имена выражения называются в коде Lua.
+pub trait LuaNames {
+    fn name(&self, name: &str) -> Option<String>;
+}
+
+fn lua(node: &Node, names: &dyn LuaNames) -> Option<String> {
+    Some(match node {
+        Node::Int(v) => format!("({v})"),
+        Node::Bool(v) => v.to_string(),
+        Node::Str(text) => {
+            let escaped: String = text
+                .chars()
+                .map(|c| match c {
+                    '"' => "\\\"".to_owned(),
+                    '\\' => "\\\\".to_owned(),
+                    c if c.is_control() => " ".to_owned(),
+                    c => c.to_string(),
+                })
+                .collect();
+            format!("\"{escaped}\"")
+        }
+        Node::Name(name) => names.name(name)?,
+        Node::Not(inner) => format!("(not {})", lua(inner, names)?),
+        Node::Neg(inner) => format!("(-{})", lua(inner, names)?),
+        Node::Bin(op, left, right) => {
+            let (a, b) = (lua(left, names)?, lua(right, names)?);
+            match op {
+                Op::Or => format!("({a} or {b})"),
+                Op::And => format!("({a} and {b})"),
+                Op::Eq => format!("({a} == {b})"),
+                Op::Ne => format!("({a} ~= {b})"),
+                Op::Lt => format!("({a} < {b})"),
+                Op::Le => format!("({a} <= {b})"),
+                Op::Gt => format!("({a} > {b})"),
+                Op::Ge => format!("({a} >= {b})"),
+                Op::Add => format!("({a} + {b})"),
+                Op::Sub => format!("({a} - {b})"),
+                Op::Mul => format!("({a} * {b})"),
+                Op::Div => format!("math.floor({a} / {b})"),
+                Op::Rem => format!("({a} % {b})"),
+            }
+        }
+        // Функции над байтами сообщения в диссектор не переносятся.
+        Node::Call(..) => return None,
+    })
+}
+
+fn port_literals(node: &Node, out: &mut BTreeSet<u16>) {
+    match node {
+        Node::Bin(Op::Eq, left, right) => {
+            if let (Node::Name(name), Node::Int(port)) | (Node::Int(port), Node::Name(name)) =
+                (left.as_ref(), right.as_ref())
+                && (name == "src_port" || name == "dst_port")
+                && let Ok(port) = u16::try_from(*port)
+            {
+                out.insert(port);
+            }
+        }
+        Node::Bin(_, left, right) => {
+            port_literals(left, out);
+            port_literals(right, out);
+        }
+        Node::Not(inner) | Node::Neg(inner) => port_literals(inner, out),
+        _ => {}
+    }
+}
+
+impl Expr {
+    /// То же выражение на Lua; `None` — в нём есть то, чего в диссекторе нет (функции).
+    pub fn to_lua(&self, names: &dyn LuaNames) -> Option<String> {
+        lua(&self.root, names)
+    }
+
+    /// Порты, с которыми выражение сравнивает `src_port` и `dst_port`.
+    pub fn port_literals(&self) -> BTreeSet<u16> {
+        let mut out = BTreeSet::new();
+        port_literals(&self.root, &mut out);
+        out
+    }
+}
+
 // ---------------------------------------------------------------- разбор
 
 #[derive(Debug, Clone, PartialEq, Eq)]
