@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.28
+  version: 0.1.29
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -282,6 +282,58 @@ paths:
                 total: 1
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/compare:
+    post:
+      tags: [interpretation]
+      operationId: compareCaptures
+      summary: Сравнение поведения в двух наборах записей
+      description: |
+        Применяет одно описание к наборам записей `a` и `b` и показывает отличия: типы сообщений, которые есть
+        только в одном наборе; поля, у которых изменились значения (у перечислений до 16 значений — какие
+        появились и пропали, у остальных числовых — стал ли шире диапазон); время от запроса до ответа по типам
+        запросов (медиана и максимум, `ratioPermille` — отношение медиан). `summary` — главное словами, по строке
+        на отличие. Сценарии: до и после обновления прошивки, штатная работа и сбой, два экземпляра устройства.
+        `yaml` — несохранённый текст описания; без него берётся текущая ревизия.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompareRequest' }
+            example:
+              a: ['3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5']
+              b: ['7c11e02a9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5']
+      responses:
+        '200':
+          description: Отличия
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comparison' }
+              example:
+                a: { sources: 1, messages: 32, counts: { matched: 32 } }
+                b: { sources: 1, messages: 22, counts: { matched: 22 } }
+                types:
+                  - { messageId: set_param_req, a: 6, b: 5, change: same }
+                fields:
+                  - messageId: set_param_req
+                    field: value
+                    change: values
+                    a: { samples: 6, distinct: 3, min: 21, max: 1000 }
+                    b: { samples: 5, distinct: 3, min: -5, max: 123456 }
+                    newValues: ['-5', '123456', '70000']
+                    goneValues: ['1000', '21', '37']
+                timing:
+                  - { messageId: set_param_req, a: { pairs: 6, medianNs: 2000000, maxNs: 2400000 }, b: { pairs: 5, medianNs: 2100000, maxNs: 2500000 }, ratioPermille: 1050 }
+                summary: ['set_param_req.value: во втором наборе новые значения — -5, 123456, 70000']
+                incomplete: false
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2401,6 +2453,83 @@ components:
                     id: { type: string }
                     detail: { type: string }
                     status: { type: string }
+
+    CompareRequest:
+      type: object
+      required: [a, b]
+      additionalProperties: false
+      properties:
+        a: { type: array, minItems: 1, maxItems: 1000, items: { type: string }, description: 'sha256 записей первого набора' }
+        b: { type: array, minItems: 1, maxItems: 1000, items: { type: string }, description: 'sha256 записей второго набора' }
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+
+    CompareSide:
+      type: object
+      required: [sources, messages, counts]
+      properties:
+        sources: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        counts: { type: object, additionalProperties: { type: integer, minimum: 0 }, description: 'Сообщений по категориям' }
+
+    CompareValues:
+      type: object
+      required: [samples, distinct, min, max]
+      properties:
+        samples: { type: integer, minimum: 0 }
+        distinct: { type: integer, minimum: 0, maximum: 64, description: 'Разных значений; больше 64 не считается' }
+        min: { type: [integer, 'null'] }
+        max: { type: [integer, 'null'] }
+
+    CompareTiming:
+      type: object
+      required: [pairs, medianNs, maxNs]
+      properties:
+        pairs: { type: integer, minimum: 0 }
+        medianNs: { type: integer, minimum: 0 }
+        maxNs: { type: integer, minimum: 0 }
+
+    Comparison:
+      type: object
+      required: [a, b, types, fields, timing, summary, incomplete]
+      properties:
+        a: { $ref: '#/components/schemas/CompareSide' }
+        b: { $ref: '#/components/schemas/CompareSide' }
+        types:
+          type: array
+          items:
+            type: object
+            required: [messageId, a, b, change]
+            properties:
+              messageId: { type: [string, 'null'], description: 'null — тип не определён' }
+              a: { type: integer, minimum: 0 }
+              b: { type: integer, minimum: 0 }
+              change: { type: string, enum: [new, missing, same] }
+        fields:
+          type: array
+          description: Только поля с отличиями, до 100
+          items:
+            type: object
+            required: [messageId, field, change, a, b, newValues, goneValues]
+            properties:
+              messageId: { type: string }
+              field: { type: string }
+              change: { type: string, enum: [values, range] }
+              a: { $ref: '#/components/schemas/CompareValues' }
+              b: { $ref: '#/components/schemas/CompareValues' }
+              newValues: { type: array, items: { type: string }, description: 'Есть только во втором наборе, до 8' }
+              goneValues: { type: array, items: { type: string }, description: 'Есть только в первом наборе, до 8' }
+        timing:
+          type: array
+          items:
+            type: object
+            required: [messageId, a, b, ratioPermille]
+            properties:
+              messageId: { type: string, description: 'Тип запроса' }
+              a: { $ref: '#/components/schemas/CompareTiming' }
+              b: { $ref: '#/components/schemas/CompareTiming' }
+              ratioPermille: { type: integer, minimum: 0, description: 'Медиана второго набора к первому, в тысячных' }
+        summary: { type: array, items: { type: string }, description: 'Главное словами' }
+        incomplete: { type: boolean }
 
     CoverageRequest:
       type: object

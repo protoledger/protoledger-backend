@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod compare;
 mod coverage;
 mod draft;
 mod explain;
@@ -26,6 +27,10 @@ pub use analysis::{
     MAX_REQUEST_STREAMS, MessagePlace, MessageRef, TypeField, TypeGroupView, TypesRequest,
     TypesView, VariabilityRequest, connection_exchanges, framing_hints, message_checksums,
     message_correlations, message_fields, message_types, message_variability,
+};
+pub use compare::{
+    Comparison, FieldChange, FieldDiff, SideSummary, Timing, TimingDiff, TypeChange, TypeDiff,
+    ValueStats, compare,
 };
 pub use coverage::{
     COVERAGE_MAP_BYTES, Cover, CoverBytes, CoverRegion, Coverage, TypeCoverage, coverage,
