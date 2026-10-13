@@ -20,6 +20,7 @@ FUZZ_ITERATIONS=200000 cargo test -p pl-hostile --release mutated_real   # дл�
 | Не запись | `empty`, `text`, `png-as-pcap`, `pcap-header-cut` |
 | Контейнер pcap | `pcap-no-packets`, `pcap-last-record-cut`, `pcap-caplen-huge`, `pcap-caplen-over-snaplen`, `pcap-snaplen-zero`, `pcap-zero-length-frames`, `pcap-unknown-linktype`, `pcap-timestamps-wild` |
 | Контейнер pcapng | `pcapng-block-length-{zero,huge,unaligned}`, `pcapng-epb-without-idb`, `pcapng-unknown-linktype`, `pcapng-captured-len-lies`, `pcapng-trailing-garbage`, `pcapng-two-shb` |
+| Канальный уровень без Ethernet | `linktype-cooked-broken` (Linux cooked), `linktype-loopback-families`, `linktype-raw-not-ip`: обрезанные заголовки, чужой протокол, IPv6 — рядом с одним исправным кадром |
 | Заголовки IPv4/TCP/Ethernet | `ipv4-ihl-*`, `ipv4-total-length-*`, `ipv4-version-6-in-ipv4-frame`, `tcp-offset-*`, `tcp-all-flags`, `ethernet-runt`, `ethernet-truncated-ip` |
 | Поведение TCP | `tcp-seq-jump-1gib` (дыра как метаданные), `tcp-seq-jump-2gib` (ровно 2^31 — «старые» данные по RFC 9293, сегменты не учитываются), `tcp-seq-wrap`, `tcp-overlap-storm`, `tcp-many-connections`, `tcp-data-after-rst` |
 | Содержимое | `payload-hostile-strings`: HTML, JS, управляющие символы и RTL в потоке — везде показывать как текст |

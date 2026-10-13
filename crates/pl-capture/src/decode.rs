@@ -3,6 +3,20 @@ use std::net::Ipv4Addr;
 use crate::diag::DiagCode;
 
 pub const LINKTYPE_ETHERNET: i32 = 1;
+// Номера из реестра LINKTYPE_ библиотеки libpcap.
+/// Петлевой интерфейс BSD и macOS: 4 байта семейства адресов в порядке байтов машины записи.
+const LINKTYPE_NULL: i32 = 0;
+/// Кадр начинается с заголовка IP; 12 пишут некоторые старые программы вместо 101.
+const LINKTYPE_RAW: i32 = 101;
+const LINKTYPE_RAW_OLD: i32 = 12;
+/// Петлевой интерфейс OpenBSD: то же, семейство в сетевом порядке.
+const LINKTYPE_LOOP: i32 = 108;
+/// Linux «cooked»: так пишет `tcpdump -i any`. Заголовок 16 байт, тип протокола — в конце.
+const LINKTYPE_LINUX_SLL: i32 = 113;
+const LINKTYPE_IPV4: i32 = 228;
+const LINKTYPE_IPV6: i32 = 229;
+/// Linux «cooked» версии 2: заголовок 20 байт, тип протокола — в начале.
+const LINKTYPE_LINUX_SLL2: i32 = 276;
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_IPV6: u16 = 0x86DD;
 const VLAN_TAGS: [u16; 3] = [0x8100, 0x88A8, 0x9100];
@@ -127,25 +141,51 @@ pub fn decode(frame: &[u8], original_len: u32, linktype: Option<i32>) -> Decoded
         });
     };
 
-    match linktype {
+    // Канальный уровень даёт две вещи: тип вложенного протокола и место, где он начинается.
+    let mut macs = None;
+    let link = match linktype {
         None => {
             d.issues.push(DiagCode::BadBlock);
             return d;
         }
-        Some(LINKTYPE_ETHERNET) => {}
+        Some(LINKTYPE_ETHERNET) => {
+            macs = mac(frame, 0).zip(mac(frame, 6));
+            be16(frame, 12).map(|t| (t, 14))
+        }
+        Some(LINKTYPE_LINUX_SLL) => be16(frame, 14).map(|t| (t, 16)),
+        Some(LINKTYPE_LINUX_SLL2) => be16(frame, 0).map(|t| (t, 20)),
+        Some(LINKTYPE_NULL | LINKTYPE_LOOP) => frame.get(..4).map(|family| {
+            // Семейство адресов: 2 — IPv4 везде; у IPv6 номер зависит от системы.
+            let t = match family {
+                [2, 0, 0, 0] | [0, 0, 0, 2] => ETHERTYPE_IPV4,
+                [10 | 24 | 28 | 30, 0, 0, 0] | [0, 0, 0, 10 | 24 | 28 | 30] => ETHERTYPE_IPV6,
+                _ => 0,
+            };
+            (t, 4)
+        }),
+        Some(LINKTYPE_RAW | LINKTYPE_RAW_OLD | LINKTYPE_IPV4 | LINKTYPE_IPV6) => {
+            frame.first().map(|b| {
+                let t = match b >> 4 {
+                    4 => ETHERTYPE_IPV4,
+                    6 => ETHERTYPE_IPV6,
+                    _ => 0,
+                };
+                (t, 0)
+            })
+        }
         Some(_) => {
             d.issues.push(DiagCode::UnsupportedLinkType);
             return d;
         }
-    }
-
-    let (Some(dst), Some(src), Some(mut ether_type)) =
-        (mac(frame, 0), mac(frame, 6), be16(frame, 12))
-    else {
+    };
+    let Some((mut ether_type, mut l3)) = link else {
         short(&mut d, DiagCode::NonIp);
         return d;
     };
-    let mut l3 = 14;
+    if linktype == Some(LINKTYPE_ETHERNET) && macs.is_none() {
+        short(&mut d, DiagCode::NonIp);
+        return d;
+    }
     for _ in 0..MAX_VLAN_TAGS {
         if !VLAN_TAGS.contains(&ether_type) {
             break;
@@ -157,7 +197,7 @@ pub fn decode(frame: &[u8], original_len: u32, linktype: Option<i32>) -> Decoded
         ether_type = inner;
         l3 += 4;
     }
-    d.ethernet = Some(EthernetInfo {
+    d.ethernet = macs.map(|(dst, src)| EthernetInfo {
         dst,
         src,
         ether_type,
@@ -363,11 +403,105 @@ mod tests {
         assert_eq!(run(&f).issues, vec![DiagCode::BadIpHeader]);
     }
 
+    /// Тот же сегмент TCP под другим канальным уровнем: заголовок `head` вместо Ethernet.
+    fn relinked(head: &[u8], linktype: i32) -> Decoded {
+        let frame = tcp_frame(b"hello");
+        let mut f = head.to_vec();
+        f.extend_from_slice(&frame[14..]);
+        decode(&f, f.len() as u32, Some(linktype))
+    }
+
+    #[test]
+    fn linux_cooked_raw_ip_and_loopback_carry_the_same_tcp() {
+        let sll = [0, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0, 0x08, 0x00];
+        let sll2 = [
+            0x08, 0x00, 0, 0, 0, 0, 0, 2, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0,
+        ];
+        let cases: [(&[u8], i32); 8] = [
+            (&sll, LINKTYPE_LINUX_SLL),
+            (&sll2, LINKTYPE_LINUX_SLL2),
+            (&[2, 0, 0, 0], LINKTYPE_NULL),
+            (&[0, 0, 0, 2], LINKTYPE_NULL),
+            (&[0, 0, 0, 2], LINKTYPE_LOOP),
+            (&[], LINKTYPE_RAW),
+            (&[], LINKTYPE_RAW_OLD),
+            (&[], LINKTYPE_IPV4),
+        ];
+        for (head, linktype) in cases {
+            let d = relinked(head, linktype);
+            assert!(d.issues.is_empty(), "{linktype}: {:?}", d.issues);
+            assert_eq!(d.tcp.unwrap().checksum, Checksum::Ok, "{linktype}");
+            assert_eq!(
+                (d.payload_offset, d.payload_len),
+                (head.len() + 40, 5),
+                "{linktype}"
+            );
+            assert!(
+                d.ethernet.is_none(),
+                "{linktype}: адресов Ethernet в кадре нет"
+            );
+        }
+    }
+
+    #[test]
+    fn other_link_layers_report_what_they_cannot_carry() {
+        // Метка VLAN после заголовка Linux cooked.
+        let vlan = [
+            0, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0, 0x81, 0x00, 0x00, 0x0A, 0x08, 0x00,
+        ];
+        let d = relinked(&vlan, LINKTYPE_LINUX_SLL);
+        assert!(d.issues.is_empty(), "{:?}", d.issues);
+        assert_eq!(d.payload_offset, 20 + 40);
+
+        // IPv6 и не-IP называются своими именами, а не «канальный уровень не поддерживается».
+        let arp = [0, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0, 0x08, 0x06];
+        assert_eq!(
+            relinked(&arp, LINKTYPE_LINUX_SLL).issues,
+            vec![DiagCode::NonIp]
+        );
+        assert_eq!(
+            relinked(&[30, 0, 0, 0], LINKTYPE_NULL).issues,
+            vec![DiagCode::Ipv6Skipped]
+        );
+        assert_eq!(
+            decode(&[0x60, 0, 0, 0], 4, Some(LINKTYPE_RAW)).issues,
+            vec![DiagCode::Ipv6Skipped]
+        );
+        assert_eq!(
+            decode(&[0x60, 0, 0, 0], 4, Some(LINKTYPE_IPV6)).issues,
+            vec![DiagCode::Ipv6Skipped]
+        );
+        assert_eq!(
+            relinked(&[7, 7, 7, 7], LINKTYPE_NULL).issues,
+            vec![DiagCode::NonIp]
+        );
+
+        // Заголовок короче положенного: кадр не роняет разбор.
+        for linktype in [
+            LINKTYPE_LINUX_SLL,
+            LINKTYPE_LINUX_SLL2,
+            LINKTYPE_NULL,
+            LINKTYPE_RAW,
+        ] {
+            assert_eq!(
+                decode(&[], 0, Some(linktype)).issues,
+                vec![DiagCode::NonIp],
+                "{linktype}"
+            );
+            let d = decode(&[0x08], 60, Some(linktype));
+            assert!(d.tcp.is_none(), "{linktype}");
+            assert_eq!(d.issues.len(), 1, "{linktype}: {:?}", d.issues);
+        }
+        // Заголовок SLL2 есть, а данных за ним нет.
+        let d = decode(&[0x08, 0x00, 0, 0], 4, Some(LINKTYPE_LINUX_SLL2));
+        assert_eq!(d.issues, vec![DiagCode::BadIpHeader]);
+    }
+
     #[test]
     fn non_ethernet_and_broken_block() {
         let f = tcp_frame(b"x");
         assert_eq!(
-            decode(&f, 60, Some(113)).issues,
+            decode(&f, 60, Some(999)).issues,
             vec![DiagCode::UnsupportedLinkType]
         );
         assert_eq!(decode(&f, 60, None).issues, vec![DiagCode::BadBlock]);

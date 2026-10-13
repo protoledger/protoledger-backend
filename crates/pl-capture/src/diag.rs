@@ -62,7 +62,7 @@ impl DiagCode {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::UnsupportedLinkType => "Канальный уровень не Ethernet",
+            Self::UnsupportedLinkType => "Канальный уровень не поддерживается",
             Self::NonIp => "Кадр не IP (ARP и др.)",
             Self::Ipv6Skipped => "IPv6 не поддерживается",
             Self::NonTcp => "Не TCP (UDP, ICMP и др.)",
@@ -80,7 +80,7 @@ impl DiagCode {
     pub fn detail(self) -> &'static str {
         match self {
             Self::UnsupportedLinkType => {
-                "Поддерживается только Ethernet; кадры других интерфейсов пропущены."
+                "Поддерживаются Ethernet, Linux cooked (tcpdump -i any), raw IP и петлевой интерфейс; кадры других интерфейсов пропущены."
             }
             Self::NonIp => "Кадры без IPv4 пропущены: они не несут TCP-данных.",
             Self::Ipv6Skipped => "Обязательная область — IPv4; кадры IPv6 пропущены.",

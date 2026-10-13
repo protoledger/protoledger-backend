@@ -246,3 +246,86 @@ fn cancellation_stops_import() {
     index(&file, limits, &|| false, &mut |p| last = p).unwrap();
     assert_eq!(last, file.len() as u64);
 }
+
+/// Та же запись под другим канальным уровнем: заголовок Ethernet каждого кадра заменён на `head`,
+/// тип протокола пишется в него по смещению `protocol_at`. Без места для типа (raw IP, loopback)
+/// кадры не IPv4 в запись не попадают.
+fn relink(pcap: &[u8], linktype: u32, head: &[u8], protocol_at: Option<usize>) -> Vec<u8> {
+    let mut out = pcap[..20].to_vec();
+    out.extend_from_slice(&linktype.to_le_bytes());
+    let mut at = 24;
+    while at + 16 <= pcap.len() {
+        let field = |i: usize| u32::from_le_bytes(pcap[at + i..at + i + 4].try_into().unwrap());
+        let (captured, original) = (field(8) as usize, field(12) as usize);
+        let record = at;
+        let frame = &pcap[at + 16..at + 16 + captured];
+        at += 16 + captured;
+        let mut data = head.to_vec();
+        match protocol_at {
+            Some(i) => data[i..i + 2].copy_from_slice(&frame[12..14]),
+            None if frame[12..14] != [0x08, 0x00] => continue,
+            None => {}
+        }
+        data.extend_from_slice(&frame[14..]);
+        out.extend_from_slice(&pcap[record..record + 8]);
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&((original + data.len() - captured) as u32).to_le_bytes());
+        out.extend_from_slice(&data);
+    }
+    out
+}
+
+#[test]
+fn other_link_layers_give_the_same_segments() {
+    let ethernet = fixture("normal.pcap");
+    let base = run(&ethernet).unwrap();
+    assert!(base.segments.len() > 10);
+    let sll = [0u8, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0, 0, 0];
+    let mut sll2 = [0u8; 20];
+    sll2[9] = 1;
+    let variants = [
+        ("Linux cooked", relink(&ethernet, 113, &sll, Some(14))),
+        ("Linux cooked v2", relink(&ethernet, 276, &sll2, Some(0))),
+        ("raw IP", relink(&ethernet, 101, &[], None)),
+        ("loopback", relink(&ethernet, 0, &[2, 0, 0, 0], None)),
+    ];
+    for (name, file) in &variants {
+        let idx = run(file).unwrap();
+        assert_eq!(idx.segments.len(), base.segments.len(), "{name}");
+        for (a, b) in idx.segments.iter().zip(&base.segments) {
+            assert_eq!(
+                (
+                    a.src,
+                    a.dst,
+                    a.seq,
+                    a.ack,
+                    a.flags,
+                    a.payload_len,
+                    a.checksum
+                ),
+                (
+                    b.src,
+                    b.dst,
+                    b.seq,
+                    b.ack,
+                    b.flags,
+                    b.payload_len,
+                    b.checksum
+                ),
+                "{name}"
+            );
+            assert_eq!(
+                payload_bytes(file, a),
+                payload_bytes(&ethernet, b),
+                "{name}: данные сегмента"
+            );
+        }
+        assert!(
+            idx.diagnostics
+                .groups
+                .keys()
+                .all(|c| *c != DiagCode::UnsupportedLinkType),
+            "{name}"
+        );
+    }
+}
