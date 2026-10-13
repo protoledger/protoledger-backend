@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.26
+  version: 0.1.27
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -282,6 +282,59 @@ paths:
                 total: 1
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/coverage:
+    post:
+      tags: [interpretation]
+      operationId: getCoverage
+      summary: Карта покрытия — что в сообщениях описано, а что ещё нет
+      description: |
+        Применяет описание к записям проекта и для каждого типа сообщений считает байты: описанные полем со
+        статусом «правило» (`rule`), полем-гипотезой (`hypothesis`), объявленные неизвестными (`unknown`) и не
+        описанные вовсе (`none`). `regions` — карта первых 256 байт сообщения: подряд идущие смещения с одним
+        описанием, имя поля, гипотеза и доля сообщений, где эти байты описаны именно так (сообщения одного типа
+        бывают разной длины). При наложении полей (битовые поля одного байта) байт считается один раз, по самому
+        твёрдому описанию. `messageId: null` — сообщения, тип которых не определён. `describedPermille` — доля
+        байтов под правилом или гипотезой: честная граница знания о протоколе. `yaml` — несохранённый текст
+        описания; `sources` — только эти записи.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CoverageRequest' }
+            example: {}
+      responses:
+        '200':
+          description: Карта покрытия
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Coverage' }
+              example:
+                sources: 1
+                messages: 32
+                bytes: { total: 420, rule: 96, hypothesis: 250, unknown: 40, none: 34 }
+                describedPermille: 823
+                types:
+                  - messageId: set_param_req
+                    messages: 6
+                    minLen: 12
+                    maxLen: 12
+                    bytes: { total: 72, rule: 30, hypothesis: 36, unknown: 0, none: 6 }
+                    hypotheses: [H1, H2]
+                    regions:
+                      - { start: 0, end: 2, status: rule, field: magic, sharePermille: 1000 }
+                      - { start: 7, end: 11, status: hypothesis, field: value, hypothesis: H2, sharePermille: 1000 }
+                      - { start: 11, end: 12, status: none, sharePermille: 1000 }
+                    mapTruncated: false
+                incomplete: false
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2199,6 +2252,58 @@ components:
         или ожидание; `incomplete` — задевает дыру или обрывается в конце потока; `ambiguous` — задевает
         неоднозначный участок; `unmatched` — ни одно описание не подошло; `limit_exceeded` — ограничение
         реализации (заявленная длина больше предела).
+
+    CoverageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+        sources: { type: array, maxItems: 1000, items: { type: string }, description: 'sha256 записей; по умолчанию все записи проекта' }
+
+    CoverageBytes:
+      type: object
+      required: [total, rule, hypothesis, unknown, none]
+      properties:
+        total: { type: integer, minimum: 0 }
+        rule: { type: integer, minimum: 0 }
+        hypothesis: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0, description: 'Зоны, объявленные неизвестными' }
+        none: { type: integer, minimum: 0, description: 'Байты без описания' }
+
+    CoverageType:
+      type: object
+      required: [messageId, messages, minLen, maxLen, bytes, hypotheses, regions, mapTruncated]
+      properties:
+        messageId: { type: [string, 'null'], description: 'null — тип сообщения не определён' }
+        messages: { type: integer, minimum: 0 }
+        minLen: { type: integer, minimum: 0 }
+        maxLen: { type: integer, minimum: 0 }
+        bytes: { $ref: '#/components/schemas/CoverageBytes' }
+        hypotheses: { type: array, items: { type: string } }
+        regions:
+          type: array
+          items:
+            type: object
+            required: [start, end, status, sharePermille]
+            properties:
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              status: { type: string, enum: [rule, hypothesis, unknown, none] }
+              field: { type: string }
+              hypothesis: { type: string }
+              sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        mapTruncated: { type: boolean, description: 'Сообщения длиннее 256 байт или областей больше 128' }
+
+    Coverage:
+      type: object
+      required: [sources, messages, bytes, describedPermille, types, incomplete]
+      properties:
+        sources: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        bytes: { $ref: '#/components/schemas/CoverageBytes' }
+        describedPermille: { type: integer, minimum: 0, maximum: 1000 }
+        types: { type: array, items: { $ref: '#/components/schemas/CoverageType' } }
+        incomplete: { type: boolean, description: 'Разбор прерван по времени: посчитана часть записей' }
 
     FixHintsRequest:
       type: object

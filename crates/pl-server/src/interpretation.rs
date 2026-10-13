@@ -28,6 +28,7 @@ pub fn routes() -> Router<AppState> {
         .route("/interpretation/preview", post(preview))
         .route("/interpretation/field-hints", post(field_hints))
         .route("/interpretation/fix-hints", post(fix_hints))
+        .route("/interpretation/coverage", post(coverage))
 }
 
 fn schema_problem(e: SchemaError) -> ApiError {
@@ -353,6 +354,68 @@ async fn preview(
     .await
     .map_err(|_| blocking_failed())??;
     Ok(Json(page))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CoverageRequest {
+    /// Несохранённый текст описания; без него берётся текущая ревизия.
+    yaml: Option<String>,
+    /// Записи (sha256); без значения — все записи проекта.
+    sources: Option<Vec<String>>,
+}
+
+/// Карта покрытия: какие байты сообщений каждого типа описаны и насколько твёрдо.
+async fn coverage(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<CoverageRequest>,
+) -> Result<Json<pl_app::Coverage>, ApiError> {
+    let map = tokio::task::spawn_blocking(move || -> Result<pl_app::Coverage, ApiError> {
+        let yaml = match request.yaml {
+            Some(yaml) => yaml,
+            None => {
+                let guard = state.session.read();
+                let project = guard
+                    .as_ref()
+                    .ok_or_else(|| ApiError(Session::no_project()))?;
+                project
+                    .current_interpretation()
+                    .map_err(|e| ApiError(e.into()))?
+                    .ok_or_else(|| {
+                        ApiError::new(
+                            ProblemKind::NotFound,
+                            "Интерпретация ещё не сохранена: передайте yaml в запросе.",
+                        )
+                    })?
+                    .1
+            }
+        };
+        if state.session.read().is_none() {
+            return Err(ApiError(Session::no_project()));
+        }
+        let it = Interpretation::parse(&yaml).map_err(schema_problem)?;
+        let mut sources = pl_app::all_sources(&state.sources);
+        if let Some(wanted) = &request.sources {
+            if let Some(missing) = wanted
+                .iter()
+                .find(|sha| !sources.iter().any(|s| &s.sha256 == *sha))
+            {
+                return Err(ApiError::new(
+                    ProblemKind::NotFound,
+                    format!("Записи {missing} нет в проекте."),
+                ));
+            }
+            sources.retain(|s| wanted.contains(&s.sha256));
+        }
+        let started = std::time::Instant::now();
+        pl_app::coverage(&sources, &it, &|| {
+            started.elapsed() > std::time::Duration::from_secs(20)
+        })
+        .map_err(ApiError)
+    })
+    .await
+    .map_err(|_| blocking_failed())??;
+    Ok(Json(map))
 }
 
 #[derive(Deserialize)]

@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod coverage;
 mod draft;
 mod field_hints;
 mod fix_hints;
@@ -24,6 +25,9 @@ pub use analysis::{
     MAX_REQUEST_STREAMS, MessagePlace, MessageRef, TypeField, TypeGroupView, TypesRequest,
     TypesView, VariabilityRequest, connection_exchanges, framing_hints, message_checksums,
     message_correlations, message_fields, message_types, message_variability,
+};
+pub use coverage::{
+    COVERAGE_MAP_BYTES, Cover, CoverBytes, CoverRegion, Coverage, TypeCoverage, coverage,
 };
 pub use draft::{DraftRequest, DraftStep, DraftSummary, DraftView, draft_interpretation};
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
