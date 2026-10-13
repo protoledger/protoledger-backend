@@ -359,6 +359,13 @@ pub fn message_checksums(
     checksums_on(&it, store, request, cancelled)
 }
 
+/// Сколько сообщений можно взять из очередного потока: остаток предела делится поровну между
+/// оставшимися потоками. Иначе длинный первый поток забирает весь предел, и подсказка судит
+/// об обмене по одной его стороне.
+fn stream_limit(room: usize, taken: usize, streams_left: usize) -> usize {
+    taken + room.saturating_sub(taken).div_ceil(streams_left.max(1))
+}
+
 /// То же на заданном описании: оно может быть ещё не сохранено в проекте.
 pub(crate) fn checksums_on(
     it: &Interpretation,
@@ -375,7 +382,9 @@ pub(crate) fn checksums_on(
     let mut places: Vec<(&str, u64, u64)> = Vec::new();
     // Запас сверх предела поиска нужен только для признака «не всё вошло».
     let room = pl_analysis::MAX_CHECKSUM_MESSAGES + 1;
-    for id in &request.streams {
+    let mut skipped = false;
+    for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, messages.len(), request.streams.len() - number);
         let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
         let (Some(connection), Some(stream)) = (
             data.connections.get(conn),
@@ -387,7 +396,8 @@ pub(crate) fn checksums_on(
         let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
-            if messages.len() >= room {
+            if messages.len() >= limit {
+                skipped = true;
                 break;
             }
             if let Some(want) = &request.message_id
@@ -458,7 +468,7 @@ pub(crate) fn checksums_on(
         .collect();
     Ok(ChecksumView {
         messages: found.messages,
-        truncated: found.truncated,
+        truncated: found.truncated || skipped,
         skipped_long: found.skipped_long,
         incomplete: found.incomplete,
         hints,
@@ -557,7 +567,9 @@ pub(crate) fn types_on(
     // Порт принимающей стороны: если он один на все потоки, сторону можно записать условием на порт.
     let mut ports: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
     let room = pl_analysis::MAX_TYPE_MESSAGES + 1;
+    let mut skipped = false;
     for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, messages.len(), request.streams.len() - number);
         let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
         let (Some(connection), Some(stream)) = (
             data.connections.get(conn),
@@ -574,7 +586,8 @@ pub(crate) fn types_on(
         let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
-            if messages.len() >= room {
+            if messages.len() >= limit {
+                skipped = true;
                 break;
             }
             // Оборванное сообщение короче настоящего и исказило бы длины типа.
@@ -668,7 +681,7 @@ pub(crate) fn types_on(
         .collect();
     Ok(TypesView {
         messages: found.messages,
-        truncated: found.truncated,
+        truncated: found.truncated || skipped,
         incomplete: found.incomplete,
         fields: found
             .keys
@@ -816,7 +829,9 @@ pub(crate) fn fields_on(
     }
     let mut rows: Vec<Row<'_>> = Vec::new();
     let room = pl_analysis::MAX_FIELD_MESSAGES + 1;
+    let mut skipped = false;
     for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, rows.len(), request.streams.len() - number);
         let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
         let (Some(connection), Some(stream)) = (
             data.connections.get(conn),
@@ -829,7 +844,8 @@ pub(crate) fn fields_on(
         let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
-            if rows.len() >= room {
+            if rows.len() >= limit {
+                skipped = true;
                 break;
             }
             // Оборванное сообщение нарушило бы и счётчик, и длины строк.
@@ -919,7 +935,7 @@ pub(crate) fn fields_on(
     }
     Ok(FieldsView {
         messages: found.messages,
-        truncated: found.truncated,
+        truncated: found.truncated || skipped,
         incomplete,
         hints,
     })
@@ -1207,4 +1223,23 @@ pub(crate) fn correlations_on(
         }
     }
     Ok(correlate(&samples))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_limit;
+
+    #[test]
+    fn the_message_budget_is_shared_between_streams() {
+        // Два длинных потока: каждому половина предела, а не всё первому.
+        let first = stream_limit(20_001, 0, 2);
+        assert_eq!(first, 10_001);
+        assert_eq!(stream_limit(20_001, first, 1), 20_001);
+        // Короткий поток не занял свою долю — остаток достаётся следующим.
+        let after_short = 100;
+        assert_eq!(stream_limit(20_001, after_short, 1), 20_001);
+        // Один поток получает весь предел; исчерпанный предел не растёт.
+        assert_eq!(stream_limit(20_001, 0, 1), 20_001);
+        assert_eq!(stream_limit(20_001, 20_001, 3), 20_001);
+    }
 }
