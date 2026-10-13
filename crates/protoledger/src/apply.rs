@@ -17,7 +17,7 @@ pub struct ApplyArgs {
     /// Файл интерпретации (YAML, protoledger/interpretation@1)
     #[arg(long)]
     pub interpretation: PathBuf,
-    /// Записи PCAP/PCAPNG; можно указать несколько раз
+    /// Запись PCAP/PCAPNG или каталог с записями; можно указать несколько раз
     #[arg(long = "input", required = true)]
     pub inputs: Vec<PathBuf>,
     /// Журнал действий (CSV); нужен для тестов гипотез из интерпретации
@@ -252,7 +252,8 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         .map_err(|e| format!("{}: {e}", args.interpretation.display()))?;
 
     let mut sources: Vec<Arc<SourceData>> = Vec::new();
-    for path in &args.inputs {
+    let files = crate::common::capture_files(&args.inputs)?;
+    for path in &files {
         let bytes = pl_app::read_capture_file(path).map_err(|p| fail(path, &p))?;
         let name = path
             .file_name()
@@ -272,6 +273,7 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         let applied =
             pl_app::apply_to_source(&interpretation, data, &|| false).map_err(|e| e.to_string())?;
         let mut streams = Vec::new();
+        let (mut messages, mut matched) = (0u64, 0u64);
         // Поиск соединения по номеру: перебор на каждый поток — квадрат на записи со 100 тыс. соединений.
         let by_number: std::collections::HashMap<_, _> =
             data.connections.iter().map(|c| (c.number, c)).collect();
@@ -287,6 +289,13 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
             summary.streams += 1;
             summary.out_of_scope_streams += u64::from(a.result.out_of_scope);
             summary.messages += a.result.messages.len() as u64;
+            messages += a.result.messages.len() as u64;
+            matched += a
+                .result
+                .counts()
+                .get(&Category::Matched)
+                .copied()
+                .unwrap_or(0);
             summary.unknown_bytes += a.result.unknown_bytes();
             for (category, n) in a.result.counts() {
                 *summary.counts.entry(category).or_default() += n;
@@ -298,6 +307,15 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
                 unknown_bytes: a.result.unknown_bytes(),
                 messages: a.result.messages.iter().map(message_view).collect(),
             });
+        }
+        // Записей несколько — по строке на каждую, чтобы было видно, какая выбивается.
+        if sources.len() > 1 {
+            eprintln!(
+                "{}: потоков {}, сообщений {messages} (совпало {matched}, не совпало {})",
+                data.name,
+                streams.len(),
+                messages - matched
+            );
         }
         inputs.push(InputView {
             name: data.name.clone(),

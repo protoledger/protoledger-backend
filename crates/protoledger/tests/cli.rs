@@ -897,6 +897,38 @@ fn exported_dissector_agrees_with_apply_in_tshark() {
 }
 
 #[test]
+fn apply_takes_a_directory_of_recordings() {
+    let dir = repo("fixtures/stand");
+    let whole = apply("fixtures/stand", &[]);
+    let err = text(&whole.stderr);
+    assert_eq!(whole.status.code(), Some(0), "{err}");
+    // По строке на запись и общий итог.
+    assert!(err.contains("extra.pcapng: потоков 2"), "{err}");
+    assert!(err.contains("main.pcapng: потоков 2"), "{err}");
+    assert!(err.contains("Применено: потоков 4"), "{err}");
+
+    // То же, что перечислить записи по одной, в порядке имён.
+    let (extra, main) = (dir.join("extra.pcapng"), dir.join("main.pcapng"));
+    let listed = apply(
+        "fixtures/stand/extra.pcapng",
+        &["--input", main.to_str().unwrap()],
+    );
+    assert_eq!(text(&whole.stdout), text(&listed.stdout));
+    assert!(extra.exists());
+
+    let empty = temp("no-captures");
+    let none = run(&[
+        "apply",
+        "--interpretation",
+        repo("fixtures/stand/interpretation.yaml").to_str().unwrap(),
+        "--input",
+        empty.to_str().unwrap(),
+    ]);
+    assert_eq!(none.status.code(), Some(2));
+    assert!(text(&none.stderr).contains("не найдено"));
+}
+
+#[test]
 fn apply_says_when_streams_are_outside_the_scope() {
     let dir = temp("out-of-scope");
     let spec = dir.join("other-port.yaml");
