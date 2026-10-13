@@ -622,3 +622,61 @@ fn correlations_find_a_flag_inside_a_byte_only_with_enough_examples() {
             .all(|h| h.mask.is_none())
     );
 }
+
+/// Пакет «тип | оставшаяся длина varint | тело».
+fn framed_varint(body: &[u8]) -> Vec<u8> {
+    let mut m = vec![0x30];
+    let mut rest = body.len();
+    loop {
+        let byte = (rest & 0x7f) as u8;
+        rest >>= 7;
+        m.push(if rest > 0 { byte | 0x80 } else { byte });
+        if rest == 0 {
+            break;
+        }
+    }
+    m.extend_from_slice(body);
+    m
+}
+
+#[test]
+fn finds_a_variable_size_length_when_messages_outgrow_one_byte() {
+    // Тела до 300 байт: у части сообщений поле длины занимает два байта.
+    let mut rng = Lcg(77);
+    let mut data = Vec::new();
+    let mut starts = Vec::new();
+    for i in 0..40 {
+        let len = if i % 5 == 4 { 130 + i * 4 } else { 3 + i % 40 };
+        starts.push(data.len());
+        data.extend(framed_varint(&payload(&mut rng, len)));
+    }
+    let sample = StreamSample {
+        id: "v".to_owned(),
+        runs: vec![DataRun {
+            data,
+            segment_starts: starts,
+            starts_at_boundary: true,
+        }],
+    };
+    let hints = find_framing(&[sample], &never);
+    let top = hints.length.first().unwrap();
+    assert_eq!(
+        (top.at, top.width, top.adjust),
+        (1, 0, 0),
+        "{:?}",
+        hints.length
+    );
+    assert_eq!((top.messages, top.score_permille), (40, 1000));
+    assert!(top.first_counterexample.is_none());
+    let json = serde_json::to_value(&top.framing).unwrap();
+    assert_eq!(json["length"]["type"], "varint");
+}
+
+#[test]
+fn short_messages_keep_the_plain_byte_first_and_varint_as_an_equivalent() {
+    // Все сообщения короче 128 байт: однобайтовое поле и поле переменного размера неразличимы.
+    let hints = find_framing(&[stream("s", 40, 5, framed_varint)], &never);
+    let top = hints.length.first().unwrap();
+    assert_eq!((top.at, top.width, top.adjust), (1, 1, 2));
+    assert!(top.equivalent.iter().any(|f| f.at == 1 && f.ty == "varint"));
+}

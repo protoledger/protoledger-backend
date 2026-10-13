@@ -334,7 +334,7 @@ pub fn draft_interpretation(
         .map_err(|e| Problem::new(ProblemKind::Internal, format!("Фрейминг не собран: {e}.")))?;
     let length_at = u64::from(length.at);
     let length_ty = length.framing.length.as_ref().map_or("u8", |l| l.ty);
-    let length_size = u64::from(length.width);
+    let length_size = u64::from(length.width).max(1);
     // Сигнатура — постоянное начало всех сообщений, но не дальше поля длины.
     let signature = hints
         .signatures
@@ -348,19 +348,25 @@ pub fn draft_interpretation(
     if length.at > 0 {
         framing.sync.clone_from(&signature);
     }
+    // Как из значения поля получается размер сообщения.
+    let rule = if length_ty == "varint" {
+        "длина переменного размера, считается от конца самого поля".to_owned()
+    } else {
+        format!("размер сообщения = значение + {}", length.adjust)
+    };
     step(
         "Границы сообщений",
         format!(
-            "Поле длины {length_ty} по смещению {}: размер сообщения = значение + {}. Сообщений: {}, покрыто байтов: {} из {}, {}.{}",
+            "Поле длины {length_ty} по смещению {}: {rule}. Сообщений: {}, покрыто байтов: {} из {}, {}.{}",
             length.at,
-            length.adjust,
             length.messages,
             length.covered_bytes,
             length.total_bytes,
-            if length.first_counterexample.is_some() {
-                "есть контрпример"
-            } else {
-                "контрпримеров нет"
+            match (&length.first_counterexample, length.score_permille) {
+                (None, _) => "контрпримеров нет",
+                // Разбор прошёл весь поток; отмечено только сообщение, начало которого не похоже на остальные.
+                (Some(_), 1000) => "разбор покрывает все байты",
+                (Some(_), _) => "есть контрпример",
             },
             signature
                 .as_ref()
@@ -374,8 +380,8 @@ pub fn draft_interpretation(
         "length",
         || {
             format!(
-                "length — длина: размер сообщения = значение + {}; найдено по {} сообщениям",
-                length.adjust, length.messages
+                "length — длина: {rule}; найдено по {} сообщениям",
+                length.messages
             )
         },
         None,
