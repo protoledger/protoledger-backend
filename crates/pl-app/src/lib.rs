@@ -4,6 +4,7 @@ mod actions;
 mod analysis;
 mod compare;
 mod coverage;
+mod devices;
 mod draft;
 mod explain;
 mod field_hints;
@@ -39,6 +40,7 @@ pub use compare::{
 pub use coverage::{
     COVERAGE_MAP_BYTES, Cover, CoverBytes, CoverRegion, Coverage, TypeCoverage, coverage,
 };
+pub use devices::{ConnectionRole, DeviceConnection, DeviceConnections, device_connections};
 pub use draft::{DraftRequest, DraftStep, DraftSummary, DraftView, draft_interpretation};
 pub use explain::{
     ByteExplanation, ByteField, ByteFrame, ByteHypothesis, ByteKind, ByteMessage, ByteObservation,

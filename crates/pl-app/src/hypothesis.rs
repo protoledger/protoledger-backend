@@ -23,7 +23,7 @@ const MAX_ISSUES: usize = 20;
 /// Окно между действием и первым кадром сообщения: часы клиента и запись могут расходиться.
 pub const DEFAULT_WINDOW_MS: u64 = 2_000;
 /// Допуск на случай, когда кадр записан чуть раньше момента, который отметил клиент.
-const TOLERANCE_NS: u64 = 50_000_000;
+pub(crate) const TOLERANCE_NS: u64 = 50_000_000;
 const SUFFIX: [&str; 2] = ["ab", "ba"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -26,6 +26,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/framing", post(framing))
         .route("/analysis/variability", post(variability))
         .route("/analysis/correlations", post(correlations))
+        .route("/analysis/device-connections", post(device_connections))
         .route("/analysis/checksums", post(checksums))
         .route("/analysis/types", post(types))
         .route("/analysis/fields", post(fields))
@@ -375,4 +376,35 @@ async fn correlations(
     })
     .await?;
     Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeviceRequest {
+    window_ms: Option<u64>,
+}
+
+/// Окно, в которое после действия должны пойти данные устройства.
+const MAX_WINDOW_MS: u64 = 60_000;
+
+async fn device_connections(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<DeviceRequest>,
+) -> Result<Json<pl_app::DeviceConnections>, ApiError> {
+    let window_ms = request.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS);
+    if window_ms == 0 || window_ms > MAX_WINDOW_MS {
+        return Err(ApiError::new(
+            ProblemKind::BadRequest,
+            format!("windowMs — от 1 до {MAX_WINDOW_MS} мс."),
+        ));
+    }
+    let found = blocking(move || {
+        pl_app::device_connections(
+            &pl_app::all_sources(&state.sources),
+            &state.actions.list(),
+            window_ms,
+        )
+    })
+    .await?;
+    Ok(Json(found))
 }
