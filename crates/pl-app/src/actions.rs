@@ -52,6 +52,13 @@ impl ActionLogStore {
             .clear();
     }
 
+    /// Хранилище с готовыми журналами — для командной строки, где проекта нет.
+    pub fn from_logs(logs: Vec<Arc<LoadedLog>>) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(logs)),
+        }
+    }
+
     fn push(&self, log: Arc<LoadedLog>) {
         self.inner
             .write()

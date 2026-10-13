@@ -28,6 +28,23 @@ protoledger apply --interpretation spec.yaml --input new.pcapng [--input second.
 
 Эталонные результаты на записях стенда лежат в `fixtures/stand/expected/`; тест сверяет с ними вывод `apply` (`BLESS=1 cargo test -p protoledger --test cli` обновляет после проверки глазами).
 
+## draft — черновик описания по записям
+
+```bash
+protoledger draft --input first.pcap [--input second.pcapng …]   [--action-log log.csv --mapping mapping.yaml] [--overlap first|last|flag] [--checksum ignore|warn|drop]   [--out description.yaml]
+```
+
+Проект не нужен. Команда проходит шаги исследования сама и печатает текст описания: границы сообщений (поле длины, в том числе переменного размера, и сигнатура начала), типы сообщений с условиями `when`, номер сообщения, строки с длиной, контрольную сумму с проверкой, а с журналом действий — поля, равные параметрам и результатам действий, как гипотезы с тестами. Каждое поле в черновике — гипотеза с основанием: это отправная точка для исследователя, а не готовый вывод.
+
+Описание идёт в стандартный вывод или в `--out`, ход сборки — в stderr, по строке на шаг: что найдено и на чём основано. В анализ входят первые 64 направленных потока записей. Код 2 — границы сообщений не найдены или запись не читается.
+
+Черновик сразу годится для `apply` — например, чтобы проверить его на записи, которой при сборке не было:
+
+```bash
+protoledger draft --input research.pcap --action-log log.csv --mapping mapping.yaml --out description.yaml
+protoledger apply --interpretation description.yaml --input new.pcapng --strict
+```
+
 ## verify — перепроверка проекта
 
 ```bash
