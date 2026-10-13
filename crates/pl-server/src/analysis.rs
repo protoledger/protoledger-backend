@@ -348,6 +348,8 @@ struct CorrelationsBody {
     log_id: Option<String>,
     #[serde(default)]
     window_ms: Option<u64>,
+    #[serde(default)]
+    action: Option<String>,
 }
 
 async fn correlations(
@@ -366,6 +368,7 @@ async fn correlations(
                 message_id: body.message_id,
                 log_id: body.log_id,
                 window_ms: body.window_ms,
+                action: body.action,
             },
             &|| started.elapsed() > SEARCH_TIMEOUT,
         )

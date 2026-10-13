@@ -1098,6 +1098,9 @@ pub struct CorrelationRequest {
     /// Журнал действий; без значения — все журналы проекта.
     pub log_id: Option<String>,
     pub window_ms: Option<u64>,
+    /// Только сообщения, которым досталось действие с таким именем. Пока описания нет и типы
+    /// сообщений не названы, это единственный способ не смешать связи разных действий.
+    pub action: Option<String>,
 }
 
 /// Связи байтов сообщений с параметрами и именем действий из журнала.
@@ -1187,6 +1190,13 @@ pub(crate) fn correlations_on(
                 .message_id
                 .as_ref()
                 .is_some_and(|want| m.message_id.as_ref() != Some(want))
+            {
+                continue;
+            }
+            if request
+                .action
+                .as_ref()
+                .is_some_and(|want| action.is_none_or(|a| a.action != *want))
             {
                 continue;
             }
