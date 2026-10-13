@@ -4,7 +4,7 @@
 
 use pl_core::Problem;
 use pl_interp::Interpretation;
-use pl_interp::schema::fixed_size;
+use pl_interp::schema::{MessageDef, fixed_size};
 use serde::Serialize;
 
 use crate::analysis::{CorrelationRequest, MAX_REQUEST_STREAMS, correlations_on};
@@ -71,6 +71,38 @@ pub struct Suggestion {
 pub struct Suggestions {
     pub items: Vec<Suggestion>,
     pub truncated: bool,
+}
+
+/// Имя поля описания ровно на этих байтах: обычного или элемента повторяющейся группы —
+/// «группа.N.поле», как оно называется в выражениях тестов.
+fn described_field(message: &MessageDef, at: u32, size: u32, mask: Option<u64>) -> Option<String> {
+    let fits = |f: &pl_interp::schema::FieldDef, offset: u64| {
+        f.at.abs().map(u64::from) == Some(offset)
+            && fixed_size(f) == Some(u64::from(size))
+            && f.mask == mask
+    };
+    for f in &message.fields {
+        let Some(group) = &f.repeat else {
+            if fits(f, u64::from(at)) {
+                return Some(f.name.clone());
+            }
+            continue;
+        };
+        let (Some(start), Some(item)) = (f.at.abs().map(u64::from), group.item_size()) else {
+            continue;
+        };
+        if item == 0 || u64::from(at) < start {
+            continue;
+        }
+        let (number, inside) = (
+            (u64::from(at) - start) / item,
+            (u64::from(at) - start) % item,
+        );
+        if let Some(child) = group.fields.iter().find(|c| fits(c, inside)) {
+            return Some(format!("{}.{number}.{}", f.name, child.name));
+        }
+    }
+    None
 }
 
 fn safe_name(param: &str) -> String {
@@ -195,17 +227,10 @@ pub fn research_suggestions(
                 }
             }
             let described = readings.iter().find_map(|(at, ty, size)| {
-                message
-                    .fields
-                    .iter()
-                    .find(|f| {
-                        f.at.abs() == Some(*at)
-                            && fixed_size(f) == Some(u64::from(*size))
-                            && f.mask == v.mask
-                    })
-                    .map(|f| (f, *at, ty.clone(), *size))
+                described_field(message, *at, *size, v.mask)
+                    .map(|name| (name, *at, ty.clone(), *size))
             });
-            let existing = described.as_ref().map(|(f, ..)| *f);
+            let existing = described.as_ref().map(|(name, ..)| name.clone());
             let (at, ty, size) = match &described {
                 Some((_, at, ty, size)) => (*at, ty.clone(), *size),
                 None if v.mask.is_none() => {
@@ -215,7 +240,7 @@ pub fn research_suggestions(
                 }
                 None => (v.at, v.ty.to_owned(), v.size),
             };
-            let name = existing.map_or_else(|| safe_name(&v.param), |f| f.name.clone());
+            let name = existing.clone().unwrap_or_else(|| safe_name(&v.param));
             let float = ty.starts_with('f');
             let test = if float {
                 format!("dec({name}, 3) == dec(action.{}, 3)", v.param)
@@ -256,7 +281,6 @@ pub fn research_suggestions(
                     ),
                     test,
                 },
-                field: existing.map(|f| f.name.clone()),
                 new_field: existing.is_none().then(|| FieldDraft {
                     name,
                     at,
@@ -264,8 +288,50 @@ pub fn research_suggestions(
                     ty,
                     mask: v.mask,
                 }),
+                field: existing,
             });
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::described_field;
+    use pl_interp::Interpretation;
+
+    const GROUPS: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u16be, adjust: 2 }, status: rule }
+messages:
+  - id: batch
+    fields:
+      - { name: length, at: 0, type: u16be, status: rule }
+      - { name: count, at: 3, type: u8, status: rule }
+      - name: items
+        at: 4
+        type: bytes
+        status: rule
+        repeat:
+          count: "count"
+          fields:
+            - { name: time, at: 0, type: u32be, status: rule }
+            - { name: value, at: 4, type: i16be, status: rule }
+            - { name: flag, at: 6, type: u8, status: rule }
+"#;
+
+    #[test]
+    fn bytes_inside_a_repeat_group_are_named_as_in_test_expressions() {
+        let it = Interpretation::parse(GROUPS).unwrap();
+        let message = it.messages.first().unwrap();
+        let name = |at, size| described_field(message, at, size, None);
+        assert_eq!(name(3, 1).as_deref(), Some("count"));
+        // Элемент — 7 байт: второй начинается с 11, его значение — со смещения 15.
+        assert_eq!(name(4, 4).as_deref(), Some("items.0.time"));
+        assert_eq!(name(15, 2).as_deref(), Some("items.1.value"));
+        assert_eq!(name(24, 1).as_deref(), Some("items.2.flag"));
+        // Другой размер или место между полями — не поле описания.
+        assert_eq!(name(15, 4), None);
+        assert_eq!(name(2, 1), None);
+    }
 }
