@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.27
+  version: 0.1.28
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1319,6 +1319,60 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/NoProject' }
 
+  /api/streams/{stream}/explain:
+    get:
+      tags: [sources]
+      operationId: explainByte
+      summary: Объясни байт — всё известное о байте потока
+      description: |
+        Один ответ о байте по смещению `offset`: его значение и вид (`data`, `gap` — не записан, `ambiguous` —
+        кадры расходятся); кадры, которые его принесли, с номерами и временем; сообщение и поля по текущей
+        сохранённой интерпретации — от внешнего к внутреннему, со статусом, прочитанным значением и гипотезой
+        описания (формулировка и тест); наблюдения с якорем на этот байт и гипотезы исследователя, которые на них
+        опираются; последние прогоны, в корпус которых входил поток: категория сообщения, нарушения и признак,
+        что прогон выполнен на том же тексте описания. Без сохранённой интерпретации `message` — `null`.
+      parameters:
+        - name: stream
+          in: path
+          required: true
+          description: Идентификатор направленного потока
+          schema: { type: string, example: '3f5a1c0d:c0001:ab' }
+        - name: offset
+          in: query
+          required: true
+          description: Смещение байта от начала потока
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Что известно о байте
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ByteExplanation' }
+              example:
+                stream: '3f5a1c0d:c0001:ab'
+                offset: 9
+                kind: data
+                value: 21
+                frames: [{ frame: 4, tsNs: 1791190809001270000, start: 0, end: 12, duplicate: false }]
+                message: { start: 0, end: 12, messageId: set_param_req, category: matched, offset: 9 }
+                fields:
+                  - name: value
+                    start: 7
+                    end: 11
+                    status: hypothesis
+                    state: decoded
+                    value: '21'
+                    hypothesis: { id: H2, statement: 'value — значение параметра', test: 'value == action.params.value' }
+                observations: [{ id: obs-1, comment: 'меняется вместе с уставкой', start: 7, end: 11 }]
+                hypotheses: [{ id: H1, statement: 'значение — уставка', status: supported }]
+                runs:
+                  - { id: run-0001, revision: 1, sameInterpretation: true, category: matched, messageId: set_param_req, violations: [] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
   /api/streams/{stream}/bytes:
     get:
       tags: [explore]
@@ -2252,6 +2306,101 @@ components:
         или ожидание; `incomplete` — задевает дыру или обрывается в конце потока; `ambiguous` — задевает
         неоднозначный участок; `unmatched` — ни одно описание не подошло; `limit_exceeded` — ограничение
         реализации (заявленная длина больше предела).
+
+    ByteExplanation:
+      type: object
+      required: [stream, offset, kind, value, frames, message, fields, observations, hypotheses, runs]
+      properties:
+        stream: { type: string }
+        offset: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [data, gap, ambiguous] }
+        value: { type: [integer, 'null'], minimum: 0, maximum: 255 }
+        frames:
+          type: array
+          items:
+            type: object
+            required: [frame, tsNs, start, end, duplicate]
+            properties:
+              frame: { type: integer, minimum: 1 }
+              tsNs: { type: integer, minimum: 0 }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              duplicate: { type: boolean }
+        message:
+          oneOf:
+            - type: object
+              required: [start, end, messageId, category, offset]
+              properties:
+                start: { type: integer, minimum: 0 }
+                end: { type: integer, minimum: 0 }
+                messageId: { type: [string, 'null'] }
+                category: { type: string }
+                offset: { type: integer, minimum: 0, description: 'Смещение байта от начала сообщения' }
+            - { type: 'null' }
+        fields:
+          type: array
+          description: Поля с этим байтом, от внешнего к внутреннему
+          items:
+            type: object
+            required: [name, start, end, status, state, value, hypothesis]
+            properties:
+              name: { type: string }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              status: { type: string, enum: [rule, hypothesis, unknown] }
+              state: { type: string }
+              value: { type: [string, 'null'] }
+              hypothesis:
+                oneOf:
+                  - type: object
+                    required: [id, statement, test]
+                    properties:
+                      id: { type: string }
+                      statement: { type: string }
+                      test: { type: [string, 'null'] }
+                  - { type: 'null' }
+        observations:
+          type: array
+          items:
+            type: object
+            required: [id, comment, start, end]
+            properties:
+              id: { type: string }
+              comment: { type: string }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+        hypotheses:
+          type: array
+          description: Гипотезы исследователя, основанные на этих наблюдениях
+          items:
+            type: object
+            required: [id, statement, status]
+            properties:
+              id: { type: string }
+              statement: { type: string }
+              status: { type: string }
+        runs:
+          type: array
+          description: Прогоны с этим потоком, от нового к старому (до 20)
+          items:
+            type: object
+            required: [id, revision, sameInterpretation, category, messageId, violations]
+            properties:
+              id: { type: string }
+              revision: { type: [integer, 'null'] }
+              sameInterpretation: { type: boolean }
+              category: { type: [string, 'null'] }
+              messageId: { type: [string, 'null'] }
+              violations:
+                type: array
+                items:
+                  type: object
+                  required: [kind, id, detail, status]
+                  properties:
+                    kind: { type: string }
+                    id: { type: string }
+                    detail: { type: string }
+                    status: { type: string }
 
     CoverageRequest:
       type: object
