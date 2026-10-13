@@ -16,6 +16,7 @@
 
 mod checksum;
 mod correlation;
+mod entropy;
 mod exchanges;
 mod fields;
 mod framing;
@@ -29,6 +30,10 @@ pub use checksum::{
 pub use correlation::{
     ActionCode, ActionHint, CorrCounter, CorrSample, Correlations, Decimal, MAX_CORR_SAMPLES,
     ValueHint, correlate,
+};
+pub use entropy::{
+    ENTROPY_WINDOW, EntropyKind, EntropyMap, EntropyRegion, MAX_ENTROPY_BYTES, entropy_map,
+    entropy_millibits,
 };
 pub use exchanges::{Certainty, Exchange, ExchangeStats, Msg, pair_exchanges};
 pub use fields::{

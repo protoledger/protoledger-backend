@@ -838,3 +838,50 @@ async fn explain_byte_gathers_everything_known_about_it() {
         assert_eq!(status, expected, "{path}");
     }
 }
+
+#[tokio::test]
+async fn entropy_map_is_reported_per_stream() {
+    let (state, _, ab, ba) = setup("entropy").await;
+    let (status, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/entropy",
+        Some(json!({ "streams": [ab.clone(), ba.clone()] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    let streams = found["streams"].as_array().unwrap();
+    assert_eq!(streams.len(), 2);
+    for s in streams {
+        let (bytes, length) = (s["bytes"].as_u64().unwrap(), s["length"].as_u64().unwrap());
+        assert!(bytes <= length, "{s}");
+        // Участки лежат внутри потока и не длиннее просмотренного.
+        let mut covered = 0;
+        for r in s["regions"].as_array().unwrap() {
+            let (start, end) = (r["start"].as_u64().unwrap(), r["end"].as_u64().unwrap());
+            assert!(start < end && end <= length, "{r}");
+            covered += end - start;
+        }
+        assert!(covered <= bytes, "{s}");
+        assert!(!s["summary"].as_str().unwrap().is_empty());
+    }
+    // Запросы стенда — короткие структурированные сообщения: на сжатие они не похожи.
+    assert_eq!(streams[0]["highBytes"], 0, "{found}");
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/entropy",
+        Some(json!({ "streams": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/entropy",
+        Some(json!({ "streams": ["00000000:c0001:ab"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

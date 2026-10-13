@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.29
+  version: 0.1.30
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1923,6 +1923,51 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/entropy:
+    post:
+      tags: [analysis]
+      operationId: getEntropy
+      summary: Энтропия участков потока — похоже ли на сжатие или шифрование
+      description: |
+        Проходит известные байты потока окнами по 256 байт и отмечает участки: `high` — байты распределены почти
+        равномерно (7 бит на байт и больше), так выглядят сжатые и зашифрованные данные; `text` — не меньше 90 %
+        печатных символов; `low` — почти одно значение, заполнение. Остальное — обычные структурированные данные,
+        в `regions` не попадает. Окна не перекидываются через дыры; на данных короче окна судить не о чем.
+        Это подсказка, почему участок не раскладывается на поля, а не вывод: шифрование — вне области продукта.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FramingRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab'] }
+      responses:
+        '200':
+          description: Карта энтропии по потокам
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntropyPage' }
+              example:
+                streams:
+                  - stream: '3f5a1c0d:c0001:ab'
+                    length: 2100
+                    bytes: 2048
+                    highBytes: 1024
+                    textBytes: 0
+                    lowBytes: 256
+                    regions:
+                      - { start: 512, end: 1536, kind: high, entropyMillibits: 7168 }
+                      - { start: 1792, end: 2048, kind: low, entropyMillibits: 0 }
+                    truncated: false
+                    summary: '50 % просмотренных байтов похожи на сжатые или зашифрованные: полей в них не найти.'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/analysis/draft:
     post:
       tags: [analysis]
@@ -3391,6 +3436,35 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    EntropyPage:
+      type: object
+      required: [streams]
+      properties:
+        streams:
+          type: array
+          items:
+            type: object
+            required: [stream, length, bytes, highBytes, textBytes, lowBytes, regions, truncated, summary]
+            properties:
+              stream: { type: string }
+              length: { type: integer, minimum: 0 }
+              bytes: { type: integer, minimum: 0, description: 'Просмотрено окнами' }
+              highBytes: { type: integer, minimum: 0 }
+              textBytes: { type: integer, minimum: 0 }
+              lowBytes: { type: integer, minimum: 0 }
+              regions:
+                type: array
+                items:
+                  type: object
+                  required: [start, end, kind, entropyMillibits]
+                  properties:
+                    start: { type: integer, minimum: 0 }
+                    end: { type: integer, minimum: 0 }
+                    kind: { type: string, enum: [high, text, low] }
+                    entropyMillibits: { type: integer, minimum: 0, maximum: 8000 }
+              truncated: { type: boolean, description: 'Поток длиннее 16 МиБ или участков больше 256' }
+              summary: { type: string }
 
     DraftRequest:
       type: object

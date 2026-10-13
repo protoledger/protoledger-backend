@@ -24,9 +24,10 @@ pub use actions::{
 pub use analysis::{
     ByteMatch, ChecksumAlgorithm, ChecksumCounterView, ChecksumHintView, ChecksumRequest,
     ChecksumView, CorrelationRequest, ExchangeView, FieldHintView, FieldsRequest, FieldsView,
-    MAX_REQUEST_STREAMS, MessagePlace, MessageRef, TypeField, TypeGroupView, TypesRequest,
-    TypesView, VariabilityRequest, connection_exchanges, framing_hints, message_checksums,
-    message_correlations, message_fields, message_types, message_variability,
+    MAX_REQUEST_STREAMS, MessagePlace, MessageRef, StreamEntropy, TypeField, TypeGroupView,
+    TypesRequest, TypesView, VariabilityRequest, connection_exchanges, framing_hints,
+    message_checksums, message_correlations, message_fields, message_types, message_variability,
+    stream_entropy,
 };
 pub use compare::{
     Comparison, FieldChange, FieldDiff, SideSummary, Timing, TimingDiff, TypeChange, TypeDiff,

@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/types", post(types))
         .route("/analysis/fields", post(fields))
         .route("/analysis/draft", post(draft))
+        .route("/analysis/entropy", post(entropy))
         .route("/exchanges", post(exchanges))
 }
 
@@ -206,6 +207,20 @@ async fn fields(
     })
     .await?;
     Ok(Json(result))
+}
+
+#[derive(Serialize)]
+struct EntropyPage {
+    streams: Vec<pl_app::StreamEntropy>,
+}
+
+async fn entropy(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<FramingRequest>,
+) -> Result<Json<EntropyPage>, ApiError> {
+    let streams =
+        blocking(move || pl_app::stream_entropy(&state.sources, &request.streams)).await?;
+    Ok(Json(EntropyPage { streams }))
 }
 
 #[derive(Deserialize)]

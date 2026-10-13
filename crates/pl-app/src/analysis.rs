@@ -922,6 +922,79 @@ pub(crate) fn fields_on(
     })
 }
 
+/// Карта энтропии одного потока.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamEntropy {
+    pub stream: String,
+    /// Длина потока в байтах.
+    pub length: u64,
+    #[serde(flatten)]
+    pub map: pl_analysis::EntropyMap,
+    /// Что это значит, одной фразой.
+    pub summary: String,
+}
+
+/// Где в потоках данные похожи на сжатые или зашифрованные, на текст и на заполнение.
+pub fn stream_entropy(
+    store: &SourceStore,
+    streams: &[String],
+) -> Result<Vec<StreamEntropy>, Problem> {
+    check_streams(streams)?;
+    let mut out = Vec::new();
+    for id in streams {
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        // Подряд идущие известные участки склеиваются: окно не должно рваться на границе сегмента.
+        let mut pieces: Vec<(u64, Vec<u8>)> = Vec::new();
+        for region in &input.regions {
+            let RegionKind::Data(bytes) = &region.kind else {
+                continue;
+            };
+            match pieces.last_mut() {
+                Some((start, joined)) if *start + joined.len() as u64 == region.start => {
+                    joined.extend_from_slice(bytes);
+                }
+                _ => pieces.push((region.start, bytes.to_vec())),
+            }
+        }
+        let refs: Vec<(u64, &[u8])> = pieces.iter().map(|(s, b)| (*s, b.as_slice())).collect();
+        let map = pl_analysis::entropy_map(&refs);
+        let share = |part: u64| part.saturating_mul(100).checked_div(map.bytes).unwrap_or(0);
+        let summary = if map.bytes == 0 {
+            format!(
+                "Данных меньше окна в {} байт: об энтропии судить рано.",
+                pl_analysis::ENTROPY_WINDOW
+            )
+        } else if map.high_bytes > 0 {
+            format!(
+                "{} % просмотренных байтов похожи на сжатые или зашифрованные: полей в них не найти.",
+                share(map.high_bytes)
+            )
+        } else if map.text_bytes * 2 > map.bytes {
+            format!(
+                "{} % просмотренных байтов — печатный текст.",
+                share(map.text_bytes)
+            )
+        } else {
+            "Участков, похожих на сжатие или шифрование, нет.".to_owned()
+        };
+        out.push(StreamEntropy {
+            stream: id.clone(),
+            length: stream.length,
+            map,
+            summary,
+        });
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExchangeView {
