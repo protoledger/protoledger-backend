@@ -595,7 +595,10 @@ pub(crate) fn types_on(
         .framing
         .length
         .as_ref()
-        .map(|l| (l.at..l.at.saturating_add(l.ty.size() as u32)).collect())
+        .map(|l| {
+            let size = l.ty.int().map_or(4, |t| t.size() as u32);
+            (l.at..l.at.saturating_add(size)).collect()
+        })
         .unwrap_or_default();
     let samples: Vec<TypeSample<'_>> = messages
         .iter()

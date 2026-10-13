@@ -10,8 +10,8 @@ use crate::expr::{Context, Expr, ExprError, Value};
 use crate::framing::{self, Frame, FrameError, Problem, Unknown, read_int};
 use crate::input::{Read, StreamInput};
 use crate::schema::{
-    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MAX_REPEAT, MessageDef,
-    Offset, Repeat, Status, parse_hex,
+    At, Check, Direction, Expect, FieldDef, FieldType, Interpretation, Len, MAX_REPEAT,
+    MAX_VARINT_BYTES, MessageDef, Offset, Repeat, Status, parse_hex, read_varint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -207,10 +207,12 @@ impl View<'_, '_> {
         self.end - self.start
     }
 
-    fn resolve(&self, at: &At) -> Option<u64> {
+    /// Место поля в потоке; `cursor` — конец предыдущего поля описания, если он известен.
+    fn resolve(&self, at: &At, cursor: Option<u64>) -> Option<u64> {
         match at.offset()? {
             Offset::FromStart(n) => self.start.checked_add(u64::from(n)),
             Offset::FromEnd(n) => self.end.checked_sub(u64::from(n)),
+            Offset::Next => cursor,
         }
     }
 }
@@ -232,6 +234,7 @@ fn decode(field: &FieldDef, bytes: &[u8]) -> Option<Value> {
         FieldType::Bytes => Some(Value::Bytes(bytes.to_vec())),
         FieldType::String => Some(Value::Str(String::from_utf8_lossy(bytes).into_owned())),
         FieldType::Bcd => bcd(bytes).map(Value::Int),
+        FieldType::Varint => read_varint(bytes).map(|(v, _)| Value::Int(v)),
         _ => None,
     }
 }
@@ -272,7 +275,7 @@ impl Context for WhenCtx<'_, '_> {
         let Some(field) = self.def.fields.iter().find(|f| f.name == name) else {
             return StreamCtx(&self.view.input.meta).get(name);
         };
-        let at = self.view.resolve(&field.at)?;
+        let at = self.view.resolve(&field.at, None)?;
         let len = fixed_len(field)?;
         match self.view.input.read(at, len) {
             Read::Bytes(b) if at + len <= self.view.end => decode(field, &b),
@@ -451,7 +454,10 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
     // Поля по порядку описания.
     let mut values: BTreeMap<String, Value> = BTreeMap::new();
     let mut covered: Vec<(u64, u64)> = Vec::new();
+    // Конец предыдущего поля: от него отсчитывается поле с `at: next`.
+    let mut cursor: Option<u64> = Some(view.start);
     for field in &def.fields {
+        let previous = cursor.take();
         let mut fr = FieldResult {
             name: field.name.clone(),
             at: 0,
@@ -461,7 +467,16 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             state: FieldState::OutOfMessage,
             value: None,
         };
-        let Some(at) = view.resolve(&field.at) else {
+        let Some(at) = view.resolve(&field.at, previous) else {
+            if matches!(field.at.offset(), Some(Offset::Next)) && field.status != Status::Unknown {
+                result.violations.push(violation(
+                    ViolationKind::FieldRange,
+                    &field.name,
+                    field.status,
+                    "место поля неизвестно: размер предыдущего поля вычислить не удалось"
+                        .to_owned(),
+                ));
+            }
             result.fields.push(fr);
             continue;
         };
@@ -478,9 +493,24 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
                 &mut covered,
                 &mut result,
             );
+            cursor = result
+                .fields
+                .iter()
+                .rev()
+                .find(|f| f.name == field.name && f.state != FieldState::OutOfMessage)
+                .map(|f| f.at + f.len);
             continue;
         }
         let len = match (&field.len, fixed_len(field)) {
+            // Размер varint виден только по байтам: до первого без признака продолжения.
+            _ if field.ty == FieldType::Varint => {
+                let room = view.end.saturating_sub(at).min(MAX_VARINT_BYTES);
+                match input.read(at, room) {
+                    Read::Bytes(b) => read_varint(&b).map(|(_, n)| n as u64),
+                    // Дыра или неоднозначность внутри: размер неизвестен, поле помечается целиком.
+                    _ => None,
+                }
+            }
             (_, Some(n)) => Some(n),
             (Some(Len::Text(t)), _) if t == "to_end" => Some(view.end.saturating_sub(at)),
             (Some(Len::Text(t)), _) => Expr::parse(t)
@@ -505,6 +535,7 @@ fn message(c: &Compiled<'_>, input: &StreamInput<'_>, frame: &Frame) -> MessageR
             continue;
         };
         fr.len = len;
+        cursor = at.checked_add(len).filter(|end| *end <= view.end);
         if at < view.start || at.saturating_add(len) > view.end {
             if frame.problem.is_none() && field.status != Status::Unknown {
                 result.violations.push(violation(
