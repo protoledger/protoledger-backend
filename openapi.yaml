@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.30
+  version: 0.1.31
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -3318,7 +3318,7 @@ components:
           additionalProperties: false
           properties:
             at: { type: integer, minimum: 0 }
-            type: { type: string, enum: [u8, u16be, u16le, u32be, u32le, u64be, u64le, i8, i16be, i16le, i32be, i32le, i64be, i64le] }
+            type: { type: string, enum: [u8, u16be, u16le, u32be, u32le, u64be, u64le, i8, i16be, i16le, i32be, i32le, i64be, i64le, varint], description: 'varint — по 7 бит в байте, младшие первыми; длина считается от конца поля' }
             adjust: { type: integer, description: 'Длина сообщения = значение поля + adjust' }
         size: { type: integer, minimum: 1 }
         bytes: { type: string, description: 'hex' }
@@ -3352,7 +3352,7 @@ components:
       required: [at, width, bigEndian, adjust, messages, coveredBytes, totalBytes, scorePermille, streamsConfirmed, streamsTotal, streamsEndedExactly, startCoherencePermille, segmentAlignmentPermille, distinctValues, minLength, maxLength, firstCounterexample, equivalent, framing]
       properties:
         at: { type: integer, minimum: 0 }
-        width: { type: integer, enum: [1, 2, 4] }
+        width: { type: integer, enum: [0, 1, 2, 4], description: '0 — поле переменного размера (varint)' }
         bigEndian: { type: boolean }
         adjust: { type: integer }
         messages: { type: integer, minimum: 0 }

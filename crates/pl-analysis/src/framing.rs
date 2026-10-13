@@ -180,6 +180,7 @@ pub struct FramingHints {
 
 fn type_name(width: u8, big_endian: bool) -> &'static str {
     match (width, big_endian) {
+        (VARINT, _) => "varint",
         (1, _) => "u8",
         (2, true) => "u16be",
         (2, false) => "u16le",
@@ -190,6 +191,32 @@ fn type_name(width: u8, big_endian: bool) -> &'static str {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Ширина-признак: поле длины переменного размера — по 7 бит в байте, младшие первыми,
+/// старший бит — «есть продолжение».
+const VARINT: u8 = 0;
+/// Столько байт занимает самое длинное поле длины переменного размера, которое проверяется.
+const MAX_VARINT_LENGTH: usize = 4;
+
+/// Значение поля длины, размер сообщения до поправки и размер заголовка по это поле включительно.
+/// У поля переменного размера длина отсчитывается от его конца.
+fn claimed(data: &[u8], pos: usize, p: Params) -> Option<(i64, i64, usize)> {
+    let at = pos.checked_add(p.at)?;
+    if p.width != VARINT {
+        let value = read_value(data, at, p.width, p.big_endian)?;
+        return Some((value, value, p.at + usize::from(p.width)));
+    }
+    let mut value: i64 = 0;
+    for i in 0..MAX_VARINT_LENGTH {
+        let byte = *data.get(at + i)?;
+        value |= i64::from(byte & 0x7f) << (7 * i);
+        if byte & 0x80 == 0 {
+            let header = p.at + i + 1;
+            return Some((value, value + header as i64, header));
+        }
+    }
+    None
 }
 
 fn read_value(data: &[u8], at: usize, width: u8, big_endian: bool) -> Option<i64> {
@@ -231,7 +258,6 @@ struct Walk {
 }
 
 fn walk(data: &[u8], p: Params) -> Walk {
-    let header = p.at + usize::from(p.width);
     let mut ends = Vec::new();
     let mut pos = 0usize;
     loop {
@@ -247,7 +273,7 @@ fn walk(data: &[u8], p: Params) -> Walk {
                 stop: Stop::Limit,
             };
         }
-        let Some(value) = read_value(data, pos + p.at, p.width, p.big_endian) else {
+        let Some((value, base, header)) = claimed(data, pos, p) else {
             let stop = if ends.len() as u64 >= MIN_MESSAGES {
                 Stop::Truncated
             } else {
@@ -255,7 +281,7 @@ fn walk(data: &[u8], p: Params) -> Walk {
             };
             return Walk { ends, stop };
         };
-        let total = value.saturating_add(p.adjust);
+        let total = base.saturating_add(p.adjust);
         if total < header as i64 || total > MAX_CLAIMED {
             return Walk {
                 ends,
@@ -419,7 +445,7 @@ fn evaluate(streams: &[StreamSample], p: Params, cancelled: &dyn Fn() -> bool) -
                 let len = (end - prev) as u64;
                 score.min_length = Some(score.min_length.map_or(len, |m| m.min(len)));
                 score.max_length = score.max_length.max(len);
-                if let Some(v) = read_value(&run.data, prev + p.at, p.width, p.big_endian)
+                if let Some((v, ..)) = claimed(&run.data, prev, p)
                     && score.values.len() < 4096
                 {
                     score.values.insert(v);
@@ -522,12 +548,25 @@ fn length_hints(streams: &[StreamSample], cancelled: &dyn Fn() -> bool) -> Vec<L
         .unwrap_or(0);
     let mut cands: Vec<Cand> = Vec::new();
     for at in 0..=MAX_FIELD_OFFSET {
-        for (width, big_endian) in [(1u8, true), (2, true), (2, false), (4, true), (4, false)] {
+        for (width, big_endian) in [
+            (1u8, true),
+            (2, true),
+            (2, false),
+            (4, true),
+            (4, false),
+            (VARINT, true),
+        ] {
             if at + usize::from(width) > longest_run {
                 continue;
             }
             let header = (at + usize::from(width)) as i64;
-            for adjust in -MIN_ADJUST..=header + MAX_EXTRA {
+            // У поля переменного размера длина считается от его конца: поправка не нужна.
+            let adjusts = if width == VARINT {
+                0..=0
+            } else {
+                -MIN_ADJUST..=header + MAX_EXTRA
+            };
+            for adjust in adjusts {
                 let p = Params {
                     at,
                     width,
@@ -577,9 +616,11 @@ fn length_hints(streams: &[StreamSample], cancelled: &dyn Fn() -> bool) -> Vec<L
     for (i, c) in cands.iter().enumerate() {
         first_seen.entry(c.s.fingerprint).or_insert(i);
     }
+    // Поле переменного размера при длинах до 127 неотличимо от однобайтового и идёт последним.
     let width_rank = |w: u8| match w {
         2 => 0u8,
         4 => 1,
+        VARINT => 3,
         _ => 2,
     };
     cands.sort_by_key(|c| {
