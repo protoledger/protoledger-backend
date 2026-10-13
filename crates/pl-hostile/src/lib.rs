@@ -264,6 +264,62 @@ pub fn samples() -> Vec<Sample> {
         },
     ));
 
+    // Канальные уровни без Ethernet: заголовок короче положенного, чужой протокол, IPv6.
+    let relinked = |linktype: u32, frames: Vec<Vec<u8>>| {
+        let mut v = pcap_header(65535, linktype);
+        for f in frames {
+            v.extend(pcap_record(1, f.len() as u32, f.len() as u32, &f));
+        }
+        v
+    };
+    let ip_of = |f: &Vec<u8>| f.get(IP_AT..).unwrap_or_default().to_vec();
+    let cooked = |protocol: [u8; 2], rest: &[u8]| {
+        let mut f = vec![0, 0, 0, 1, 0, 6, 1, 2, 3, 4, 5, 6, 0, 0];
+        f.extend_from_slice(&protocol);
+        f.extend_from_slice(rest);
+        f
+    };
+    let good = good_frames();
+    let data = good.get(1).map(ip_of).unwrap_or_default();
+    out.push(sample(
+        "linktype-cooked-broken",
+        "pcap",
+        "Linux cooked: обрезанный заголовок, заголовок без данных, три метки VLAN подряд, не IP",
+        relinked(
+            113,
+            vec![
+                vec![0, 0, 0],
+                cooked([0x08, 0x00], &[]),
+                cooked([0x81, 0x00], &[0, 1, 0x81, 0, 0, 2, 0x81, 0, 0, 3, 0x08, 0]),
+                cooked([0x08, 0x06], &data),
+                cooked([0x08, 0x00], &data),
+            ],
+        ),
+    ));
+    out.push(sample(
+        "linktype-loopback-families",
+        "pcap",
+        "петлевой интерфейс: неизвестное семейство адресов, IPv6, заголовок из двух байтов",
+        relinked(
+            0,
+            vec![
+                [&[0xFF, 0xFF, 0xFF, 0xFF][..], &data].concat(),
+                [&[30, 0, 0, 0][..], &data].concat(),
+                vec![2, 0],
+                [&[2, 0, 0, 0][..], &data].concat(),
+            ],
+        ),
+    ));
+    out.push(sample(
+        "linktype-raw-not-ip",
+        "pcap",
+        "raw IP: первый байт — не версия IP, IPv6, пустой кадр",
+        relinked(
+            101,
+            vec![vec![0x00; 40], vec![0x60; 40], Vec::new(), data.clone()],
+        ),
+    ));
+
     let mut backwards = pcap_header(65535, 1);
     for (i, ts) in [4_000_000_000u32, 5, u32::MAX].iter().enumerate() {
         let f = tcp_frame(40000, 100 + i as u32, tcp_flags::ACK, &[]);
