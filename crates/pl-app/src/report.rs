@@ -197,7 +197,7 @@ pub fn collect(
                         .diagnostics
                         .groups
                         .iter()
-                        .map(|(c, g)| (c.code().to_owned(), g.count))
+                        .map(|(c, g)| (c.title().to_owned(), c.code().to_owned(), g.count))
                         .collect()
                 }),
             }

@@ -572,3 +572,228 @@ fn checksum_range_outside_the_message_is_an_error_not_a_panic() {
             .contains("не вычислилась")
     );
 }
+
+/// Сообщение `длина | флаги | f32be | f32le | f64be | BCD ×2`.
+const ENCODINGS: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: rule }
+messages:
+  - id: reading
+    when: "mode == 5"
+    fields:
+      - { name: total, at: 0, type: u8, status: rule }
+      - { name: alarm, at: 1, type: u8, mask: 0x01, status: rule }
+      - { name: mode, at: 1, type: u8, mask: 0x38, status: rule }
+      - { name: temperature, at: 2, type: f32be, status: rule }
+      - { name: threshold, at: 6, type: f32le, status: rule }
+      - { name: ratio, at: 10, type: f64be, status: rule }
+      - { name: serial, at: 18, type: bcd, len: 2, status: rule, expect: 1234 }
+checks:
+  - { id: C1, kind: structural, expr: "dec(temperature, 1) == 215 && dec(threshold, 1) == 0 - 25" }
+  - { id: C2, kind: structural, expr: "ratio == \"0.1\" && serial + alarm == 1235" }
+"#;
+
+fn reading() -> Vec<u8> {
+    let mut m = vec![20u8, 0b1010_1101];
+    m.extend_from_slice(&21.5f32.to_be_bytes());
+    m.extend_from_slice(&(-2.5f32).to_le_bytes());
+    m.extend_from_slice(&0.1f64.to_be_bytes());
+    m.extend_from_slice(&[0x12, 0x34]);
+    m
+}
+
+#[test]
+fn floats_bcd_and_bit_fields_are_decoded() {
+    let it = Interpretation::parse(ENCODINGS).unwrap();
+    let out = apply(&it, &whole(&reading()), &|| false).unwrap();
+    let m = &out.messages[0];
+    assert_eq!(m.category, Category::Matched, "{:?}", m.violations);
+    let value = |name: &str| {
+        m.fields
+            .iter()
+            .find(|f| f.name == name)
+            .and_then(|f| f.value.clone())
+    };
+    // Битовые поля одного байта: младший бит и три бита со сдвигом.
+    assert_eq!(value("alarm"), Some(Value::Int(1)));
+    assert_eq!(value("mode"), Some(Value::Int(5)));
+    // Кратчайшая десятичная запись, а не «21.299999237».
+    assert_eq!(value("temperature"), Some(Value::Str("21.5".to_owned())));
+    assert_eq!(value("threshold"), Some(Value::Str("-2.5".to_owned())));
+    assert_eq!(value("ratio"), Some(Value::Str("0.1".to_owned())));
+    assert_eq!(value("serial"), Some(Value::Int(1234)));
+    // Два битовых поля одного байта не считают его дважды.
+    assert_eq!(m.unknown_bytes, 0);
+}
+
+#[test]
+fn a_float_that_is_not_exact_in_binary_still_reads_as_written() {
+    let spec = ENCODINGS.replace("dec(temperature, 1) == 215", "dec(temperature, 1) == 213");
+    let it = Interpretation::parse(&spec).unwrap();
+    let mut bytes = reading();
+    bytes[2..6].copy_from_slice(&21.3f32.to_be_bytes());
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(out.messages[0].category, Category::Matched);
+}
+
+#[test]
+fn broken_bcd_and_not_a_number_do_not_panic_or_pass() {
+    let it = Interpretation::parse(ENCODINGS).unwrap();
+    let mut bytes = reading();
+    bytes[18] = 0x1f;
+    bytes[2..6].copy_from_slice(&f32::NAN.to_be_bytes());
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    let m = &out.messages[0];
+    let serial = m.fields.iter().find(|f| f.name == "serial").unwrap();
+    assert_eq!(serial.value, None);
+    // «NaN» — не десятичная запись: проверка не вычисляется, а не проходит молча.
+    assert_eq!(m.category, Category::Violated);
+}
+
+#[test]
+fn new_field_types_are_validated() {
+    let bad = [
+        ("type: bcd, len: 2", "type: bcd"),
+        ("type: bcd, len: 2", "type: bcd, len: 9"),
+        ("type: f32be, status", "type: f32be, len: 4, status"),
+        ("mask: 0x38", "mask: 0"),
+        ("mask: 0x38", "mask: 0x100"),
+        ("type: f32le, status", "type: f32le, mask: 1, status"),
+        ("expect: 1234", "expect: \"12\""),
+    ];
+    for (from, to) in bad {
+        assert!(ENCODINGS.contains(from), "{from}");
+        assert!(
+            Interpretation::parse(&ENCODINGS.replace(from, to)).is_err(),
+            "принято: {to}"
+        );
+    }
+}
+
+/// Пакет в духе MQTT: `тип и флаги | оставшаяся длина varint | длина темы u16 | тема | номер
+/// пакета varint | данные до конца`. Места полей после темы зависят от её длины.
+const VARINT: &str = r#"
+format: protoledger/interpretation@1
+framing: { kind: length_prefixed, length: { at: 1, type: varint }, status: rule }
+messages:
+  - id: publish
+    when: "kind == 3"
+    fields:
+      - { name: kind, at: 0, type: u8, mask: 0xf0, status: rule }
+      - { name: remaining, at: 1, type: varint, status: rule }
+      - { name: topic_len, at: next, type: u16be, status: rule }
+      - { name: topic, at: next, type: string, len: "topic_len", status: rule }
+      - { name: packet_id, at: next, type: varint, status: rule }
+      - { name: payload, at: next, type: bytes, len: to_end, status: rule }
+checks:
+  - { id: C1, kind: structural, expr: "remaining + 2 == message.len || remaining + 3 == message.len" }
+"#;
+
+fn varint(mut value: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return out;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn publish(topic: &str, packet_id: u32, payload: &[u8]) -> Vec<u8> {
+    let mut body = (topic.len() as u16).to_be_bytes().to_vec();
+    body.extend_from_slice(topic.as_bytes());
+    body.extend(varint(packet_id));
+    body.extend_from_slice(payload);
+    let mut m = vec![0x30];
+    m.extend(varint(body.len() as u32));
+    m.extend(body);
+    m
+}
+
+#[test]
+fn varint_length_frames_messages_and_next_places_fields_after_variable_ones() {
+    let it = Interpretation::parse(VARINT).unwrap();
+    // Второе сообщение длиннее 127 байт: поле длины занимает два байта, номер пакета — тоже два.
+    let long = vec![0x55u8; 200];
+    let mut bytes = publish("a/b", 5, b"on");
+    bytes.extend(publish("plant/line-2/temperature", 300, &long));
+    bytes.extend(publish("x", 0, b""));
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    assert_eq!(out.messages.len(), 3);
+    for m in &out.messages {
+        assert_eq!(m.category, Category::Matched, "{:?}", m.violations);
+        assert_eq!(m.unknown_bytes, 0);
+    }
+    let value = |i: usize, name: &str| {
+        out.messages[i]
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .and_then(|f| f.value.clone())
+    };
+    assert_eq!(value(0, "topic"), Some(Value::Str("a/b".to_owned())));
+    assert_eq!(value(0, "packet_id"), Some(Value::Int(5)));
+    assert_eq!(value(0, "payload"), Some(Value::Bytes(b"on".to_vec())));
+    assert_eq!(value(1, "remaining"), Some(Value::Int(228)));
+    assert_eq!(
+        value(1, "topic"),
+        Some(Value::Str("plant/line-2/temperature".to_owned()))
+    );
+    assert_eq!(value(1, "packet_id"), Some(Value::Int(300)));
+    assert_eq!(value(1, "payload"), Some(Value::Bytes(long.clone())));
+    assert_eq!(value(2, "payload"), Some(Value::Bytes(Vec::new())));
+    // Поля второго сообщения сдвинуты на байт: длина заняла два.
+    let topic = out.messages[1]
+        .fields
+        .iter()
+        .find(|f| f.name == "topic")
+        .unwrap();
+    assert_eq!(topic.at - out.messages[1].start, 5);
+}
+
+#[test]
+fn broken_varints_are_reported_not_trusted() {
+    let it = Interpretation::parse(VARINT).unwrap();
+    // Поле длины без завершающего байта: границу сообщения определить нельзя.
+    let endless = [
+        0x30u8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+    ];
+    let out = apply(&it, &whole(&endless), &|| false).unwrap();
+    assert!(out.messages.iter().all(|m| m.category != Category::Matched));
+
+    // Тема заявлена длиннее сообщения: поля после неё места не получают, и это видно.
+    let mut bytes = publish("a/b", 5, b"on");
+    bytes[3] = 0x40;
+    let out = apply(&it, &whole(&bytes), &|| false).unwrap();
+    let m = &out.messages[0];
+    assert_eq!(m.category, Category::Violated);
+    assert!(
+        m.violations.iter().any(|v| v.id == "packet_id"),
+        "{:?}",
+        m.violations
+    );
+
+    // Сообщение оборвано посреди поля длины.
+    let out = apply(&it, &whole(&[0x30, 0x80]), &|| false).unwrap();
+    assert_eq!(out.messages[0].category, Category::Incomplete);
+}
+
+#[test]
+fn next_and_varint_are_validated() {
+    assert!(
+        Interpretation::parse(&VARINT.replace("at: next, type: u16be", "at: nxt, type: u16be"))
+            .is_err()
+    );
+    assert!(
+        Interpretation::parse(&VARINT.replace(
+            "at: 1, type: varint, status",
+            "at: 1, type: varint, len: 2, status"
+        ))
+        .is_err()
+    );
+    // Поле с местом «next» не годится для условия: его место заранее неизвестно.
+    assert!(Interpretation::parse(&VARINT.replace("kind == 3", "topic_len == 3")).is_err());
+}

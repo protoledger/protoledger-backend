@@ -420,6 +420,35 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
 
+    api.post(
+        "/api/interpretation/compare",
+        "/api/interpretation/compare",
+        json!({ "a": [source], "b": [source], "yaml": wrong }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/interpretation/graph",
+        "/api/interpretation/graph",
+        json!({ "yaml": wrong }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/interpretation/coverage",
+        "/api/interpretation/coverage",
+        json!({ "yaml": wrong }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/interpretation/fix-hints",
+        "/api/interpretation/fix-hints",
+        json!({ "yaml": wrong, "hypothesis": "H2" }),
+        200,
+    )
+    .await;
+
     api.get("/api/runs", "/api/runs?limit=10").await;
     for run in ["run-0001", "run-0002"] {
         api.get("/api/runs/{id}", &format!("/api/runs/{run}")).await;
@@ -440,6 +469,11 @@ async fn responses_match_the_contract_schemas() {
         )
         .await;
     let line = actions["items"][3]["line"].as_u64().unwrap_or(2);
+    api.get(
+        "/api/action-logs/{id}/exchanges",
+        &format!("/api/action-logs/{log_id}/exchanges?limit=5"),
+    )
+    .await;
     api.get(
         "/api/action-logs/{id}/actions/{line}/exchange",
         &format!("/api/action-logs/{log_id}/actions/{line}/exchange"),
@@ -529,6 +563,41 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
     api.post(
+        "/api/analysis/types",
+        "/api/analysis/types",
+        json!({ "streams": [stream, format!("{conn}:ba")], "framing": hint }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/analysis/fields",
+        "/api/analysis/fields",
+        json!({ "streams": [stream], "framing": hint, "match": [{ "at": 2, "value": 2 }] }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/analysis/suggestions",
+        "/api/analysis/suggestions",
+        json!({ "streams": [stream, format!("{conn}:ba")] }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/analysis/entropy",
+        "/api/analysis/entropy",
+        json!({ "streams": [stream, format!("{conn}:ba")] }),
+        200,
+    )
+    .await;
+    api.post(
+        "/api/analysis/draft",
+        "/api/analysis/draft",
+        json!({ "streams": [stream, format!("{conn}:ba")] }),
+        200,
+    )
+    .await;
+    api.post(
         "/api/analysis/checksums",
         "/api/analysis/checksums",
         json!({ "streams": [stream], "framing": hint }),
@@ -551,12 +620,20 @@ async fn responses_match_the_contract_schemas() {
         )
         .await;
     }
+    api.get("/api/project/next-steps", "/api/project/next-steps")
+        .await;
     api.call(
         Method::PATCH,
         "/api/project/settings",
         "/api/project/settings",
         Some(json!({ "overlapPolicy": "first", "checksumPolicy": "warn" })),
         200,
+    )
+    .await;
+
+    api.get(
+        "/api/streams/{stream}/explain",
+        &format!("/api/streams/{stream}/explain?offset=3"),
     )
     .await;
 

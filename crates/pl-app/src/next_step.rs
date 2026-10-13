@@ -1,0 +1,287 @@
+//! «Что дальше»: по состоянию проекта — следующий шаг исследования и почему именно он.
+//! Подсказка ведёт по циклу «записи → границы → описание → гипотезы → проверка → отчёт»
+//! и ничего не делает сама.
+
+use pl_core::Problem;
+use pl_interp::Interpretation;
+use pl_interp::schema::Status;
+use pl_verify::{HypothesisVerdict, Run};
+use serde::Serialize;
+
+use crate::research::{Hypothesis, HypothesisStatus, Question, QuestionStatus};
+use crate::{ActionLogStore, Session, SourceStore};
+
+/// Экран, на котором делается шаг.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Screen {
+    Sources,
+    Actions,
+    Framing,
+    Interpretation,
+    Hypotheses,
+    Verification,
+    Questions,
+    Report,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NextStep {
+    /// Устойчивый идентификатор шага.
+    pub id: &'static str,
+    pub screen: Screen,
+    /// Что сделать.
+    pub title: String,
+    /// Почему: что в проекте к этому подводит.
+    pub detail: String,
+}
+
+/// Состояние проекта в числах, по которым выбраны шаги.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectState {
+    pub sources: u64,
+    pub action_logs: u64,
+    pub has_interpretation: bool,
+    pub message_types: u64,
+    pub hypotheses: u64,
+    pub hypotheses_without_test: u64,
+    pub unknown_fields: u64,
+    pub runs: u64,
+    pub last_run: Option<String>,
+    pub last_run_stale: bool,
+    pub counterexamples: u64,
+    pub refuted: Vec<String>,
+    pub untested: Vec<String>,
+    pub open_questions: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NextSteps {
+    /// Шаги по порядку: первый — самый полезный сейчас.
+    pub steps: Vec<NextStep>,
+    pub state: ProjectState,
+}
+
+fn step(id: &'static str, screen: Screen, title: &str, detail: String) -> NextStep {
+    NextStep {
+        id,
+        screen,
+        title: title.to_owned(),
+        detail,
+    }
+}
+
+fn list(ids: &[String]) -> String {
+    let shown: Vec<&str> = ids.iter().take(5).map(String::as_str).collect();
+    let more = ids.len().saturating_sub(shown.len());
+    if more > 0 {
+        format!("{} и ещё {more}", shown.join(", "))
+    } else {
+        shown.join(", ")
+    }
+}
+
+/// Следующие шаги исследования по состоянию открытого проекта.
+pub fn next_steps(
+    session: &Session,
+    sources: &SourceStore,
+    logs: &ActionLogStore,
+) -> Result<NextSteps, Problem> {
+    let mut state = ProjectState {
+        sources: sources.list().len() as u64,
+        action_logs: logs.list().len() as u64,
+        ..ProjectState::default()
+    };
+    let interpretation = crate::current_interpretation(session);
+    if let Some(it) = &interpretation {
+        describe(it, &mut state);
+    }
+    state.has_interpretation = interpretation.is_some();
+    state.open_questions = crate::research::load::<Question>(session)?
+        .iter()
+        .filter(|q| q.status == QuestionStatus::Open)
+        .count() as u64;
+    let proposed = crate::research::load::<Hypothesis>(session)?
+        .iter()
+        .filter(|h| h.status == HypothesisStatus::Proposed)
+        .count() as u64;
+
+    // Последний прогон: читается с диска, блокировка — только на время чтения текста.
+    let last: Option<(String, String)> = {
+        let guard = session.read();
+        let project = guard.as_ref().ok_or_else(Session::no_project)?;
+        let ids = project.run_ids();
+        state.runs = ids.len() as u64;
+        ids.last()
+            .and_then(|id| Some(((*id).to_owned(), project.read_run(id).ok()?)))
+    };
+    if let Some((id, text)) = last {
+        state.last_run = Some(id);
+        if let Ok(run) = serde_json::from_str::<Run>(&text) {
+            state.last_run_stale = crate::current_signature(session, sources)
+                .is_some_and(|c| !pl_verify::stale_reasons(&run, &c).is_empty());
+            state.counterexamples = run.summary.counterexamples;
+            for h in &run.hypotheses {
+                match h.verdict {
+                    HypothesisVerdict::Refuted => state.refuted.push(h.id.clone()),
+                    HypothesisVerdict::Untested => state.untested.push(h.id.clone()),
+                    HypothesisVerdict::NoCounterexample => {}
+                }
+            }
+        }
+    }
+
+    let mut steps = Vec::new();
+    if state.sources == 0 {
+        steps.push(step(
+            "import_capture",
+            Screen::Sources,
+            "Импортируйте запись трафика",
+            "В проекте нет ни одной записи: исследовать пока нечего.".to_owned(),
+        ));
+        return Ok(NextSteps { steps, state });
+    }
+    if state.action_logs == 0 {
+        steps.push(step(
+            "import_journal",
+            Screen::Actions,
+            "Импортируйте журнал действий",
+            "Без журнала не найти обмен по действию и не проверить гипотезы о смысле полей."
+                .to_owned(),
+        ));
+    }
+    if !state.has_interpretation {
+        steps.insert(
+            0,
+            step(
+                "find_framing",
+                Screen::Framing,
+                "Найдите границы сообщений",
+                "Описания протокола ещё нет. Подсказка границ покажет поле длины или сигнатуру; черновик описания соберёт остальное из подсказок.".to_owned(),
+            ),
+        );
+        return Ok(NextSteps { steps, state });
+    }
+    if state.message_types == 0 {
+        steps.push(step(
+            "describe_types",
+            Screen::Interpretation,
+            "Опишите типы сообщений",
+            "В описании есть границы, но нет ни одного типа сообщения: поля описывать не к чему."
+                .to_owned(),
+        ));
+    }
+    if state.runs == 0 {
+        steps.push(step(
+            "first_run",
+            Screen::Verification,
+            "Запустите проверку на записях",
+            "Описание ещё ни разу не проверялось на корпусе.".to_owned(),
+        ));
+    } else if state.last_run_stale {
+        steps.push(step(
+            "rerun",
+            Screen::Verification,
+            "Перезапустите проверку",
+            format!(
+                "Прогон {} устарел: после него изменились описание, настройки или записи.",
+                state.last_run.as_deref().unwrap_or_default()
+            ),
+        ));
+    } else {
+        if !state.refuted.is_empty() {
+            steps.push(step(
+                "fix_refuted",
+                Screen::Hypotheses,
+                "Разберите опровергнутые гипотезы",
+                format!(
+                    "В последнем прогоне опровергнуты: {}. Посмотрите контрпримеры и подсказку исправления.",
+                    list(&state.refuted)
+                ),
+            ));
+        }
+        if state.counterexamples > 0 {
+            steps.push(step(
+                "counterexamples",
+                Screen::Verification,
+                "Разберите контрпримеры правил",
+                format!(
+                    "В последнем прогоне контрпримеров: {}. Либо правило неверно, либо в записи дефект захвата.",
+                    state.counterexamples
+                ),
+            ));
+        }
+        if !state.untested.is_empty() {
+            steps.push(step(
+                "untested",
+                Screen::Hypotheses,
+                "Найдите данные для непроверенных гипотез",
+                format!(
+                    "Тесты гипотез {} не нашли ни одного применимого сообщения: нужна запись с таким обменом или журнал действий.",
+                    list(&state.untested)
+                ),
+            ));
+        }
+    }
+    if state.hypotheses_without_test > 0 {
+        steps.push(step(
+            "add_tests",
+            Screen::Hypotheses,
+            "Добавьте тесты к гипотезам",
+            format!(
+                "Гипотез описания без теста: {} из {}. Без теста гипотеза остаётся утверждением, которое нечем проверить.",
+                state.hypotheses_without_test, state.hypotheses
+            ),
+        ));
+    }
+    if state.unknown_fields > 0 {
+        steps.push(step(
+            "unknown_fields",
+            Screen::Interpretation,
+            "Исследуйте неизвестные зоны",
+            format!(
+                "В описании {} полей помечены неизвестными. Карта покрытия покажет, где ещё нет описания.",
+                state.unknown_fields
+            ),
+        ));
+    }
+    if proposed > 0 {
+        steps.push(step(
+            "review_hypotheses",
+            Screen::Hypotheses,
+            "Оцените гипотезы исследователя",
+            format!("Гипотез со статусом «предложена»: {proposed}. Поддержите, опровергните или замените их."),
+        ));
+    }
+    if state.open_questions > 0 {
+        steps.push(step(
+            "open_questions",
+            Screen::Questions,
+            "Вернитесь к открытым вопросам",
+            format!("Открытых вопросов: {}.", state.open_questions),
+        ));
+    }
+    if steps.is_empty() {
+        steps.push(step(
+            "report",
+            Screen::Report,
+            "Сформируйте отчёт",
+            "Прогон актуален, опровергнутых гипотез и контрпримеров нет. Отчёт передаст результат и границы его применимости.".to_owned(),
+        ));
+    }
+    Ok(NextSteps { steps, state })
+}
+
+fn describe(it: &Interpretation, state: &mut ProjectState) {
+    state.message_types = it.messages.len() as u64;
+    state.hypotheses = it.hypotheses.len() as u64;
+    state.hypotheses_without_test =
+        it.hypotheses.iter().filter(|h| h.test.is_none()).count() as u64;
+    state.unknown_fields = it
+        .messages
+        .iter()
+        .flat_map(|m| &m.fields)
+        .filter(|f| f.status == Status::Unknown)
+        .count() as u64;
+}

@@ -110,6 +110,11 @@ pub struct ValueHint {
     /// Тип поля в записи интерпретации: `u16le`, `i32be`…
     #[serde(rename = "type")]
     pub ty: &'static str,
+    /// Размер поля в байтах (для `bcd` это его `len`).
+    pub size: u32,
+    /// Битовое поле: значение — биты маски, сдвинутые к младшему.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u64>,
     /// Связь: `декодированное = параметр × scale`.
     pub scale: i64,
     pub matches: u64,
@@ -235,6 +240,123 @@ fn decode(bytes: &[u8], at: usize, ty: Ty) -> Option<i64> {
     }
 }
 
+/// Чтение байтов сообщения как значения: целое, двоично-десятичное, битовое поле, с плавающей точкой.
+#[derive(Debug, Clone, Copy)]
+enum Encoding {
+    Int(Ty),
+    Bcd { width: usize },
+    Bits { mask: u8 },
+    Float { width: usize, big_endian: bool },
+}
+
+/// Прочитанное значение: целое сравнивается с параметром через масштаб, десятичное — как есть.
+#[derive(Debug, Clone, Copy)]
+enum Reading {
+    Int(i64),
+    Dec(Decimal, i64),
+}
+
+/// Битовым полям нужно больше примеров, чем числам: один бит совпадает случайно в половине случаев.
+const MIN_BIT_SAMPLES: u64 = 16;
+
+fn encodings() -> Vec<Encoding> {
+    let mut all: Vec<Encoding> = TYPES.into_iter().map(Encoding::Int).collect();
+    all.extend([1usize, 2, 4].map(|width| Encoding::Bcd { width }));
+    for (width, big_endian) in [(4, true), (4, false), (8, true), (8, false)] {
+        all.push(Encoding::Float { width, big_endian });
+    }
+    // Подряд идущие биты одного байта, от одного до четырёх; весь байт — это уже u8.
+    for bits in 1..=4u32 {
+        for shift in 0..=(8 - bits) {
+            all.push(Encoding::Bits {
+                mask: (((1u16 << bits) - 1) << shift) as u8,
+            });
+        }
+    }
+    all
+}
+
+impl Encoding {
+    fn name(self) -> &'static str {
+        match self {
+            Encoding::Int(ty) => ty.name,
+            Encoding::Bcd { .. } => "bcd",
+            Encoding::Bits { .. } => "u8",
+            Encoding::Float {
+                width: 4,
+                big_endian: true,
+            } => "f32be",
+            Encoding::Float {
+                width: 4,
+                big_endian: false,
+            } => "f32le",
+            Encoding::Float {
+                big_endian: true, ..
+            } => "f64be",
+            Encoding::Float { .. } => "f64le",
+        }
+    }
+
+    fn size(self) -> usize {
+        match self {
+            Encoding::Int(ty) => ty.width,
+            Encoding::Bcd { width } | Encoding::Float { width, .. } => width,
+            Encoding::Bits { .. } => 1,
+        }
+    }
+
+    /// Порядок при равных совпадениях: простое чтение раньше сложного.
+    fn rank(self) -> u8 {
+        match self {
+            Encoding::Int(_) => 0,
+            Encoding::Bcd { .. } => 1,
+            Encoding::Float { .. } => 2,
+            Encoding::Bits { .. } => 3,
+        }
+    }
+
+    fn read(self, bytes: &[u8], at: usize) -> Option<Reading> {
+        let raw = bytes.get(at..at.checked_add(self.size())?)?;
+        match self {
+            Encoding::Int(ty) => decode(bytes, at, ty).map(Reading::Int),
+            Encoding::Bcd { .. } => raw
+                .iter()
+                .try_fold(0i64, |acc, b| {
+                    let (high, low) = (b >> 4, b & 0x0f);
+                    (high <= 9 && low <= 9).then(|| acc * 100 + i64::from(high * 10 + low))
+                })
+                .map(Reading::Int),
+            Encoding::Bits { mask } => raw
+                .first()
+                .map(|b| Reading::Int(i64::from((b & mask) >> mask.trailing_zeros()))),
+            Encoding::Float { big_endian, .. } => {
+                let mut ordered = raw.to_vec();
+                if !big_endian {
+                    ordered.reverse();
+                }
+                let value = match ordered.as_slice() {
+                    [a, b, c, d] => f64::from(f32::from_be_bytes([*a, *b, *c, *d])),
+                    [a, b, c, d, e, f, g, h] => {
+                        f64::from_be_bytes([*a, *b, *c, *d, *e, *f, *g, *h])
+                    }
+                    _ => return None,
+                };
+                // Кратчайшая десятичная запись: так же поле читает описание.
+                let text = match ordered.len() {
+                    4 => (value as f32).to_string(),
+                    _ => value.to_string(),
+                };
+                let whole = if value.is_finite() {
+                    value.trunc() as i64
+                } else {
+                    0
+                };
+                Decimal::parse(&text).map(|d| Reading::Dec(d, whole))
+            }
+        }
+    }
+}
+
 fn permille(part: u64, whole: u64) -> u32 {
     part.saturating_mul(1000)
         .checked_div(whole)
@@ -248,12 +370,14 @@ fn fnv(hash: u64, value: u64) -> u64 {
 struct Found {
     hint: ValueHint,
     fingerprint: u64,
+    rank: u8,
 }
 
 fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
     let names: BTreeSet<&String> = samples.iter().flat_map(|s| s.params.keys()).collect();
     let longest = samples.iter().map(|s| s.bytes.len()).max().unwrap_or(0);
     let mut found: Vec<Found> = Vec::new();
+    let all = encodings();
     for name in names {
         let with: Vec<(usize, &CorrSample, Decimal)> = samples
             .iter()
@@ -265,29 +389,46 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
         if with.len() as u64 >= MIN_SAMPLES && distinct.len() < 2 {
             continue;
         }
+        // Битовое поле имеет смысл только для флагов и коротких перечислений.
+        let small = distinct
+            .iter()
+            .all(|d| d.exp == 0 && (0..16).contains(&d.num));
         for at in 0..longest.min(MAX_OFFSET) {
-            for ty in TYPES {
-                let readable: Vec<(usize, &CorrSample, Decimal, i64)> = with
-                    .iter()
-                    .filter_map(|(i, s, p)| decode(&s.bytes, at, ty).map(|d| (*i, *s, *p, d)))
-                    .collect();
-                let total = readable.len() as u64;
-                if total < MIN_SAMPLES {
+            for encoding in &all {
+                let bits = matches!(encoding, Encoding::Bits { .. });
+                if bits && !small {
                     continue;
                 }
-                for scale in SCALES {
+                let readable: Vec<(usize, &CorrSample, Decimal, Reading)> = with
+                    .iter()
+                    .filter_map(|(i, s, p)| encoding.read(&s.bytes, at).map(|d| (*i, *s, *p, d)))
+                    .collect();
+                let total = readable.len() as u64;
+                if total < if bits { MIN_BIT_SAMPLES } else { MIN_SAMPLES } {
+                    continue;
+                }
+                // Масштаб перебирается только у целых чтений: дробь и флаг сравниваются как есть.
+                let scales: &[i64] = match encoding {
+                    Encoding::Int(_) | Encoding::Bcd { .. } => &SCALES,
+                    _ => &[1],
+                };
+                for &scale in scales {
                     let mut matches = 0u64;
                     let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
                     let mut counter: Option<CorrCounter> = None;
                     for (i, s, p, d) in &readable {
-                        if p.times_equals(scale, *d) {
+                        let (equal, got) = match d {
+                            Reading::Int(v) => (p.times_equals(scale, *v), *v),
+                            Reading::Dec(v, whole) => (v == p, *whole),
+                        };
+                        if equal {
                             matches += 1;
                             fingerprint = fnv(fingerprint, *i as u64);
                         } else if counter.is_none() {
                             counter = Some(CorrCounter {
                                 stream: s.stream.clone(),
                                 start: s.start,
-                                got: *d,
+                                got,
                                 expected: p.num / 10i64.pow(p.exp),
                                 param_value: p.to_string(),
                             });
@@ -296,10 +437,16 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                     let share = permille(matches, total);
                     if matches >= MIN_SAMPLES && share >= MIN_SHARE {
                         found.push(Found {
+                            rank: encoding.rank(),
                             hint: ValueHint {
                                 param: name.clone(),
                                 at: at as u32,
-                                ty: ty.name,
+                                ty: encoding.name(),
+                                size: encoding.size() as u32,
+                                mask: match encoding {
+                                    Encoding::Bits { mask } => Some(u64::from(*mask)),
+                                    _ => None,
+                                },
                                 scale,
                                 matches,
                                 samples: total,
@@ -320,6 +467,7 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                 std::cmp::Reverse(f.hint.share_permille),
                 std::cmp::Reverse(f.hint.matches),
                 f.hint.scale,
+                f.rank,
                 f.hint.at,
                 std::cmp::Reverse(f.hint.ty.len()),
                 f.hint.ty.starts_with('i'),
@@ -337,7 +485,11 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
             if let Some(h) = out.get_mut(i)
                 && h.equivalent.len() < MAX_HINTS
             {
-                h.equivalent.push(format!("{}@{}", f.hint.ty, f.hint.at));
+                h.equivalent.push(match (f.hint.ty, f.hint.mask) {
+                    (_, Some(mask)) => format!("u8&0x{mask:02x}@{}", f.hint.at),
+                    ("bcd", _) => format!("bcd{}@{}", f.hint.size, f.hint.at),
+                    (ty, _) => format!("{ty}@{}", f.hint.at),
+                });
             }
             continue;
         }

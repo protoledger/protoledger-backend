@@ -137,6 +137,15 @@ pub enum FieldType {
     I32le,
     I64be,
     I64le,
+    /// Число с плавающей точкой IEEE 754; значение — его кратчайшая десятичная запись.
+    F32be,
+    F32le,
+    F64be,
+    F64le,
+    /// Двоично-десятичное число: по десятичной цифре в каждом полубайте.
+    Bcd,
+    /// Целое переменного размера: по 7 бит в байте, младшие первыми.
+    Varint,
     Bytes,
     String,
     Unknown,
@@ -162,7 +171,21 @@ impl FieldType {
             _ => return None,
         })
     }
+
+    /// Размер в байтах и порядок байтов (старший первым) числа с плавающей точкой.
+    pub fn float(self) -> Option<(usize, bool)> {
+        match self {
+            Self::F32be => Some((4, true)),
+            Self::F32le => Some((4, false)),
+            Self::F64be => Some((8, true)),
+            Self::F64le => Some((8, false)),
+            _ => None,
+        }
+    }
 }
+
+/// Столько байт занимает самое длинное двоично-десятичное число: 16 цифр.
+pub const MAX_BCD_BYTES: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -173,13 +196,95 @@ pub enum FramingKind {
     Magic,
 }
 
-/// Длина полного сообщения = значение поля длины + `adjust`.
+/// Тип поля длины: целое постоянного размера или `varint` — по 7 бит в байте, младшие первыми,
+/// старший бит байта — признак продолжения (MQTT, protobuf).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LengthType {
+    U8,
+    U16be,
+    U16le,
+    U32be,
+    U32le,
+    U64be,
+    U64le,
+    I8,
+    I16be,
+    I16le,
+    I32be,
+    I32le,
+    I64be,
+    I64le,
+    Varint,
+}
+
+impl LengthType {
+    /// Целый тип постоянного размера; `None` — `varint`.
+    pub fn int(self) -> Option<IntType> {
+        Some(match self {
+            Self::U8 => IntType::U8,
+            Self::U16be => IntType::U16be,
+            Self::U16le => IntType::U16le,
+            Self::U32be => IntType::U32be,
+            Self::U32le => IntType::U32le,
+            Self::U64be => IntType::U64be,
+            Self::U64le => IntType::U64le,
+            Self::I8 => IntType::I8,
+            Self::I16be => IntType::I16be,
+            Self::I16le => IntType::I16le,
+            Self::I32be => IntType::I32be,
+            Self::I32le => IntType::I32le,
+            Self::I64be => IntType::I64be,
+            Self::I64le => IntType::I64le,
+            Self::Varint => return None,
+        })
+    }
+}
+
+impl From<IntType> for LengthType {
+    fn from(ty: IntType) -> Self {
+        match ty {
+            IntType::U8 => Self::U8,
+            IntType::U16be => Self::U16be,
+            IntType::U16le => Self::U16le,
+            IntType::U32be => Self::U32be,
+            IntType::U32le => Self::U32le,
+            IntType::U64be => Self::U64be,
+            IntType::U64le => Self::U64le,
+            IntType::I8 => Self::I8,
+            IntType::I16be => Self::I16be,
+            IntType::I16le => Self::I16le,
+            IntType::I32be => Self::I32be,
+            IntType::I32le => Self::I32le,
+            IntType::I64be => Self::I64be,
+            IntType::I64le => Self::I64le,
+        }
+    }
+}
+
+/// Больше байт у `varint` не читается: 9 × 7 = 63 бита.
+pub const MAX_VARINT_BYTES: u64 = 9;
+
+/// Число из `varint` и сколько байт оно заняло; `None` — нет завершающего байта.
+pub fn read_varint(bytes: &[u8]) -> Option<(i128, usize)> {
+    let mut value: i128 = 0;
+    for (i, byte) in bytes.iter().take(MAX_VARINT_BYTES as usize).enumerate() {
+        value |= i128::from(byte & 0x7f) << (7 * i);
+        if byte & 0x80 == 0 {
+            return Some((value, i + 1));
+        }
+    }
+    None
+}
+
+/// Длина полного сообщения = значение поля длины + `adjust`. У `varint` длина считается
+/// от конца самого поля: размер сообщения = `at` + байты поля + значение + `adjust`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LengthSpec {
     pub at: u32,
     #[serde(rename = "type")]
-    pub ty: IntType,
+    pub ty: LengthType,
     #[serde(default)]
     pub adjust: i64,
 }
@@ -238,6 +343,9 @@ pub struct FieldDef {
     pub len: Option<Len>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect: Option<Expect>,
+    /// Битовое поле внутри целого: значение — биты маски, сдвинутые к младшему.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u64>,
     #[serde(default)]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,11 +449,13 @@ pub fn parse_hex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Позиция поля после разбора `at`: от начала или от конца сообщения.
+/// Позиция поля после разбора `at`: от начала сообщения, от его конца или сразу за предыдущим
+/// полем описания (`next`) — когда перед полем стоит поле переменного размера.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Offset {
     FromStart(u32),
     FromEnd(u32),
+    Next,
 }
 
 impl At {
@@ -360,6 +470,7 @@ impl At {
     pub fn offset(&self) -> Option<Offset> {
         match self {
             At::Abs(n) => Some(Offset::FromStart(*n)),
+            At::Text(t) if t.trim() == "next" => Some(Offset::Next),
             At::Text(t) => t
                 .trim()
                 .strip_prefix("end-")
@@ -385,7 +496,7 @@ impl Interpretation {
         let mut options = serde_saphyr::Options::default();
         options.budget = Some(budget);
         let it: Interpretation = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|e| SchemaError::Yaml(e.to_string()))?;
+            .map_err(|e| SchemaError::Yaml(crate::yaml_error::localized(&e.to_string())))?;
         it.validate()?;
         Ok(it)
     }
@@ -576,7 +687,7 @@ impl Interpretation {
                 return invalid(format!("{ctx}: имя повторяется"));
             }
             if field.at.offset().is_none() {
-                return invalid(format!("{ctx}: at — число или «end-N»"));
+                return invalid(format!("{ctx}: at — число, «end-N» или «next»"));
             }
             self.validate_field(m, field, &ctx, &names)?;
         }
@@ -624,10 +735,27 @@ impl Interpretation {
                     return invalid(format!("{ctx}: для bytes и string нужна len"));
                 }
             }
+            FieldType::Bcd => {
+                if !matches!(f.len, Some(Len::Fixed(1..=MAX_BCD_BYTES))) {
+                    return invalid(format!(
+                        "{ctx}: для bcd нужна len — число байт от 1 до {MAX_BCD_BYTES}"
+                    ));
+                }
+            }
             _ if f.len.is_some() => {
                 return invalid(format!("{ctx}: len только у bytes, string и unknown"));
             }
             _ => {}
+        }
+        if let Some(mask) = f.mask {
+            let fits =
+                f.ty.int()
+                    .is_some_and(|int| int.size() == 8 || mask < 1u64 << (int.size() * 8));
+            if mask == 0 || !fits {
+                return invalid(format!(
+                    "{ctx}: mask — ненулевое число, которое помещается в целый тип поля"
+                ));
+            }
         }
         if let Some(Len::Text(text)) = &f.len
             && text != "to_end"
@@ -656,6 +784,9 @@ impl Interpretation {
             let ok = match (f.ty, expect) {
                 (FieldType::Bytes, Expect::Text(t)) => parse_hex(t).is_some(),
                 (FieldType::String, Expect::Text(_)) => true,
+                (FieldType::Bcd | FieldType::Varint, Expect::Int(v)) => *v >= 0,
+                // Десятичная запись числа с плавающей точкой: `expect: "21.5"`.
+                (t, Expect::Text(_)) if t.float().is_some() => true,
                 (t, Expect::Int(v)) => t.int().is_some_and(|int| fits(int, i128::from(*v))),
                 (t, Expect::Text(s)) => t.int().is_some() && parse_hex(s).is_some(),
             };
@@ -684,9 +815,14 @@ fn fits(ty: IntType, value: i128) -> bool {
 /// Поле с известным размером: целое или bytes/string с числовой длиной.
 /// Постоянный размер поля в байтах: целые и bytes/string с числовой длиной.
 pub fn fixed_size(f: &FieldDef) -> Option<u64> {
+    if let Some((size, _)) = f.ty.float() {
+        return Some(size as u64);
+    }
     match (f.ty.int(), &f.len) {
         (Some(t), _) => Some(t.size() as u64),
-        (None, Some(Len::Fixed(n))) if matches!(f.ty, FieldType::Bytes | FieldType::String) => {
+        (None, Some(Len::Fixed(n)))
+            if matches!(f.ty, FieldType::Bytes | FieldType::String | FieldType::Bcd) =>
+        {
             Some(u64::from(*n))
         }
         _ => None,
@@ -694,9 +830,7 @@ pub fn fixed_size(f: &FieldDef) -> Option<u64> {
 }
 
 pub fn is_fixed_size(f: &FieldDef) -> bool {
-    f.ty.int().is_some()
-        || (matches!(f.ty, FieldType::Bytes | FieldType::String)
-            && matches!(f.len, Some(Len::Fixed(_))))
+    fixed_size(f).is_some()
 }
 
 #[cfg(test)]

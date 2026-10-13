@@ -13,6 +13,8 @@ use crate::{LoadedLog, SourceData};
 
 /// Доля действий, начиная с которой соединение считаем соединением устройства.
 const DEVICE_SHARE: f64 = 0.5;
+/// Сколько соединений отдаётся в ответе: в записи их бывает сто тысяч, а нужны первые — устройство.
+pub const MAX_DEVICE_CONNECTIONS: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +46,10 @@ pub struct DeviceConnection {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceConnections {
     pub window_ms: u64,
+    /// Всего соединений в записях; в `items` — не больше предела.
+    pub total: u64,
+    /// Соединений с ролью устройства среди всех.
+    pub devices: u64,
     /// Устройство — первыми, затем по доле совпадений.
     pub items: Vec<DeviceConnection>,
 }
@@ -145,5 +151,16 @@ pub fn device_connections(
             .then(y.share_permille.cmp(&x.share_permille))
             .then(x.connection.cmp(&y.connection))
     });
-    Ok(DeviceConnections { window_ms, items })
+    let total = items.len() as u64;
+    let devices = items
+        .iter()
+        .filter(|c| c.role == ConnectionRole::Device)
+        .count() as u64;
+    items.truncate(MAX_DEVICE_CONNECTIONS);
+    Ok(DeviceConnections {
+        window_ms,
+        total,
+        devices,
+        items,
+    })
 }

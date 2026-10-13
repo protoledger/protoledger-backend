@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sources/{sha256}/diagnostics", get(diagnostics))
         .route("/connections", get(list_connections))
         .route("/streams/{stream}/bytes", get(stream_bytes))
+        .route("/streams/{stream}/explain", get(explain))
         .route("/frames/{source}/{frame_no}", get(frame))
 }
 
@@ -475,6 +476,41 @@ struct StreamBytesDto {
     length: u64,
     stream_length: u64,
     segments: Vec<SegmentDto>,
+}
+
+#[derive(Deserialize)]
+struct ExplainQuery {
+    offset: u64,
+}
+
+/// Всё известное о байте потока: кадр, сообщение и поле по текущему описанию, наблюдения, прогоны.
+async fn explain(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    q: Result<Query<ExplainQuery>, QueryRejection>,
+) -> Result<Json<pl_app::ByteExplanation>, ApiError> {
+    let q = query(q)?;
+    let result = tokio::task::spawn_blocking(move || {
+        let it = pl_app::current_interpretation(&state.session);
+        let started = std::time::Instant::now();
+        pl_app::explain_byte(
+            &state.session,
+            &state.sources,
+            &id,
+            q.offset,
+            it.as_ref(),
+            &|| started.elapsed() > std::time::Duration::from_secs(20),
+        )
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            ProblemKind::Internal,
+            "Операция завершилась сбоем, повторите.",
+        )
+    })?
+    .map_err(ApiError)?;
+    Ok(Json(result))
 }
 
 #[derive(Deserialize)]

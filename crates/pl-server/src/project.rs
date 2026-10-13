@@ -11,6 +11,23 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/project", get(get_project).post(open_project))
         .route("/project/settings", patch(update_settings))
+        .route("/project/next-steps", get(next_steps))
+}
+
+/// «Что дальше»: следующие шаги исследования по состоянию проекта.
+async fn next_steps(State(state): State<AppState>) -> Result<Json<pl_app::NextSteps>, ApiError> {
+    let result = tokio::task::spawn_blocking(move || {
+        pl_app::next_steps(&state.session, &state.sources, &state.actions)
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            pl_core::ProblemKind::Internal,
+            "Операция завершилась сбоем, повторите.",
+        )
+    })?
+    .map_err(ApiError)?;
+    Ok(Json(result))
 }
 
 #[derive(Deserialize)]

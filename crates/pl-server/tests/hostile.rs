@@ -145,6 +145,81 @@ async fn every_hostile_file_is_handled_and_server_stays_alive() {
                 .await;
                 assert_eq!(status, StatusCode::OK, "{id}");
             }
+            // Черновик описания проходит по всем подсказкам сразу: на злых данных он либо
+            // собирается, либо отказывает с причиной, но сервер не падает.
+            let ids: Vec<&str> = conn["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|s| s["id"].as_str())
+                .collect();
+            let (status, body) = call(
+                &state,
+                Method::POST,
+                "/api/analysis/draft",
+                Some(json!({ "streams": ids })),
+            )
+            .await;
+            assert!(
+                matches!(status, StatusCode::OK | StatusCode::UNPROCESSABLE_ENTITY),
+                "{ids:?}: {status} {body}"
+            );
+            // Энтропия и «объясни байт» работают с сырыми байтами потока: на любом входе — ответ,
+            // а не сбой. Смещение за концом потока — ошибка запроса.
+            let (status, body) = call(
+                &state,
+                Method::POST,
+                "/api/analysis/entropy",
+                Some(json!({ "streams": ids })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{ids:?}: {body}");
+            for id in &ids {
+                for offset in [0u64, 1, 4096] {
+                    let (status, body) = call(
+                        &state,
+                        Method::GET,
+                        &format!("/api/streams/{id}/explain?offset={offset}"),
+                        None,
+                    )
+                    .await;
+                    assert!(
+                        matches!(status, StatusCode::OK | StatusCode::BAD_REQUEST),
+                        "{id} @{offset}: {status} {body}"
+                    );
+                }
+            }
+        }
+        // Запросы по описанию — с тремя грубыми описаниями на каждую запись: длина в первом
+        // байте, длина переменного размера и сообщения постоянного размера. Разбор может быть
+        // бессмысленным, но каждый запрос отвечает.
+        for yaml in [
+            "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 0, type: u8 }, status: hypothesis }\nmessages:\n  - id: any\n    fields:\n      - { name: first, at: 0, type: u8, status: rule }\n      - { name: tail, at: next, type: varint, status: rule }\n      - { name: rest, at: next, type: string, len: to_end, status: rule }\n",
+            "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 1, type: varint }, status: hypothesis }\nmessages:\n  - id: any\n    fields:\n      - { name: number, at: 0, type: bcd, len: 2, status: rule }\n      - { name: ratio, at: end-4, type: f32le, status: rule }\n",
+            "format: protoledger/interpretation@1\nframing: { kind: fixed, size: 7, status: hypothesis }\nmessages:\n  - id: any\n    when: \"flag == 1 || dst_port > 0\"\n    fields:\n      - { name: flag, at: 0, type: u8, mask: 0x80, status: rule }\n",
+        ] {
+            for (path, body) in [
+                (
+                    "/api/interpretation/coverage",
+                    json!({ "yaml": yaml, "sources": [sha] }),
+                ),
+                (
+                    "/api/interpretation/graph",
+                    json!({ "yaml": yaml, "sources": [sha] }),
+                ),
+                (
+                    "/api/interpretation/compare",
+                    json!({ "yaml": yaml, "a": [sha], "b": [sha] }),
+                ),
+            ] {
+                let (status, answer) = call(&state, Method::POST, path, Some(body)).await;
+                // Отказ по защитному пределу (слишком много сообщений при грубом описании) —
+                // тоже ответ: с причиной, а не сбой.
+                assert!(
+                    matches!(status, StatusCode::OK | StatusCode::PAYLOAD_TOO_LARGE),
+                    "{path} на {sha}: {status} {answer}"
+                );
+            }
         }
     }
 }

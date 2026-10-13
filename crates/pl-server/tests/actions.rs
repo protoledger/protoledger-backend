@@ -436,6 +436,44 @@ async fn relative_log_path_is_resolved_from_workspace() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn journal_columns_are_guessed_with_reasons() {
+    let state = project_state("guess");
+    let path = stand("main.actions.csv").to_string_lossy().into_owned();
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs/guess",
+        Some(json!({ "path": path })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["mapping"]["time"], "time");
+    assert_eq!(body["mapping"]["action"], "action");
+    assert_eq!(body["mapping"]["params"], "params");
+    assert_eq!(body["skipped"], 0);
+    assert!(body["reasons"]["time"].as_str().unwrap().contains("time"));
+    // Догадка сразу годится для импорта.
+    let (status, imported) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": path, "mapping": body["mapping"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    assert_eq!(imported["rows"], body["rows"]);
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs/guess",
+        Some(json!({ "path": "нет-такого.csv" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn device_connections_follow_the_journal() {
     let state = setup("devices").await;
     let (status, _) = call(
@@ -476,6 +514,13 @@ async fn device_connections_follow_the_journal() {
     assert!(first["reason"].as_str().unwrap().contains("действий"));
     assert_eq!(body["windowMs"], 2000);
     let items = body["items"].as_array().unwrap();
+    assert_eq!(
+        body["total"],
+        items.len(),
+        "запись маленькая: в ответе все соединения"
+    );
+    let devices = items.iter().filter(|c| c["role"] == "device").count();
+    assert_eq!(body["devices"], devices);
     let background = items.iter().filter(|c| c["role"] == "background").count();
     assert!(
         background >= 1,

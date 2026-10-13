@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.20
+  version: 0.1.39
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -109,6 +109,49 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/project/next-steps:
+    get:
+      tags: [project]
+      operationId: getNextSteps
+      summary: Что дальше — следующие шаги исследования
+      description: |
+        По состоянию проекта подсказывает, что делать дальше, и объясняет почему: нет записей — импортировать;
+        нет описания — искать границы или собрать черновик; нет прогона или он устарел — запустить проверку;
+        есть опровергнутые гипотезы или контрпримеры — разобрать их; у гипотез нет тестов — добавить; остались
+        неизвестные зоны и открытые вопросы — вернуться к ним; всё сошлось — сформировать отчёт. `steps` идут
+        по убыванию пользы, у каждого `screen` — экран, где шаг делается. `state` — числа, по которым шаги
+        выбраны. Подсказка ничего не делает сама.
+      responses:
+        '200':
+          description: Шаги и состояние проекта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NextSteps' }
+              example:
+                steps:
+                  - id: fix_refuted
+                    screen: hypotheses
+                    title: Разберите опровергнутые гипотезы
+                    detail: 'В последнем прогоне опровергнуты: H6. Посмотрите контрпримеры и подсказку исправления.'
+                state:
+                  sources: 12
+                  actionLogs: 1
+                  hasInterpretation: true
+                  messageTypes: 7
+                  hypotheses: 12
+                  hypothesesWithoutTest: 1
+                  unknownFields: 1
+                  runs: 1
+                  lastRun: run-0001
+                  lastRunStale: false
+                  counterexamples: 0
+                  refuted: [H6]
+                  untested: []
+                  openQuestions: 2
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoProject' }
 
   /api/project/settings:
     patch:
@@ -282,6 +325,207 @@ paths:
                 total: 1
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/compare:
+    post:
+      tags: [interpretation]
+      operationId: compareCaptures
+      summary: Сравнение поведения в двух наборах записей
+      description: |
+        Применяет одно описание к наборам записей `a` и `b` и показывает отличия: типы сообщений, которые есть
+        только в одном наборе; поля, у которых изменились значения (у перечислений до 16 значений — какие
+        появились и пропали, у остальных числовых — стал ли шире диапазон); время от запроса до ответа по типам
+        запросов (медиана и максимум, `ratioPermille` — отношение медиан). `summary` — главное словами, по строке
+        на отличие. Сценарии: до и после обновления прошивки, штатная работа и сбой, два экземпляра устройства.
+        `yaml` — несохранённый текст описания; без него берётся текущая ревизия.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompareRequest' }
+            example:
+              a: ['3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5']
+              b: ['7c11e02a9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5']
+      responses:
+        '200':
+          description: Отличия
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comparison' }
+              example:
+                a: { sources: 1, messages: 32, counts: { matched: 32 } }
+                b: { sources: 1, messages: 22, counts: { matched: 22 } }
+                types:
+                  - { messageId: set_param_req, a: 6, b: 5, change: same }
+                fields:
+                  - messageId: set_param_req
+                    field: value
+                    change: values
+                    a: { samples: 6, distinct: 3, min: 21, max: 1000 }
+                    b: { samples: 5, distinct: 3, min: -5, max: 123456 }
+                    newValues: ['-5', '123456', '70000']
+                    goneValues: ['1000', '21', '37']
+                timing:
+                  - { messageId: set_param_req, a: { pairs: 6, medianNs: 2000000, maxNs: 2400000 }, b: { pairs: 5, medianNs: 2100000, maxNs: 2500000 }, ratioPermille: 1050 }
+                summary: ['set_param_req.value: во втором наборе новые значения — -5, 123456, 70000']
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/graph:
+    post:
+      tags: [interpretation]
+      operationId: getExchangeGraph
+      summary: Граф обмена — типы сообщений, ответы и переходы
+      description: |
+        По всем соединениям записей: `nodes` — типы сообщений и сколько раз их отправила каждая сторона;
+        `answers` — чем отвечают на запрос (только пары, где ответ определён однозначно или по порядку);
+        `next` — какой запрос той же стороны идёт следом в соединении; `starts` — с чего соединения
+        начинаются; счётчики запросов без ответа и сообщений без запроса. `dot` — тот же граф в формате
+        Graphviz DOT: сплошные стрелки — ответы, пунктирные — следующий запрос. Это наблюдаемое поведение
+        на записях, а не заявленный автомат состояний. `yaml` — несохранённый текст описания; `sources` —
+        только эти записи.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CoverageRequest' }
+            example: {}
+      responses:
+        '200':
+          description: Граф обмена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExchangeGraph' }
+              example:
+                connections: 1
+                messages: 32
+                nodes:
+                  - { id: set_param_req, requests: 6, responses: 0 }
+                  - { id: set_param_resp, requests: 0, responses: 6 }
+                answers: [{ from: set_param_req, to: set_param_resp, count: 6 }]
+                next: [{ from: set_param_req, to: set_param_req, count: 5 }]
+                starts: [{ from: начало, to: set_param_req, count: 1 }]
+                unanswered: 0
+                unsolicited: 0
+                dot: "digraph exchange {\n  rankdir=LR;\n}\n"
+                truncated: false
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/coverage:
+    post:
+      tags: [interpretation]
+      operationId: getCoverage
+      summary: Карта покрытия — что в сообщениях описано, а что ещё нет
+      description: |
+        Применяет описание к записям проекта и для каждого типа сообщений считает байты: описанные полем со
+        статусом «правило» (`rule`), полем-гипотезой (`hypothesis`), объявленные неизвестными (`unknown`) и не
+        описанные вовсе (`none`). `regions` — карта первых 256 байт сообщения: подряд идущие смещения с одним
+        описанием, имя поля, гипотеза и доля сообщений, где эти байты описаны именно так (сообщения одного типа
+        бывают разной длины). При наложении полей (битовые поля одного байта) байт считается один раз, по самому
+        твёрдому описанию. `messageId: null` — сообщения, тип которых не определён. `describedPermille` — доля
+        байтов под правилом или гипотезой: честная граница знания о протоколе. `yaml` — несохранённый текст
+        описания; `sources` — только эти записи.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CoverageRequest' }
+            example: {}
+      responses:
+        '200':
+          description: Карта покрытия
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Coverage' }
+              example:
+                sources: 1
+                messages: 32
+                bytes: { total: 420, rule: 96, hypothesis: 250, unknown: 40, none: 34 }
+                describedPermille: 823
+                types:
+                  - messageId: set_param_req
+                    messages: 6
+                    minLen: 12
+                    maxLen: 12
+                    bytes: { total: 72, rule: 30, hypothesis: 36, unknown: 0, none: 6 }
+                    hypotheses: [H1, H2]
+                    regions:
+                      - { start: 0, end: 2, status: rule, field: magic, sharePermille: 1000 }
+                      - { start: 7, end: 11, status: hypothesis, field: value, hypothesis: H2, sharePermille: 1000 }
+                      - { start: 11, end: 12, status: none, sharePermille: 1000 }
+                    mapTruncated: false
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/fix-hints:
+    post:
+      tags: [interpretation]
+      operationId: getHypothesisFixHints
+      summary: Подсказка исправления опровергнутой гипотезы
+      description: |
+        Для гипотезы описания с тестом ищет простую правку, после которой контрпримеров становится меньше.
+        Перебираются: знак и порядок байтов целых полей из теста (`sign`, `byte_order`), ширина поля — 1, 2 или
+        4 байта с тем же началом или тем же младшим байтом (`width`), число знаков после запятой у значения из
+        журнала — `x == action.params.t` ↔ `x == dec(action.params.t, 2)` (`scale`). Каждая правка проверяется на
+        записях проекта: в ответе итог теста после неё и контрпримеры остальных гипотез с тем же полем до и после.
+        Правка не применяется: `fixes[]` — предложения, лучшее первым; пустой список — простой правки нет или
+        контрпримеров нет. `yaml` — несохранённый текст описания; без него берётся текущая ревизия.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FixHintsRequest' }
+            example: { hypothesis: H6 }
+      responses:
+        '200':
+          description: Предложения правок
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FixHints' }
+              example:
+                hypothesis: H6
+                test: threshold_centi_c == dec(action.params.threshold_c, 2)
+                current: { id: H6, verdict: refuted, applicable: 12, held: 10, counterexamples: 2 }
+                fixes:
+                  - kind: sign
+                    summary: 'threshold_centi_c: u16be → i16be (знак): контрпримеров 0 вместо 2, тест выполняется на 12 из 12'
+                    field: threshold_centi_c
+                    messages: [set_config_req]
+                    fromType: u16be
+                    toType: i16be
+                    result: { id: H6, verdict: no_counterexample, applicable: 12, held: 12, counterexamples: 0 }
+                    otherBefore: 0
+                    otherAfter: 0
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -631,6 +875,59 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/action-logs/guess:
+    post:
+      tags: [actions]
+      operationId: guessActionLogMapping
+      summary: Угадать колонки журнала действий
+      description: |
+        Предложение сопоставления колонок по заголовкам и содержимому: разделитель, колонка времени и её формат
+        (из нескольких — начало действия), действие, параметры и результат (JSON или `ключ=значение`), колонка записи.
+        Для каждой роли — причина в `reasons`; догадка сразу проверяется пробным разбором (`rows`, `skipped`).
+        Это предложение: пользователь принимает его или правит перед импортом. Проект не нужен; относительный
+        `path` — от каталога проектов.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              additionalProperties: false
+              properties:
+                path: { type: string, description: Путь к файлу журнала на диске }
+            example: { path: thermostand/sample_protocol/action_journal.csv }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: CSV журнала }
+      responses:
+        '200':
+          description: Догадка с причинами и пробным разбором
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionLogGuess' }
+              example:
+                mapping: { time: start_utc, action: action, params: parameters, result: observed_result, timeFormat: rfc3339, paramsFormat: json, resultFormat: json, delimiter: null, utcOffsetMinutes: 0, clockOffsetMs: 0, source: capture }
+                columns: [capture, session, action_id, start_utc, end_utc, action, parameters, observed_result]
+                reasons:
+                  delimiter: "«,»: при нём 8 колонок и строки с ним согласны"
+                  time: "«start_utc»: 100 % значений читаются как время (Rfc3339)"
+                  action: "«action»: 6 разных действий на 109 строк"
+                  params: "«parameters»: 100 % значений — JSON-объект"
+                  result: "«observed_result»: 100 % значений — JSON-объект"
+                  source: "«capture»: 100 % значений — имена файлов записей; журнал на несколько записей"
+                rows: 109
+                skipped: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/action-logs/{id}/actions:
     get:
       tags: [actions]
@@ -660,6 +957,57 @@ paths:
                 total: 16
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/action-logs/{id}/exchanges:
+    get:
+      tags: [actions]
+      operationId: listActionExchanges
+      summary: Обмены для всех действий журнала разом
+      description: |
+        По строке на каждое действие журнала: запрос стороны, начавшей соединение, найденный в окне времени
+        действия, и ответ на него. Сопоставление то же, что в тестах гипотез: действие получает ближайший
+        следующий запрос, ответ берётся по ходам обмена. `state`: `paired` — есть запрос и ответ;
+        `request_only` — ответ определить нельзя (его нет или пара неоднозначна); `not_found` — запроса в окне
+        нет. `candidates` больше 1 — по времени подошли запросы в нескольких соединениях, показан первый.
+        Журнал без колонки записи относится к той записи, где сообщение в окне времени нашлось для
+        наибольшего числа его действий: запросы других записей не предлагаются и в `candidates` не входят.
+        При равенстве записей выбора нет, и подходят запросы каждой.
+        Нужна сохранённая интерпретация (`409`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: log-0001 }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: windowMs, in: query, description: 'Окно подбора запроса, мс', schema: { type: integer, minimum: 0, maximum: 600000, default: 2000 } }
+      responses:
+        '200':
+          description: Таблица действие → запрос и ответ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionExchangePage' }
+              example:
+                items:
+                  - line: 2
+                    action: set_param
+                    tsNs: 1791190809001270000
+                    state: paired
+                    request: { source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5, stream: '3f5a1c0d:c0001:ab', start: 0, end: 12, messageId: set_param_req, category: matched, tsNs: 1791190809001270000 }
+                    response: { source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5, stream: '3f5a1c0d:c0001:ba', start: 0, end: 13, messageId: set_param_resp, category: matched, tsNs: 1791190809003870000 }
+                    delayNs: 2600000
+                    candidates: 1
+                total: 16
+                limit: 50
+                offset: 0
+                paired: 15
+                requestOnly: 0
+                notFound: 1
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1218,6 +1566,60 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/NoProject' }
 
+  /api/streams/{stream}/explain:
+    get:
+      tags: [sources]
+      operationId: explainByte
+      summary: Объясни байт — всё известное о байте потока
+      description: |
+        Один ответ о байте по смещению `offset`: его значение и вид (`data`, `gap` — не записан, `ambiguous` —
+        кадры расходятся); кадры, которые его принесли, с номерами и временем; сообщение и поля по текущей
+        сохранённой интерпретации — от внешнего к внутреннему, со статусом, прочитанным значением и гипотезой
+        описания (формулировка и тест); наблюдения с якорем на этот байт и гипотезы исследователя, которые на них
+        опираются; последние прогоны, в корпус которых входил поток: категория сообщения, нарушения и признак,
+        что прогон выполнен на том же тексте описания. Без сохранённой интерпретации `message` — `null`.
+      parameters:
+        - name: stream
+          in: path
+          required: true
+          description: Идентификатор направленного потока
+          schema: { type: string, example: '3f5a1c0d:c0001:ab' }
+        - name: offset
+          in: query
+          required: true
+          description: Смещение байта от начала потока
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Что известно о байте
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ByteExplanation' }
+              example:
+                stream: '3f5a1c0d:c0001:ab'
+                offset: 9
+                kind: data
+                value: 21
+                frames: [{ frame: 4, tsNs: 1791190809001270000, start: 0, end: 12, duplicate: false }]
+                message: { start: 0, end: 12, messageId: set_param_req, category: matched, offset: 9 }
+                fields:
+                  - name: value
+                    start: 7
+                    end: 11
+                    status: hypothesis
+                    state: decoded
+                    value: '21'
+                    hypothesis: { id: H2, statement: 'value — значение параметра', test: 'value == action.params.value' }
+                observations: [{ id: obs-1, comment: 'меняется вместе с уставкой', start: 7, end: 11 }]
+                hypotheses: [{ id: H1, statement: 'значение — уставка', status: supported }]
+                runs:
+                  - { id: run-0001, revision: 1, sameInterpretation: true, category: matched, messageId: set_param_req, violations: [] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
   /api/streams/{stream}/bytes:
     get:
       tags: [explore]
@@ -1487,7 +1889,8 @@ paths:
         где значение — код действия (у разных действий разные значения, у одного — почти всегда одно). Это подсказки:
         совпадение на примерах не доказывает связь, у каждой есть число примеров и первый контрпример.
         Границы сообщений — из `framing` либо из сохранённой интерпретации; `messageId` оставляет сообщения одного
-        типа (нужна интерпретация). Без журнала действий — `409`.
+        типа (нужна интерпретация), `action` — сообщения, которым досталось действие с таким именем (описание
+        не нужно: так сравнивают примеры одного действия до того, как типы названы). Без журнала действий — `409`.
       requestBody:
         required: true
         content:
@@ -1590,6 +1993,279 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/types:
+    post:
+      tags: [analysis]
+      operationId: findMessageTypes
+      summary: Типы сообщений — байт-различитель и условие when для каждого типа
+      description: |
+        Ищет, чем сообщения делятся на типы. Сначала — сторона обмена: запрос и ответ считаются разными
+        сообщениями. Если в сообщениях есть байт, который повторяет сторону, условие пишется по нему, иначе —
+        по порту (`dst_port`/`src_port`), когда принимающий порт у всех потоков один. Затем среди байтов общего
+        заголовка ищется различитель: внутри его групп сообщения ближе по длине и у них больше постоянных байтов.
+        Оценка считается по каждой стороне отдельно. Не предлагаются: поле длины, счётчики (растут на единицу
+        внутри потока), байты, с которыми размер сообщения растёт по прямой (число элементов), и байты с более чем
+        24 значениями. В ответе: `keys` — различители с оценками, `fields` — поля, которые нужно объявить в описании,
+        `types` — группы с готовым `when`, числом сообщений, разбросом длин, собственными постоянными байтами,
+        примером и сообщением нетипичной длины. Группы меньше трёх сообщений в оценке не участвуют (`rare`).
+        Границы сообщений — из `framing` или из сохранённой интерпретации. Это подсказка: передавайте потоки
+        обеих сторон, по одной стороне результат слабее.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TypesRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba']
+              framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }
+      responses:
+        '200':
+          description: Различители и типы сообщений
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypeHints' }
+              example:
+                messages: 54
+                truncated: false
+                incomplete: false
+                keys:
+                  - { kind: side, values: 2, lengthExplainedPermille: 0, constantGainPermille: 0, scorePermille: 0 }
+                  - { kind: byte, at: 2, values: 6, lengthExplainedPermille: 870, constantGainPermille: 277, scorePermille: 573 }
+                fields: [{ name: b2, at: 2, type: u8 }]
+                types:
+                  - id: msg_req_02
+                    when: 'dst_port == 4710 && b2 == 0x02'
+                    key: [{ kind: side, value: 0 }, { kind: byte, at: 2, value: 2 }]
+                    count: 10
+                    sharePermille: 185
+                    minLen: 12
+                    maxLen: 12
+                    lengths: 1
+                    constant: [{ start: 4, end: 6, bytes: '0500' }]
+                    example: { stream: '3f5a1c0d:c0001:ab', start: 0, end: 12 }
+                rare: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/analysis/fields:
+    post:
+      tags: [analysis]
+      operationId: findFieldHints
+      summary: Подсказки полей по поведению значений
+      description: |
+        Ищет в сообщениях поля с узнаваемым поведением. **`counter`** — целое, которое растёт на единицу с каждым
+        сообщением потока (ищется по всем сообщениям потоков, фильтры на него не действуют: среди сообщений одного
+        типа номер идёт с пропусками). **`time`** — целое 4 или 8 байт, прирост которого от первого сообщения потока
+        совпадает с приростом времени записи в секундах, милли- или микросекундах; `epoch: true` — значение
+        совпадает с часами записи, то есть это время от эпохи Unix. **`string`** — длина (u8 или u16) и сразу за ней
+        печатный текст UTF-8 этой длины. **`text`** — печатный текст на постоянном месте, не короче 4 байт.
+        **`tlv`** — записи «метка, длина, значение» подряд до конца сообщения. Подсказка даётся при совпадении не
+        меньше чем на 5 примерах и в 80 % случаев; первое несовпавшее сообщение — `firstCounterexample`.
+        Сообщения должны быть одного вида: передавайте потоки одной стороны и отбирайте тип — `messageId`
+        (нужна сохранённая интерпретация) или `match` — значения байтов-различителей из `/api/analysis/types`.
+        Границы сообщений — из `framing` или из сохранённой интерпретации. Это подсказки, не выводы.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FieldsRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab']
+              framing: { kind: length_prefixed, length: { at: 2, type: u16be, adjust: 8 }, status: hypothesis }
+              match: [{ at: 7, value: 32 }]
+      responses:
+        '200':
+          description: Подсказки полей
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldBehaviorHints' }
+              example:
+                messages: 14
+                truncated: false
+                incomplete: false
+                hints:
+                  - kind: counter
+                    at: 4
+                    type: u16be
+                    size: 2
+                    summary: растёт на единицу с каждым сообщением потока
+                    matches: 80
+                    samples: 80
+                    sharePermille: 1000
+                    equivalent: [{ at: 5, type: u8 }]
+                  - kind: string
+                    at: 13
+                    type: u8
+                    toEnd: true
+                    example: Lab
+                    summary: длина и сразу за ней текст этой длины, до конца сообщения
+                    matches: 13
+                    samples: 14
+                    sharePermille: 928
+                    firstCounterexample: { stream: '3f5a1c0d:c0001:ab', start: 120, end: 134 }
+                    equivalent: []
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/analysis/suggestions:
+    post:
+      tags: [analysis]
+      operationId: getResearchSuggestions
+      summary: Заготовки наблюдений и гипотез из связей с журналом
+      description: |
+        Для каждого типа сообщений сохранённой интерпретации ищет байты, равные значениям из журнала действий
+        (как `/api/analysis/correlations`), и каждую связь, сошедшуюся не меньше чем в 90 % примеров, превращает в
+        заготовки: `observation` — якорь на эти байты в примере сообщения и комментарий с числом совпадений;
+        `hypothesis` — формулировка и готовый тест (`x == action.params.y`, для дробных — `dec(…, n)`).
+        Если на этих байтах уже есть поле описания, тест опирается на него (`field`); если нет — в `newField`
+        поле, которое нужно добавить в описание. Ничего не создаётся: заготовки принимаются обычными
+        `POST /api/observations` и `POST /api/hypotheses` (в `basis` — идентификатор созданного наблюдения).
+        Нужны сохранённая интерпретация и журнал действий (`409`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DraftRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba'] }
+      responses:
+        '200':
+          description: Заготовки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Suggestions' }
+              example:
+                items:
+                  - messageId: set_param_req
+                    param: params.value
+                    matches: 6
+                    samples: 6
+                    observation:
+                      source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5
+                      stream: '3f5a1c0d:c0001:ab'
+                      start: 31
+                      end: 35
+                      comment: 'Байты 7–10 сообщения set_param_req (i32be) равны значению «params.value» из журнала действий: совпало в 6 из 6 сообщений.'
+                    hypothesis:
+                      statement: 'value в сообщении set_param_req — значение «params.value» из журнала действий'
+                      test: value == action.params.value
+                    field: value
+                truncated: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/analysis/entropy:
+    post:
+      tags: [analysis]
+      operationId: getEntropy
+      summary: Энтропия участков потока — похоже ли на сжатие или шифрование
+      description: |
+        Проходит известные байты потока окнами по 256 байт и отмечает участки: `high` — байты распределены почти
+        равномерно (7 бит на байт и больше), так выглядят сжатые и зашифрованные данные; `text` — не меньше 90 %
+        печатных символов; `low` — почти одно значение, заполнение. Остальное — обычные структурированные данные,
+        в `regions` не попадает. Окна не перекидываются через дыры; на данных короче окна судить не о чем.
+        Это подсказка, почему участок не раскладывается на поля, а не вывод: шифрование — вне области продукта.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FramingRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab'] }
+      responses:
+        '200':
+          description: Карта энтропии по потокам
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntropyPage' }
+              example:
+                streams:
+                  - stream: '3f5a1c0d:c0001:ab'
+                    length: 2100
+                    bytes: 2048
+                    highBytes: 1024
+                    textBytes: 0
+                    lowBytes: 256
+                    regions:
+                      - { start: 512, end: 1536, kind: high, entropyMillibits: 7168 }
+                      - { start: 1792, end: 2048, kind: low, entropyMillibits: 0 }
+                    truncated: false
+                    summary: '50 % просмотренных байтов похожи на сжатые или зашифрованные: полей в них не найти.'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/analysis/draft:
+    post:
+      tags: [analysis]
+      operationId: draftInterpretation
+      summary: Черновик описания протокола, собранный из подсказок
+      description: |
+        Собирает текст интерпретации по потокам обеих сторон обмена. Шаги: границы сообщений (лучший кандидат поля
+        длины и сигнатура начала) → типы сообщений (`/api/analysis/types`) → поля по поведению (счётчик, строки) и
+        связи с журналом действий по каждому типу → контрольная сумма. Все поля получают статус `hypothesis` и
+        гипотезу с основанием; связи с журналом — гипотезу с тестом (`period_ms == action.params.period_ms`),
+        контрольная сумма — проверку в `checks`. Из равнозначных чтений берётся самое узкое, о возможной большей
+        ширине сказано в гипотезе. Черновик не сохраняется: `yaml` проходит ту же проверку, что
+        `PUT /api/interpretation`, и его можно сохранить как есть. `steps` — что найдено на каждом шаге и на чём
+        основано; `summary` — что черновик даёт на этих же потоках. `422` — границы сообщений не найдены.
+        Журнал (`logId` или все журналы проекта) не обязателен: без него связей с действиями не будет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DraftRequest' }
+            example:
+              streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba']
+      responses:
+        '200':
+          description: Черновик описания
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+              example:
+                yaml: "format: protoledger/interpretation@1\nframing: {\"kind\":\"length_prefixed\",\"length\":{\"at\":4,\"type\":\"u16le\",\"adjust\":7},\"status\":\"hypothesis\"}\nmessages:\n  - id: message\n    fields:\n      - { name: length, at: 4, type: u16le, status: hypothesis, hypothesis: H1 }\nhypotheses:\n  - { id: H1, statement: \"length — длина\" }\n"
+                steps:
+                  - { title: Границы сообщений, detail: 'Поле длины u16le по смещению 4: размер сообщения = значение + 7. Сообщений: 32, контрпримеров нет.' }
+                  - { title: Контрольная сумма, detail: 'сумма байтов по модулю 256: поле u8 по смещению end-1, сошлась в 32 из 32 сообщений.' }
+                summary:
+                  streams: 2
+                  messages: 32
+                  counts: { matched: 32 }
+                  unknownBytes: 61308
+                  types: 6
+                  hypotheses: 11
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/analysis/device-connections:
     post:
       tags: [analysis]
@@ -1599,7 +2275,8 @@ paths:
         Для каждого соединения — сколько действий журнала его записи «ответили» в нём данными в течение
         `windowMs` после начала действия (с допуском 50 мс на часы). Доля от половины и выше — `device`,
         остальное — `background`. Подсказка для выбора соединения среди фона, не вывод о протоколе.
-        Устройство — первыми, затем по доле. Нужен импортированный журнал, иначе `409`.
+        Устройство — первыми, затем по доле; в `items` не больше 500 соединений, `total` и `devices` — по всем.
+        Нужен импортированный журнал, иначе `409`.
       requestBody:
         required: true
         content:
@@ -1618,6 +2295,8 @@ paths:
               schema: { $ref: '#/components/schemas/DeviceConnections' }
               example:
                 windowMs: 2000
+                total: 1
+                devices: 1
                 items:
                   - { connection: 'd05c6bf0:c0001', source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, a: '10.77.0.10:42010', b: '10.77.0.20:46123', role: device, actionsMatched: 16, actionsTotal: 16, sharePermille: 1000, payloadFrames: 32, reason: 'данные в течение 2000 мс после 16 из 16 действий записи' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -2012,6 +2691,383 @@ components:
         неоднозначный участок; `unmatched` — ни одно описание не подошло; `limit_exceeded` — ограничение
         реализации (заявленная длина больше предела).
 
+    ByteExplanation:
+      type: object
+      required: [stream, offset, kind, value, frames, message, fields, observations, hypotheses, runs]
+      properties:
+        stream: { type: string }
+        offset: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [data, gap, ambiguous] }
+        value: { type: [integer, 'null'], minimum: 0, maximum: 255 }
+        frames:
+          type: array
+          items:
+            type: object
+            required: [frame, tsNs, start, end, duplicate]
+            properties:
+              frame: { type: integer, minimum: 1 }
+              tsNs: { type: integer, minimum: 0 }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              duplicate: { type: boolean }
+        message:
+          oneOf:
+            - type: object
+              required: [start, end, messageId, category, offset]
+              properties:
+                start: { type: integer, minimum: 0 }
+                end: { type: integer, minimum: 0 }
+                messageId: { type: [string, 'null'] }
+                category: { type: string }
+                offset: { type: integer, minimum: 0, description: 'Смещение байта от начала сообщения' }
+            - { type: 'null' }
+        fields:
+          type: array
+          description: Поля с этим байтом, от внешнего к внутреннему
+          items:
+            type: object
+            required: [name, start, end, status, state, value, hypothesis]
+            properties:
+              name: { type: string }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              status: { type: string, enum: [rule, hypothesis, unknown] }
+              state: { type: string }
+              value: { type: [string, 'null'] }
+              hypothesis:
+                oneOf:
+                  - type: object
+                    required: [id, statement, test]
+                    properties:
+                      id: { type: string }
+                      statement: { type: string }
+                      test: { type: [string, 'null'] }
+                  - { type: 'null' }
+        observations:
+          type: array
+          items:
+            type: object
+            required: [id, comment, start, end]
+            properties:
+              id: { type: string }
+              comment: { type: string }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+        hypotheses:
+          type: array
+          description: Гипотезы исследователя, основанные на этих наблюдениях
+          items:
+            type: object
+            required: [id, statement, status]
+            properties:
+              id: { type: string }
+              statement: { type: string }
+              status: { type: string }
+        runs:
+          type: array
+          description: Прогоны с этим потоком, от нового к старому (до 20)
+          items:
+            type: object
+            required: [id, revision, sameInterpretation, category, messageId, violations]
+            properties:
+              id: { type: string }
+              revision: { type: [integer, 'null'] }
+              sameInterpretation: { type: boolean }
+              category: { type: [string, 'null'] }
+              messageId: { type: [string, 'null'] }
+              violations:
+                type: array
+                items:
+                  type: object
+                  required: [kind, id, detail, status]
+                  properties:
+                    kind: { type: string }
+                    id: { type: string }
+                    detail: { type: string }
+                    status: { type: string }
+
+    CompareRequest:
+      type: object
+      required: [a, b]
+      additionalProperties: false
+      properties:
+        a: { type: array, minItems: 1, maxItems: 1000, items: { type: string }, description: 'sha256 записей первого набора' }
+        b: { type: array, minItems: 1, maxItems: 1000, items: { type: string }, description: 'sha256 записей второго набора' }
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+
+    CompareSide:
+      type: object
+      required: [sources, messages, counts]
+      properties:
+        sources: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        counts: { type: object, additionalProperties: { type: integer, minimum: 0 }, description: 'Сообщений по категориям' }
+
+    CompareValues:
+      type: object
+      required: [samples, distinct, min, max]
+      properties:
+        samples: { type: integer, minimum: 0 }
+        distinct: { type: integer, minimum: 0, maximum: 64, description: 'Разных значений; больше 64 не считается' }
+        min: { type: [integer, 'null'] }
+        max: { type: [integer, 'null'] }
+
+    CompareTiming:
+      type: object
+      required: [pairs, medianNs, maxNs]
+      properties:
+        pairs: { type: integer, minimum: 0 }
+        medianNs: { type: integer, minimum: 0 }
+        maxNs: { type: integer, minimum: 0 }
+
+    Comparison:
+      type: object
+      required: [a, b, types, fields, timing, summary, incomplete]
+      properties:
+        a: { $ref: '#/components/schemas/CompareSide' }
+        b: { $ref: '#/components/schemas/CompareSide' }
+        types:
+          type: array
+          items:
+            type: object
+            required: [messageId, a, b, change]
+            properties:
+              messageId: { type: [string, 'null'], description: 'null — тип не определён' }
+              a: { type: integer, minimum: 0 }
+              b: { type: integer, minimum: 0 }
+              change: { type: string, enum: [new, missing, same] }
+        fields:
+          type: array
+          description: Только поля с отличиями, до 100
+          items:
+            type: object
+            required: [messageId, field, change, a, b, newValues, goneValues]
+            properties:
+              messageId: { type: string }
+              field: { type: string }
+              change: { type: string, enum: [values, range] }
+              a: { $ref: '#/components/schemas/CompareValues' }
+              b: { $ref: '#/components/schemas/CompareValues' }
+              newValues: { type: array, items: { type: string }, description: 'Есть только во втором наборе, до 8' }
+              goneValues: { type: array, items: { type: string }, description: 'Есть только в первом наборе, до 8' }
+        timing:
+          type: array
+          items:
+            type: object
+            required: [messageId, a, b, ratioPermille]
+            properties:
+              messageId: { type: string, description: 'Тип запроса' }
+              a: { $ref: '#/components/schemas/CompareTiming' }
+              b: { $ref: '#/components/schemas/CompareTiming' }
+              ratioPermille: { type: integer, minimum: 0, description: 'Медиана второго набора к первому, в тысячных' }
+        summary: { type: array, items: { type: string }, description: 'Главное словами' }
+        incomplete: { type: boolean }
+
+    GraphEdge:
+      type: object
+      required: [from, to, count]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        count: { type: integer, minimum: 0 }
+
+    ExchangeGraph:
+      type: object
+      required: [connections, messages, nodes, answers, next, starts, unanswered, unsolicited, dot, truncated, incomplete]
+      properties:
+        connections: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, requests, responses]
+            properties:
+              id: { type: string, description: 'Тип сообщения; ? — тип не определён' }
+              requests: { type: integer, minimum: 0, description: 'Отправлено стороной, начавшей соединение' }
+              responses: { type: integer, minimum: 0, description: 'Отправлено встречной стороной' }
+        answers: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Запрос → ответ' }
+        next: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Запрос → следующий запрос' }
+        starts: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Первый запрос соединения' }
+        unanswered: { type: integer, minimum: 0 }
+        unsolicited: { type: integer, minimum: 0 }
+        dot: { type: string, description: 'Граф в формате Graphviz DOT' }
+        truncated: { type: boolean, description: 'Рёбер больше 200: показаны самые частые' }
+        incomplete: { type: boolean }
+
+    ActionMessage:
+      type: object
+      required: [source, stream, start, end, messageId, category, tsNs]
+      properties:
+        source: { type: string }
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        messageId: { type: [string, 'null'] }
+        category: { type: string }
+        tsNs: { type: integer, minimum: 0 }
+
+    ActionExchangePage:
+      type: object
+      required: [items, total, limit, offset, paired, requestOnly, notFound]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [line, action, tsNs, state, request, response, delayNs, candidates]
+            properties:
+              line: { type: integer, minimum: 1 }
+              action: { type: string }
+              tsNs: { type: integer, minimum: 0 }
+              state: { type: string, enum: [paired, request_only, not_found] }
+              request:
+                oneOf:
+                  - { $ref: '#/components/schemas/ActionMessage' }
+                  - { type: 'null' }
+              response:
+                oneOf:
+                  - { $ref: '#/components/schemas/ActionMessage' }
+                  - { type: 'null' }
+              delayNs: { type: [integer, 'null'], minimum: 0 }
+              candidates: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
+        paired: { type: integer, minimum: 0 }
+        requestOnly: { type: integer, minimum: 0 }
+        notFound: { type: integer, minimum: 0 }
+
+    NextSteps:
+      type: object
+      required: [steps, state]
+      properties:
+        steps:
+          type: array
+          items:
+            type: object
+            required: [id, screen, title, detail]
+            properties:
+              id: { type: string, description: 'Устойчивый идентификатор шага' }
+              screen: { type: string, enum: [sources, actions, framing, interpretation, hypotheses, verification, questions, report] }
+              title: { type: string }
+              detail: { type: string }
+        state:
+          type: object
+          required: [sources, actionLogs, hasInterpretation, messageTypes, hypotheses, hypothesesWithoutTest, unknownFields, runs, lastRun, lastRunStale, counterexamples, refuted, untested, openQuestions]
+          properties:
+            sources: { type: integer, minimum: 0 }
+            actionLogs: { type: integer, minimum: 0 }
+            hasInterpretation: { type: boolean }
+            messageTypes: { type: integer, minimum: 0 }
+            hypotheses: { type: integer, minimum: 0 }
+            hypothesesWithoutTest: { type: integer, minimum: 0 }
+            unknownFields: { type: integer, minimum: 0 }
+            runs: { type: integer, minimum: 0 }
+            lastRun: { type: [string, 'null'] }
+            lastRunStale: { type: boolean }
+            counterexamples: { type: integer, minimum: 0 }
+            refuted: { type: array, items: { type: string } }
+            untested: { type: array, items: { type: string } }
+            openQuestions: { type: integer, minimum: 0 }
+
+    CoverageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+        sources: { type: array, maxItems: 1000, items: { type: string }, description: 'sha256 записей; по умолчанию все записи проекта' }
+
+    CoverageBytes:
+      type: object
+      required: [total, rule, hypothesis, unknown, none]
+      properties:
+        total: { type: integer, minimum: 0 }
+        rule: { type: integer, minimum: 0 }
+        hypothesis: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0, description: 'Зоны, объявленные неизвестными' }
+        none: { type: integer, minimum: 0, description: 'Байты без описания' }
+
+    CoverageType:
+      type: object
+      required: [messageId, messages, minLen, maxLen, bytes, hypotheses, regions, mapTruncated]
+      properties:
+        messageId: { type: [string, 'null'], description: 'null — тип сообщения не определён' }
+        messages: { type: integer, minimum: 0 }
+        minLen: { type: integer, minimum: 0 }
+        maxLen: { type: integer, minimum: 0 }
+        bytes: { $ref: '#/components/schemas/CoverageBytes' }
+        hypotheses: { type: array, items: { type: string } }
+        regions:
+          type: array
+          items:
+            type: object
+            required: [start, end, status, sharePermille]
+            properties:
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              status: { type: string, enum: [rule, hypothesis, unknown, none] }
+              field: { type: string }
+              hypothesis: { type: string }
+              sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        mapTruncated: { type: boolean, description: 'Сообщения длиннее 256 байт или областей больше 128' }
+
+    Coverage:
+      type: object
+      required: [sources, messages, bytes, describedPermille, types, incomplete]
+      properties:
+        sources: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        bytes: { $ref: '#/components/schemas/CoverageBytes' }
+        describedPermille: { type: integer, minimum: 0, maximum: 1000 }
+        types: { type: array, items: { $ref: '#/components/schemas/CoverageType' } }
+        incomplete: { type: boolean, description: 'Разбор прерван по времени: посчитана часть записей' }
+
+    FixHintsRequest:
+      type: object
+      required: [hypothesis]
+      additionalProperties: false
+      properties:
+        hypothesis: { type: string, description: 'Идентификатор гипотезы описания (H6)' }
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+        windowMs: { type: integer, minimum: 0, maximum: 600000, description: 'Окно подбора действия журнала, мс (по умолчанию 2000)' }
+
+    FixTestResult:
+      type: object
+      required: [id, verdict, applicable, held, counterexamples]
+      properties:
+        id: { type: string }
+        verdict: { type: string }
+        applicable: { type: integer, minimum: 0 }
+        held: { type: integer, minimum: 0 }
+        counterexamples: { type: integer, minimum: 0 }
+
+    Fix:
+      type: object
+      required: [kind, summary, result, otherBefore, otherAfter]
+      properties:
+        kind: { type: string, enum: [sign, byte_order, scale, width] }
+        summary: { type: string, description: 'Что изменить и что это даёт' }
+        field: { type: string, description: 'Поле, которое меняется; нет у правки теста' }
+        messages: { type: array, items: { type: string }, description: 'Сообщения, где поле меняется вместе' }
+        fromType: { type: string }
+        toType: { type: string }
+        fromAt: { type: integer, minimum: 0, description: 'Смещение поля сейчас, если правка его сдвигает' }
+        toAt: { type: integer, minimum: 0 }
+        test: { type: string, description: 'Новый текст теста (kind = scale)' }
+        result: { $ref: '#/components/schemas/FixTestResult' }
+        otherBefore: { type: integer, minimum: 0, description: 'Контрпримеры остальных гипотез с этим полем сейчас' }
+        otherAfter: { type: integer, minimum: 0, description: 'То же после правки' }
+
+    FixHints:
+      type: object
+      required: [hypothesis, test, current, fixes]
+      properties:
+        hypothesis: { type: string }
+        test: { type: string }
+        current: { $ref: '#/components/schemas/FixTestResult' }
+        fixes: { type: array, items: { $ref: '#/components/schemas/Fix' } }
+
     FieldHintsRequest:
       type: object
       required: [messageId, field]
@@ -2376,6 +3432,23 @@ components:
         clockOffsetMs: { type: integer, default: 0, description: "Поправка на сдвиг часов клиента, мс" }
         source: { type: [string, 'null'], description: 'Колонка с именем или путём записи: журнал на несколько записей, действия сопоставляются только со своей записью (по имени файла, без учёта регистра)' }
 
+    ActionLogGuess:
+      type: object
+      required: [mapping, columns, reasons, rows, skipped]
+      additionalProperties: false
+      properties:
+        mapping: { $ref: '#/components/schemas/ActionLogMapping' }
+        columns:
+          type: array
+          description: Колонки файла в исходном порядке
+          items: { type: string }
+        reasons:
+          type: object
+          description: 'Почему выбрана роль: ключи delimiter, time, action, params, result, source'
+          additionalProperties: { type: string }
+        rows: { type: integer, minimum: 0, description: Разобрано строк с этой догадкой }
+        skipped: { type: integer, minimum: 0, description: Не разобрано строк }
+
     ImportActionLogRequest:
       type: object
       required: [path, mapping]
@@ -2657,7 +3730,7 @@ components:
           additionalProperties: false
           properties:
             at: { type: integer, minimum: 0 }
-            type: { type: string, enum: [u8, u16be, u16le, u32be, u32le, u64be, u64le, i8, i16be, i16le, i32be, i32le, i64be, i64le] }
+            type: { type: string, enum: [u8, u16be, u16le, u32be, u32le, u64be, u64le, i8, i16be, i16le, i32be, i32le, i64be, i64le, varint], description: 'varint — по 7 бит в байте, младшие первыми; длина считается от конца поля' }
             adjust: { type: integer, description: 'Длина сообщения = значение поля + adjust' }
         size: { type: integer, minimum: 1 }
         bytes: { type: string, description: 'hex' }
@@ -2691,7 +3764,7 @@ components:
       required: [at, width, bigEndian, adjust, messages, coveredBytes, totalBytes, scorePermille, streamsConfirmed, streamsTotal, streamsEndedExactly, startCoherencePermille, segmentAlignmentPermille, distinctValues, minLength, maxLength, firstCounterexample, equivalent, framing]
       properties:
         at: { type: integer, minimum: 0 }
-        width: { type: integer, enum: [1, 2, 4] }
+        width: { type: integer, enum: [0, 1, 2, 4], description: '0 — поле переменного размера (varint)' }
         bigEndian: { type: boolean }
         adjust: { type: integer }
         messages: { type: integer, minimum: 0 }
@@ -2775,6 +3848,261 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    Suggestions:
+      type: object
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [messageId, param, matches, samples, observation, hypothesis, field]
+            properties:
+              messageId: { type: string }
+              param: { type: string, description: 'params.<имя> или result.<имя> из журнала' }
+              matches: { type: integer, minimum: 0 }
+              samples: { type: integer, minimum: 0 }
+              observation:
+                type: object
+                required: [source, stream, start, end, comment]
+                properties:
+                  source: { type: string }
+                  stream: { type: string }
+                  start: { type: integer, minimum: 0 }
+                  end: { type: integer, minimum: 0 }
+                  comment: { type: string }
+              hypothesis:
+                type: object
+                required: [statement, test]
+                properties:
+                  statement: { type: string }
+                  test: { type: string }
+              field: { type: [string, 'null'], description: 'Поле описания на этих байтах; null — его нужно добавить' }
+              newField:
+                type: object
+                required: [name, at, type]
+                properties:
+                  name: { type: string }
+                  at: { type: integer, minimum: 0 }
+                  type: { type: string }
+                  len: { type: integer, minimum: 1 }
+                  mask: { type: integer, minimum: 1 }
+        truncated: { type: boolean }
+
+    EntropyPage:
+      type: object
+      required: [streams]
+      properties:
+        streams:
+          type: array
+          items:
+            type: object
+            required: [stream, length, bytes, highBytes, textBytes, lowBytes, regions, truncated, summary]
+            properties:
+              stream: { type: string }
+              length: { type: integer, minimum: 0 }
+              bytes: { type: integer, minimum: 0, description: 'Просмотрено окнами' }
+              highBytes: { type: integer, minimum: 0 }
+              textBytes: { type: integer, minimum: 0 }
+              lowBytes: { type: integer, minimum: 0 }
+              regions:
+                type: array
+                items:
+                  type: object
+                  required: [start, end, kind, entropyMillibits]
+                  properties:
+                    start: { type: integer, minimum: 0 }
+                    end: { type: integer, minimum: 0 }
+                    kind: { type: string, enum: [high, text, low] }
+                    entropyMillibits: { type: integer, minimum: 0, maximum: 8000 }
+              truncated: { type: boolean, description: 'Поток длиннее 16 МиБ или участков больше 256' }
+              summary: { type: string }
+
+    DraftRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        logId: { type: string, description: 'Журнал действий; по умолчанию все журналы проекта' }
+
+    Draft:
+      type: object
+      required: [yaml, steps, summary, incomplete]
+      properties:
+        yaml: { type: string, description: 'Текст интерпретации' }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [title, detail]
+            properties:
+              title: { type: string }
+              detail: { type: string }
+        summary:
+          type: object
+          required: [streams, messages, counts, unknownBytes, types, hypotheses]
+          properties:
+            streams: { type: integer, minimum: 0 }
+            messages: { type: integer, minimum: 0 }
+            counts:
+              type: object
+              description: Сообщений по категориям результата
+              additionalProperties: { type: integer, minimum: 0 }
+            unknownBytes: { type: integer, minimum: 0 }
+            types: { type: integer, minimum: 0 }
+            hypotheses: { type: integer, minimum: 0 }
+        incomplete: { type: boolean, description: 'Часть шагов не успела выполниться' }
+
+    FieldsRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+        messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
+        match:
+          type: array
+          maxItems: 8
+          description: Только сообщения с этими значениями байтов
+          items:
+            type: object
+            required: [at, value]
+            additionalProperties: false
+            properties:
+              at: { type: integer, minimum: 0 }
+              value: { type: integer, minimum: 0, maximum: 255 }
+
+    FieldBehaviorHint:
+      type: object
+      required: [kind, at, type, summary, matches, samples, sharePermille, equivalent]
+      properties:
+        kind: { type: string, enum: [counter, time, string, text, tlv] }
+        at: { type: integer, minimum: 0, description: 'Смещение поля; у строки и записей — смещение длины или первой записи' }
+        type: { type: string, description: 'Тип поля; у строки и записей — тип длины' }
+        size: { type: integer, minimum: 1, description: 'Размер в байтах: счётчик, время, текст' }
+        unit: { type: string, enum: [s, ms, us], description: 'Единица времени' }
+        epoch: { type: boolean, description: 'Время от эпохи Unix: совпадает с часами записи' }
+        toEnd: { type: boolean, description: 'Строка или записи доходят до конца сообщения' }
+        example: { type: string, description: 'Пример текста, до 32 символов' }
+        tags: { type: integer, minimum: 0, description: 'Разных меток у записей' }
+        summary: { type: string, description: 'Что это значит, одной фразой' }
+        matches: { type: integer, minimum: 0 }
+        samples: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        firstCounterexample: { $ref: '#/components/schemas/MessagePlace' }
+        equivalent:
+          type: array
+          description: То же поле, прочитанное иначе; на этих данных неотличимо
+          items:
+            type: object
+            required: [at, type]
+            properties:
+              at: { type: integer, minimum: 0 }
+              type: { type: string }
+
+    FieldBehaviorHints:
+      type: object
+      required: [messages, truncated, incomplete, hints]
+      properties:
+        messages: { type: integer, minimum: 0, description: 'Сколько сообщений отобрано фильтром' }
+        truncated: { type: boolean, description: 'Сообщений больше 20 000: взяты первые' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени' }
+        hints: { type: array, items: { $ref: '#/components/schemas/FieldBehaviorHint' } }
+
+    TypesRequest:
+      type: object
+      required: [streams]
+      additionalProperties: false
+      properties:
+        streams: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        framing: { $ref: '#/components/schemas/FramingSpec' }
+
+    TypeKey:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [byte, side], description: 'byte — байт сообщения, side — сторона обмена' }
+        at: { type: integer, minimum: 0, description: 'Смещение байта (для kind = byte)' }
+
+    MessagePlace:
+      type: object
+      required: [stream, start, end]
+      properties:
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+
+    TypeGroup:
+      type: object
+      required: [id, when, key, count, sharePermille, minLen, maxLen, lengths, constant, example]
+      properties:
+        id: { type: string, description: 'Предлагаемый идентификатор сообщения' }
+        when: { type: string, description: 'Условие для описания' }
+        key:
+          type: array
+          items:
+            type: object
+            required: [kind, value]
+            properties:
+              kind: { type: string, enum: [byte, side] }
+              at: { type: integer, minimum: 0 }
+              value: { type: integer, minimum: 0, maximum: 255, description: 'Значение байта; для стороны 0 — начавшая соединение, 1 — вторая' }
+        count: { type: integer, minimum: 0 }
+        sharePermille: { type: integer, minimum: 0, maximum: 1000 }
+        minLen: { type: integer, minimum: 0 }
+        maxLen: { type: integer, minimum: 0 }
+        lengths: { type: integer, minimum: 0, description: 'Сколько разных длин у сообщений группы' }
+        constant:
+          type: array
+          description: Постоянные байты группы, которые меняются между группами
+          items:
+            type: object
+            required: [start, end, bytes]
+            properties:
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
+              bytes: { type: string, description: hex }
+        example:
+          oneOf:
+            - { $ref: '#/components/schemas/MessagePlace' }
+            - { type: 'null' }
+        lengthOutlier: { $ref: '#/components/schemas/MessagePlace' }
+
+    TypeHints:
+      type: object
+      required: [messages, truncated, incomplete, keys, fields, types, rare]
+      properties:
+        messages: { type: integer, minimum: 0 }
+        truncated: { type: boolean, description: 'Сообщений больше 20 000: взяты первые' }
+        incomplete: { type: boolean, description: 'Поиск прерван по времени' }
+        keys:
+          type: array
+          description: Различители; пусто — сообщения на типы не делятся
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/TypeKey' }
+              - type: object
+                required: [values, lengthExplainedPermille, constantGainPermille, scorePermille]
+                properties:
+                  values: { type: integer, minimum: 0 }
+                  lengthExplainedPermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля разнообразия длин, объяснённая различителями до этого включительно' }
+                  constantGainPermille: { type: integer, minimum: 0, maximum: 1000, description: 'Доля меняющихся байтов, ставших постоянными внутри групп' }
+                  scorePermille: { type: integer, minimum: 0, maximum: 1000 }
+        fields:
+          type: array
+          description: Поля-различители для описания; на них ссылаются условия when
+          items:
+            type: object
+            required: [name, at, type]
+            properties:
+              name: { type: string }
+              at: { type: integer, minimum: 0 }
+              type: { type: string, enum: [u8] }
+        types: { type: array, items: { $ref: '#/components/schemas/TypeGroup' } }
+        rare: { type: integer, minimum: 0, description: 'Сообщений в группах меньше трёх' }
 
     ChecksumRequest:
       type: object
@@ -2908,6 +4236,7 @@ components:
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         logId: { type: string, description: 'Журнал действий (log-0001); без значения — все' }
         windowMs: { type: integer, minimum: 0, maximum: 600000, description: 'Окно подбора действия, мс (по умолчанию 2000)' }
+        action: { type: string, description: 'Только сообщения, которым досталось действие с этим именем' }
 
     CorrelationValue:
       type: object
@@ -2915,7 +4244,9 @@ components:
       properties:
         param: { type: string, description: 'params.<имя> или result.<имя> из журнала' }
         at: { type: integer, minimum: 0 }
-        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le] }
+        type: { type: string, enum: [u8, i8, u16be, u16le, i16be, i16le, u32be, u32le, i32be, i32le, bcd, f32be, f32le, f64be, f64le], description: 'Тип поля в описании; у bcd длина — size' }
+        size: { type: integer, minimum: 1, maximum: 8, description: 'Размер поля в байтах' }
+        mask: { type: integer, minimum: 1, maximum: 255, description: 'Битовое поле байта: значение — биты маски, сдвинутые к младшему' }
         scale: { type: integer, enum: [1, 10, 100, 1000], description: 'Прочитанное значение = параметр × scale' }
         matches: { type: integer, minimum: 0 }
         samples: { type: integer, minimum: 0 }
@@ -2954,12 +4285,15 @@ components:
 
     DeviceConnections:
       type: object
-      required: [windowMs, items]
+      required: [windowMs, total, devices, items]
       additionalProperties: false
       properties:
         windowMs: { type: integer }
+        total: { type: integer, minimum: 0, description: 'Всего соединений в записях проекта' }
+        devices: { type: integer, minimum: 0, description: 'Из них с ролью device' }
         items:
           type: array
+          maxItems: 500
           items:
             type: object
             required: [connection, source, a, b, role, actionsMatched, actionsTotal, sharePermille, payloadFrames, reason]

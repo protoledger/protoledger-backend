@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::header;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use pl_actions::{Action, Mapping, Param};
 use pl_app::{LoadedLog, Session};
@@ -30,8 +30,13 @@ pub fn routes() -> Router<AppState> {
             "/action-logs",
             get(list).post(import).layer(DefaultBodyLimit::disable()),
         )
+        .route(
+            "/action-logs/guess",
+            post(guess).layer(DefaultBodyLimit::disable()),
+        )
         .route("/action-logs/{id}/actions", get(actions))
         .route("/action-logs/{id}/actions/{line}/exchange", get(exchange))
+        .route("/action-logs/{id}/exchanges", get(exchanges))
 }
 
 fn bad_request(detail: impl Into<String>) -> ApiError {
@@ -138,6 +143,87 @@ fn read_file(path: &std::path::Path) -> Result<Vec<u8>, Problem> {
         ));
     }
     std::fs::read(path).map_err(unreadable)
+}
+
+#[derive(Deserialize)]
+struct GuessByPath {
+    path: PathBuf,
+}
+
+/// Догадка о колонках журнала: JSON `{path}` или multipart с полем `file`. Проект не нужен.
+async fn guess(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Json<pl_actions::Guess>, ApiError> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let bytes = if content_type.starts_with("application/json") {
+        let body = axum::body::to_bytes(request.into_body(), crate::MAX_JSON_BODY)
+            .await
+            .map_err(|_| {
+                ApiError::new(ProblemKind::LimitExceeded, "Тело запроса слишком большое.")
+            })?;
+        let req: GuessByPath = serde_json::from_slice(&body)
+            .map_err(|_| bad_request("Ожидается JSON {\"path\": \"…\"}."))?;
+        let path = if req.path.is_relative() {
+            state.session.workspace().join(&req.path)
+        } else {
+            req.path
+        };
+        tokio::task::spawn_blocking(move || read_file(&path))
+            .await
+            .map_err(|_| blocking_failed())?
+            .map_err(ApiError)?
+    } else if content_type.starts_with("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, &state)
+            .await
+            .map_err(|_| bad_request("Тело запроса не похоже на multipart/form-data."))?;
+        let mut file = None;
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|_| bad_request("Загрузка прервана или повреждена."))?
+        {
+            if field.name() != Some("file") {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|_| bad_request("Загрузка прервана."))?
+            {
+                if bytes.len() + chunk.len() > pl_actions::MAX_FILE_BYTES {
+                    return Err(ApiError::new(
+                        ProblemKind::LimitExceeded,
+                        "Файл журнала больше предела 256 МиБ.",
+                    ));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            file = Some(bytes);
+        }
+        file.ok_or_else(|| bad_request("Нужно поле file (файл журнала)."))?
+    } else {
+        return Err(ApiError::new(
+            ProblemKind::UnsupportedMedia,
+            "Ожидается application/json или multipart/form-data.",
+        ));
+    };
+    let guessed = tokio::task::spawn_blocking(move || pl_actions::guess_mapping(&bytes))
+        .await
+        .map_err(|_| blocking_failed())?
+        .map_err(|e| {
+            ApiError::new(
+                ProblemKind::Unprocessable,
+                format!("Колонки журнала не угадываются: {e}."),
+            )
+        })?;
+    Ok(Json(guessed))
 }
 
 /// Импорт: JSON `{path, mapping}` или multipart с полями `file` и `mapping` (JSON).
@@ -387,6 +473,81 @@ struct ExchangeDto {
     interpretation_applied: bool,
     frames: Vec<FrameHitDto>,
     messages: Vec<MessageHitDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangesQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    window_ms: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangesPage {
+    items: Vec<pl_app::ActionExchange>,
+    total: usize,
+    limit: usize,
+    offset: usize,
+    /// Сколько действий получили запрос и ответ, только запрос, ничего.
+    paired: usize,
+    request_only: usize,
+    not_found: usize,
+}
+
+/// Обмены для всех действий журнала: по строке на действие.
+async fn exchanges(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    q: Result<Query<ExchangesQuery>, QueryRejection>,
+) -> Result<Json<ExchangesPage>, ApiError> {
+    let q = query(q)?;
+    let limit = q.limit.unwrap_or(50);
+    if !(1..=500).contains(&limit) {
+        return Err(bad_request("limit — от 1 до 500."));
+    }
+    let window_ms = q.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS);
+    if window_ms > MAX_WINDOW_MS {
+        return Err(bad_request(format!(
+            "windowMs — не больше {MAX_WINDOW_MS}."
+        )));
+    }
+    let offset = q.offset.unwrap_or(0);
+    let log = log(&state, &id)?;
+    let rows = tokio::task::spawn_blocking(move || {
+        let Some(it) = pl_app::current_interpretation(&state.session) else {
+            return Err(pl_core::Problem::new(
+                ProblemKind::Conflict,
+                "Нужна сохранённая интерпретация: по ней поток делится на сообщения.",
+            ));
+        };
+        let started = std::time::Instant::now();
+        pl_app::action_exchanges(
+            &pl_app::all_sources(&state.sources),
+            &it,
+            &log,
+            &pl_app::TestOptions {
+                window_ms,
+                ..pl_app::TestOptions::default()
+            },
+            &|| started.elapsed() > std::time::Duration::from_secs(20),
+        )
+    })
+    .await
+    .map_err(|_| blocking_failed())?
+    .map_err(ApiError)?;
+    let count =
+        |state: pl_app::ActionExchangeState| rows.iter().filter(|r| r.state == state).count();
+    Ok(Json(ExchangesPage {
+        total: rows.len(),
+        paired: count(pl_app::ActionExchangeState::Paired),
+        request_only: count(pl_app::ActionExchangeState::RequestOnly),
+        not_found: count(pl_app::ActionExchangeState::NotFound),
+        items: rows.into_iter().skip(offset).take(limit).collect(),
+        limit,
+        offset,
+    }))
 }
 
 async fn exchange(

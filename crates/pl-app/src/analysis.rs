@@ -1,9 +1,10 @@
 //! Подсказки исследователю поверх собранных потоков: границы, изменчивость, пары запрос→ответ.
 
 use pl_analysis::{
-    ChecksumAlt, ChecksumFn, CorrSample, Correlations, DataRun, Exchange, ExchangeStats,
-    FramingHints, Msg, StreamSample, Variability, VariabilityOptions, correlate, find_framing,
-    pair_exchanges, variability,
+    ChecksumAlt, ChecksumFn, ConstBytes, CorrSample, Correlations, DataRun, Exchange,
+    ExchangeStats, FieldAlt, FieldKind, FieldSample, FramingHints, KeyHint, KeyValue, Msg,
+    StreamSample, TypeKey, TypeOptions, TypeSample, Variability, VariabilityOptions, correlate,
+    find_framing, pair_exchanges, variability,
 };
 use pl_core::{Problem, ProblemKind};
 use pl_interp::schema::Framing;
@@ -27,6 +28,16 @@ fn bad(detail: impl Into<String>) -> Problem {
 
 fn not_found(id: &str) -> Problem {
     Problem::new(ProblemKind::NotFound, format!("Потока {id} нет в проекте."))
+}
+
+/// Число потоков проверяется раньше всего остального: пустой запрос — ошибка запроса, а не проекта.
+fn check_streams(streams: &[String]) -> Result<(), Problem> {
+    if streams.is_empty() || streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    Ok(())
 }
 
 /// Непрерывные участки известных байтов потока и начала TCP-сегментов внутри них.
@@ -339,21 +350,41 @@ pub fn message_checksums(
     request: &ChecksumRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<ChecksumView, Problem> {
-    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
-        return Err(bad(format!(
-            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
-        )));
-    }
+    check_streams(&request.streams)?;
     let it = effective(
         session,
         request.framing.as_ref(),
         request.message_id.is_some(),
     )?;
+    checksums_on(&it, store, request, cancelled)
+}
+
+/// Сколько сообщений можно взять из очередного потока: остаток предела делится поровну между
+/// оставшимися потоками. Иначе длинный первый поток забирает весь предел, и подсказка судит
+/// об обмене по одной его стороне.
+fn stream_limit(room: usize, taken: usize, streams_left: usize) -> usize {
+    taken + room.saturating_sub(taken).div_ceil(streams_left.max(1))
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn checksums_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &ChecksumRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<ChecksumView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
     let mut messages: Vec<Vec<u8>> = Vec::new();
     let mut places: Vec<(&str, u64, u64)> = Vec::new();
     // Запас сверх предела поиска нужен только для признака «не всё вошло».
     let room = pl_analysis::MAX_CHECKSUM_MESSAGES + 1;
-    for id in &request.streams {
+    let mut skipped = false;
+    for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, messages.len(), request.streams.len() - number);
         let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
         let (Some(connection), Some(stream)) = (
             data.connections.get(conn),
@@ -362,10 +393,11 @@ pub fn message_checksums(
             return Err(not_found(id));
         };
         let input = stream_input(&data.file, connection, stream, dir);
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         for m in result.messages {
-            if messages.len() >= room {
+            if messages.len() >= limit {
+                skipped = true;
                 break;
             }
             if let Some(want) = &request.message_id
@@ -436,7 +468,7 @@ pub fn message_checksums(
         .collect();
     Ok(ChecksumView {
         messages: found.messages,
-        truncated: found.truncated,
+        truncated: found.truncated || skipped,
         skipped_long: found.skipped_long,
         incomplete: found.incomplete,
         hints,
@@ -449,6 +481,537 @@ pub fn message_checksums(
             })
             .collect(),
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct TypesRequest {
+    pub streams: Vec<String>,
+    pub framing: Option<Framing>,
+}
+
+/// Поле-различитель для описания: объявляется в каждом сообщении, на него ссылается `when`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeField {
+    pub name: String,
+    pub at: u32,
+    #[serde(rename = "type")]
+    pub ty: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePlace {
+    pub stream: String,
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeGroupView {
+    /// Предлагаемый идентификатор сообщения.
+    pub id: String,
+    /// Условие для описания.
+    pub when: String,
+    pub key: Vec<KeyValue>,
+    pub count: u64,
+    pub share_permille: u32,
+    pub min_len: u64,
+    pub max_len: u64,
+    pub lengths: u32,
+    pub constant: Vec<ConstBytes>,
+    pub example: Option<MessagePlace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length_outlier: Option<MessagePlace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypesView {
+    pub messages: u64,
+    pub truncated: bool,
+    pub incomplete: bool,
+    pub keys: Vec<KeyHint>,
+    pub fields: Vec<TypeField>,
+    pub types: Vec<TypeGroupView>,
+    pub rare: u64,
+}
+
+/// Типы сообщений указанных потоков: различители и условие `when` для каждого типа.
+pub fn message_types(
+    session: &Session,
+    store: &SourceStore,
+    request: &TypesRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TypesView, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(session, request.framing.as_ref(), false)?;
+    types_on(&it, store, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn types_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &TypesRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TypesView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    let mut messages: Vec<(Vec<u8>, u8, u32)> = Vec::new();
+    let mut places: Vec<(&str, u64, u64)> = Vec::new();
+    // Порт принимающей стороны: если он один на все потоки, сторону можно записать условием на порт.
+    let mut ports: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    let room = pl_analysis::MAX_TYPE_MESSAGES + 1;
+    let mut skipped = false;
+    for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, messages.len(), request.streams.len() - number);
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        ports.insert(if dir == 0 {
+            input.meta.dst_port
+        } else {
+            input.meta.src_port
+        });
+        let result = pl_interp::apply(it, &input, cancelled)
+            .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
+        for m in result.messages {
+            if messages.len() >= limit {
+                skipped = true;
+                break;
+            }
+            // Оборванное сообщение короче настоящего и исказило бы длины типа.
+            if matches!(m.category, Category::Incomplete | Category::Ambiguous) {
+                continue;
+            }
+            if let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) {
+                messages.push((bytes.into_owned(), u8::from(dir != 0), number as u32));
+                places.push((id.as_str(), m.start, m.end));
+            }
+        }
+    }
+    let port = match (ports.len(), ports.first()) {
+        (1, Some(p)) => Some(*p),
+        _ => None,
+    };
+    let exclude = it
+        .framing
+        .length
+        .as_ref()
+        .map(|l| {
+            let size = l.ty.int().map_or(4, |t| t.size() as u32);
+            (l.at..l.at.saturating_add(size)).collect()
+        })
+        .unwrap_or_default();
+    let samples: Vec<TypeSample<'_>> = messages
+        .iter()
+        .map(|(data, side, stream)| TypeSample {
+            data,
+            side: *side,
+            stream: *stream,
+        })
+        .collect();
+    let found = pl_analysis::find_types(
+        &samples,
+        &TypeOptions {
+            exclude,
+            without_side: port.is_none(),
+        },
+        cancelled,
+    );
+
+    let place = |index: u64| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| places.get(i))
+            .map(|(stream, start, end)| MessagePlace {
+                stream: (*stream).to_owned(),
+                start: *start,
+                end: *end,
+            })
+    };
+    let types = found
+        .types
+        .into_iter()
+        .map(|t| {
+            let mut id = "msg".to_owned();
+            let mut terms: Vec<String> = Vec::new();
+            for kv in &t.key {
+                match (kv.key, port) {
+                    (TypeKey::Byte { at }, _) => {
+                        id.push_str(&format!("_{:02x}", kv.value));
+                        terms.push(format!("b{at} == 0x{:02x}", kv.value));
+                    }
+                    (TypeKey::Side, Some(p)) if kv.value == 0 => {
+                        id.push_str("_req");
+                        terms.push(format!("dst_port == {p}"));
+                    }
+                    (TypeKey::Side, Some(p)) => {
+                        id.push_str("_resp");
+                        terms.push(format!("src_port == {p}"));
+                    }
+                    // Без общего порта на стороны не делим: сюда не попадаем.
+                    (TypeKey::Side, None) => {}
+                }
+            }
+            TypeGroupView {
+                id,
+                when: terms.join(" && "),
+                key: t.key,
+                count: t.count,
+                share_permille: t.share_permille,
+                min_len: t.min_len,
+                max_len: t.max_len,
+                lengths: t.lengths,
+                constant: t.constant,
+                example: place(t.first),
+                length_outlier: t.length_outlier.and_then(place),
+            }
+        })
+        .collect();
+    Ok(TypesView {
+        messages: found.messages,
+        truncated: found.truncated || skipped,
+        incomplete: found.incomplete,
+        fields: found
+            .keys
+            .iter()
+            .filter_map(|k| match k.key {
+                TypeKey::Byte { at } => Some(TypeField {
+                    name: format!("b{at}"),
+                    at,
+                    ty: "u8",
+                }),
+                TypeKey::Side => None,
+            })
+            .collect(),
+        keys: found.keys,
+        types,
+        rare: found.rare,
+    })
+}
+
+/// Отбор сообщений по значению байта: так выбирается один тип до того, как он описан.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteMatch {
+    pub at: u32,
+    pub value: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldsRequest {
+    pub streams: Vec<String>,
+    pub framing: Option<Framing>,
+    /// Только сообщения этого типа (нужна интерпретация).
+    pub message_id: Option<String>,
+    /// Только сообщения с этими значениями байтов.
+    pub matching: Vec<ByteMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldHintView {
+    pub kind: FieldKind,
+    pub at: u32,
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_end: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<u32>,
+    /// Что это значит, одной фразой.
+    pub summary: String,
+    pub matches: u64,
+    pub samples: u64,
+    pub share_permille: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_counterexample: Option<MessagePlace>,
+    pub equivalent: Vec<FieldAlt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldsView {
+    pub messages: u64,
+    pub truncated: bool,
+    pub incomplete: bool,
+    pub hints: Vec<FieldHintView>,
+}
+
+fn field_summary(h: &pl_analysis::FieldHint) -> String {
+    match h.kind {
+        FieldKind::Counter => "растёт на единицу с каждым сообщением потока".to_owned(),
+        FieldKind::Time => {
+            let unit = match h.unit {
+                Some("s") => "секундах",
+                Some("ms") => "миллисекундах",
+                _ => "микросекундах",
+            };
+            if h.epoch == Some(true) {
+                format!("время в {unit} от эпохи Unix: совпадает с часами записи")
+            } else {
+                format!("растёт вместе со временем записи, в {unit}; отсчёт не от эпохи Unix")
+            }
+        }
+        FieldKind::String => {
+            let tail = if h.to_end == Some(true) {
+                ", до конца сообщения"
+            } else {
+                ""
+            };
+            format!("длина и сразу за ней текст этой длины{tail}")
+        }
+        FieldKind::Text => "печатный текст на постоянном месте".to_owned(),
+        FieldKind::Tlv => format!(
+            "записи «метка, длина, значение» до конца сообщения; разных меток: {}",
+            h.tags.unwrap_or(0)
+        ),
+    }
+}
+
+/// Подсказки полей по поведению значений в сообщениях указанных потоков.
+pub fn message_fields(
+    session: &Session,
+    store: &SourceStore,
+    request: &FieldsRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FieldsView, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    fields_on(&it, store, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn fields_on(
+    it: &Interpretation,
+    store: &SourceStore,
+    request: &FieldsRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FieldsView, Problem> {
+    if request.streams.is_empty() || request.streams.len() > MAX_REQUEST_STREAMS {
+        return Err(bad(format!(
+            "streams — от 1 до {MAX_REQUEST_STREAMS} потоков."
+        )));
+    }
+    if request.matching.len() > 8 {
+        return Err(bad("match — не больше 8 условий."));
+    }
+    // Все сообщения потоков и признак «выбрано фильтром»: счётчик — свойство потока целиком,
+    // среди сообщений одного типа он идёт с пропусками.
+    struct Row<'a> {
+        data: Vec<u8>,
+        stream: u32,
+        ts_ns: u64,
+        place: (&'a str, u64, u64),
+        selected: bool,
+    }
+    let mut rows: Vec<Row<'_>> = Vec::new();
+    let room = pl_analysis::MAX_FIELD_MESSAGES + 1;
+    let mut skipped = false;
+    for (number, id) in request.streams.iter().enumerate() {
+        let limit = stream_limit(room, rows.len(), request.streams.len() - number);
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        let times = crate::hypothesis::Times::new(&data, stream);
+        let result = pl_interp::apply(it, &input, cancelled)
+            .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
+        for m in result.messages {
+            if rows.len() >= limit {
+                skipped = true;
+                break;
+            }
+            // Оборванное сообщение нарушило бы и счётчик, и длины строк.
+            if matches!(m.category, Category::Incomplete | Category::Ambiguous) {
+                continue;
+            }
+            let Read::Bytes(bytes) = input.read(m.start, m.end - m.start) else {
+                continue;
+            };
+            let of_type = request
+                .message_id
+                .as_ref()
+                .is_none_or(|want| m.message_id.as_ref() == Some(want));
+            let matched = request
+                .matching
+                .iter()
+                .all(|c| bytes.get(c.at as usize) == Some(&c.value));
+            rows.push(Row {
+                ts_ns: times.first_ts(m.start, m.end).unwrap_or(0),
+                data: bytes.into_owned(),
+                stream: number as u32,
+                place: (id.as_str(), m.start, m.end),
+                selected: of_type && matched,
+            });
+        }
+    }
+    let sample = |r: &'_ Row<'_>| MessagePlace {
+        stream: r.place.0.to_owned(),
+        start: r.place.1,
+        end: r.place.2,
+    };
+    let view = |h: pl_analysis::FieldHint, rows: &[&Row<'_>]| FieldHintView {
+        summary: field_summary(&h),
+        first_counterexample: h
+            .first_counterexample
+            .and_then(|i| usize::try_from(i).ok())
+            .and_then(|i| rows.get(i))
+            .map(|r| sample(r)),
+        kind: h.kind,
+        at: h.at,
+        ty: h.ty,
+        size: h.size,
+        unit: h.unit,
+        epoch: h.epoch,
+        to_end: h.to_end,
+        example: h.example,
+        tags: h.tags,
+        matches: h.matches,
+        samples: h.samples,
+        share_permille: h.share_permille,
+        equivalent: h.equivalent,
+    };
+    let search = |rows: &[&Row<'_>]| {
+        let samples: Vec<FieldSample<'_>> = rows
+            .iter()
+            .map(|r| FieldSample {
+                data: &r.data,
+                stream: r.stream,
+                ts_ns: r.ts_ns,
+            })
+            .collect();
+        pl_analysis::find_fields(&samples, cancelled)
+    };
+
+    let all: Vec<&Row<'_>> = rows.iter().collect();
+    let selected: Vec<&Row<'_>> = rows.iter().filter(|r| r.selected).collect();
+    let filtered = selected.len() != all.len();
+    let found = search(&selected);
+    let mut incomplete = found.incomplete;
+    let mut hints: Vec<FieldHintView> = found
+        .hints
+        .into_iter()
+        .filter(|h| !(filtered && h.kind == FieldKind::Counter))
+        .map(|h| view(h, &selected))
+        .collect();
+    if filtered {
+        let whole = search(&all);
+        incomplete |= whole.incomplete;
+        hints.extend(
+            whole
+                .hints
+                .into_iter()
+                .filter(|h| h.kind == FieldKind::Counter)
+                .map(|h| view(h, &all)),
+        );
+        hints.sort_by_key(|h| (h.at, h.kind as u8));
+    }
+    Ok(FieldsView {
+        messages: found.messages,
+        truncated: found.truncated || skipped,
+        incomplete,
+        hints,
+    })
+}
+
+/// Карта энтропии одного потока.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamEntropy {
+    pub stream: String,
+    /// Длина потока в байтах.
+    pub length: u64,
+    #[serde(flatten)]
+    pub map: pl_analysis::EntropyMap,
+    /// Что это значит, одной фразой.
+    pub summary: String,
+}
+
+/// Где в потоках данные похожи на сжатые или зашифрованные, на текст и на заполнение.
+pub fn stream_entropy(
+    store: &SourceStore,
+    streams: &[String],
+) -> Result<Vec<StreamEntropy>, Problem> {
+    check_streams(streams)?;
+    let mut out = Vec::new();
+    for id in streams {
+        let (data, conn, dir) = resolve_stream(store, id).ok_or_else(|| not_found(id))?;
+        let (Some(connection), Some(stream)) = (
+            data.connections.get(conn),
+            data.connections.get(conn).and_then(|c| c.streams.get(dir)),
+        ) else {
+            return Err(not_found(id));
+        };
+        let input = stream_input(&data.file, connection, stream, dir);
+        // Подряд идущие известные участки склеиваются: окно не должно рваться на границе сегмента.
+        let mut pieces: Vec<(u64, Vec<u8>)> = Vec::new();
+        for region in &input.regions {
+            let RegionKind::Data(bytes) = &region.kind else {
+                continue;
+            };
+            match pieces.last_mut() {
+                Some((start, joined)) if *start + joined.len() as u64 == region.start => {
+                    joined.extend_from_slice(bytes);
+                }
+                _ => pieces.push((region.start, bytes.to_vec())),
+            }
+        }
+        let refs: Vec<(u64, &[u8])> = pieces.iter().map(|(s, b)| (*s, b.as_slice())).collect();
+        let map = pl_analysis::entropy_map(&refs);
+        let share = |part: u64| part.saturating_mul(100).checked_div(map.bytes).unwrap_or(0);
+        let summary = if map.bytes == 0 {
+            format!(
+                "Данных меньше окна в {} байт: об энтропии судить рано.",
+                pl_analysis::ENTROPY_WINDOW
+            )
+        } else if map.high_bytes > 0 {
+            format!(
+                "{} % просмотренных байтов похожи на сжатые или зашифрованные: полей в них не найти.",
+                share(map.high_bytes)
+            )
+        } else if map.text_bytes * 2 > map.bytes {
+            format!(
+                "{} % просмотренных байтов — печатный текст.",
+                share(map.text_bytes)
+            )
+        } else {
+            "Участков, похожих на сжатие или шифрование, нет.".to_owned()
+        };
+        out.push(StreamEntropy {
+            stream: id.clone(),
+            length: stream.length,
+            map,
+            summary,
+        });
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -535,11 +1098,31 @@ pub struct CorrelationRequest {
     /// Журнал действий; без значения — все журналы проекта.
     pub log_id: Option<String>,
     pub window_ms: Option<u64>,
+    /// Только сообщения, которым досталось действие с таким именем. Пока описания нет и типы
+    /// сообщений не названы, это единственный способ не смешать связи разных действий.
+    pub action: Option<String>,
 }
 
 /// Связи байтов сообщений с параметрами и именем действий из журнала.
 pub fn message_correlations(
     session: &Session,
+    store: &SourceStore,
+    logs: &ActionLogStore,
+    request: &CorrelationRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Correlations, Problem> {
+    check_streams(&request.streams)?;
+    let it = effective(
+        session,
+        request.framing.as_ref(),
+        request.message_id.is_some(),
+    )?;
+    correlations_on(&it, store, logs, request, cancelled)
+}
+
+/// То же на заданном описании: оно может быть ещё не сохранено в проекте.
+pub(crate) fn correlations_on(
+    it: &Interpretation,
     store: &SourceStore,
     logs: &ActionLogStore,
     request: &CorrelationRequest,
@@ -553,11 +1136,6 @@ pub fn message_correlations(
     if request.window_ms.is_some_and(|w| w > 600_000) {
         return Err(bad("windowMs — не больше 600000."));
     }
-    let it = effective(
-        session,
-        request.framing.as_ref(),
-        request.message_id.is_some(),
-    )?;
     let loaded = match &request.log_id {
         Some(id) => vec![logs.get(id).ok_or_else(|| {
             Problem::new(ProblemKind::NotFound, format!("Журнала действий {id} нет."))
@@ -588,7 +1166,7 @@ pub fn message_correlations(
             return Err(not_found(id));
         };
         let input = stream_input(&data.file, connection, stream, dir);
-        let result = pl_interp::apply(&it, &input, cancelled)
+        let result = pl_interp::apply(it, &input, cancelled)
             .map_err(|e| Problem::new(ProblemKind::Unprocessable, format!("Поток {id}: {e}.")))?;
         let times = crate::hypothesis::Times::new(&data, stream);
         // Действия подбираются ко всем сообщениям потока, и только потом остаются сообщения нужного
@@ -612,6 +1190,13 @@ pub fn message_correlations(
                 .message_id
                 .as_ref()
                 .is_some_and(|want| m.message_id.as_ref() != Some(want))
+            {
+                continue;
+            }
+            if request
+                .action
+                .as_ref()
+                .is_some_and(|want| action.is_none_or(|a| a.action != *want))
             {
                 continue;
             }
@@ -648,4 +1233,23 @@ pub fn message_correlations(
         }
     }
     Ok(correlate(&samples))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_limit;
+
+    #[test]
+    fn the_message_budget_is_shared_between_streams() {
+        // Два длинных потока: каждому половина предела, а не всё первому.
+        let first = stream_limit(20_001, 0, 2);
+        assert_eq!(first, 10_001);
+        assert_eq!(stream_limit(20_001, first, 1), 20_001);
+        // Короткий поток не занял свою долю — остаток достаётся следующим.
+        let after_short = 100;
+        assert_eq!(stream_limit(20_001, after_short, 1), 20_001);
+        // Один поток получает весь предел; исчерпанный предел не растёт.
+        assert_eq!(stream_limit(20_001, 0, 1), 20_001);
+        assert_eq!(stream_limit(20_001, 20_001, 3), 20_001);
+    }
 }

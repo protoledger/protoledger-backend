@@ -23,7 +23,7 @@ pub struct ApplyArgs {
     /// Журнал действий (CSV); нужен для тестов гипотез из интерпретации
     #[arg(long)]
     pub action_log: Option<PathBuf>,
-    /// Сопоставление колонок журнала (YAML или JSON)
+    /// Сопоставление колонок журнала (YAML или JSON); без него колонки угадываются, догадка — в stderr
     #[arg(long, requires = "action_log")]
     pub mapping: Option<PathBuf>,
     /// Политика перекрытий: first, last или flag
@@ -235,7 +235,7 @@ fn message_view(m: &MessageResult) -> MessageView {
     }
 }
 
-fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
+pub fn load_mapping(path: &Path) -> Result<pl_actions::Mapping, String> {
     let text = read_text(path)?;
     serde_saphyr::from_str(&text).map_err(|e| {
         format!(
@@ -272,8 +272,11 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         let applied =
             pl_app::apply_to_source(&interpretation, data, &|| false).map_err(|e| e.to_string())?;
         let mut streams = Vec::new();
+        // Поиск соединения по номеру: перебор на каждый поток — квадрат на записи со 100 тыс. соединений.
+        let by_number: std::collections::HashMap<_, _> =
+            data.connections.iter().map(|c| (c.number, c)).collect();
         for a in applied {
-            let connection = data.connections.iter().find(|c| c.number == a.connection);
+            let connection = by_number.get(&a.connection).copied();
             let id = connection.map_or_else(String::new, |c| {
                 format!(
                     "{}:{}",
@@ -319,12 +322,23 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
     // Гипотезы из интерпретации с тестом проверяются на журнале действий, если он передан.
     let mut hypotheses = Vec::new();
     if let Some(log_path) = &args.action_log {
-        let mapping_path = args
-            .mapping
-            .as_ref()
-            .ok_or("--action-log требует --mapping")?;
-        let mapping = load_mapping(mapping_path)?;
         let bytes = std::fs::read(log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
+        let mapping = match &args.mapping {
+            Some(path) => load_mapping(path)?,
+            None => {
+                let guess = pl_actions::guess_mapping(&bytes).map_err(|e| {
+                    format!(
+                        "{}: колонки не угадываются ({e}); укажите --mapping",
+                        log_path.display()
+                    )
+                })?;
+                eprintln!("колонки журнала угаданы (сохраните как --mapping, чтобы закрепить):");
+                for (role, why) in &guess.reasons {
+                    eprintln!("  {role}: {why}");
+                }
+                guess.mapping
+            }
+        };
         let parsed = pl_actions::parse(&bytes, &mapping)
             .map_err(|e| format!("{}: {e}", log_path.display()))?;
         let record = pl_project::ActionLogRecord {
@@ -412,6 +426,13 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         not_matched,
         output.summary.unknown_bytes,
     );
+    // Ноль сообщений без этой строки выглядит как сбой, а не как «описание не про эти потоки».
+    if output.summary.out_of_scope_streams > 0 {
+        eprintln!(
+            "Вне области описания (scope): потоков {} из {} — к ним описание не применялось.",
+            output.summary.out_of_scope_streams, output.summary.streams
+        );
+    }
     Ok(if args.strict && not_matched > 0 {
         Exit::Differences
     } else {

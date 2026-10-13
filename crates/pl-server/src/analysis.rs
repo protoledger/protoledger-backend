@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
-use pl_app::{ChecksumRequest, ExchangeView, VariabilityRequest};
+use pl_app::{
+    ByteMatch, ChecksumRequest, ExchangeView, FieldsRequest, TypesRequest, VariabilityRequest,
+};
 use pl_core::ProblemKind;
 use pl_interp::schema::Framing;
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,11 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/correlations", post(correlations))
         .route("/analysis/device-connections", post(device_connections))
         .route("/analysis/checksums", post(checksums))
+        .route("/analysis/types", post(types))
+        .route("/analysis/fields", post(fields))
+        .route("/analysis/draft", post(draft))
+        .route("/analysis/entropy", post(entropy))
+        .route("/analysis/suggestions", post(suggestions))
         .route("/exchanges", post(exchanges))
 }
 
@@ -130,6 +137,152 @@ async fn checksums(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TypesBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    framing: Option<Framing>,
+}
+
+async fn types(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<TypesBody>,
+) -> Result<Json<pl_app::TypesView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::message_types(
+            &state.session,
+            &state.sources,
+            &TypesRequest {
+                streams: body.streams,
+                framing: body.framing,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatchBody {
+    at: u32,
+    value: u8,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FieldsBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    framing: Option<Framing>,
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default, rename = "match")]
+    matching: Vec<MatchBody>,
+}
+
+async fn fields(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<FieldsBody>,
+) -> Result<Json<pl_app::FieldsView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::message_fields(
+            &state.session,
+            &state.sources,
+            &FieldsRequest {
+                streams: body.streams,
+                framing: body.framing,
+                message_id: body.message_id,
+                matching: body
+                    .matching
+                    .iter()
+                    .map(|m| ByteMatch {
+                        at: m.at,
+                        value: m.value,
+                    })
+                    .collect(),
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Serialize)]
+struct EntropyPage {
+    streams: Vec<pl_app::StreamEntropy>,
+}
+
+async fn entropy(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<FramingRequest>,
+) -> Result<Json<EntropyPage>, ApiError> {
+    let streams =
+        blocking(move || pl_app::stream_entropy(&state.sources, &request.streams)).await?;
+    Ok(Json(EntropyPage { streams }))
+}
+
+/// Заготовки наблюдений и гипотез из связей с журналом действий.
+async fn suggestions(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<DraftBody>,
+) -> Result<Json<pl_app::Suggestions>, ApiError> {
+    let result = blocking(move || {
+        let Some(it) = pl_app::current_interpretation(&state.session) else {
+            return Err(pl_core::Problem::new(
+                ProblemKind::Conflict,
+                "Нужна сохранённая интерпретация с типами сообщений: связи ищутся по каждому типу.",
+            ));
+        };
+        let started = Instant::now();
+        pl_app::research_suggestions(
+            &it,
+            &state.sources,
+            &state.actions,
+            &pl_app::SuggestRequest {
+                streams: body.streams,
+                log_id: body.log_id,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DraftBody {
+    streams: Vec<String>,
+    #[serde(default)]
+    log_id: Option<String>,
+}
+
+async fn draft(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<DraftBody>,
+) -> Result<Json<pl_app::DraftView>, ApiError> {
+    let result = blocking(move || {
+        let started = Instant::now();
+        pl_app::draft_interpretation(
+            &state.sources,
+            &state.actions,
+            &pl_app::DraftRequest {
+                streams: body.streams,
+                log_id: body.log_id,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExchangesBody {
     connection: String,
     #[serde(default)]
@@ -196,6 +349,8 @@ struct CorrelationsBody {
     log_id: Option<String>,
     #[serde(default)]
     window_ms: Option<u64>,
+    #[serde(default)]
+    action: Option<String>,
 }
 
 async fn correlations(
@@ -214,6 +369,7 @@ async fn correlations(
                 message_id: body.message_id,
                 log_id: body.log_id,
                 window_ms: body.window_ms,
+                action: body.action,
             },
             &|| started.elapsed() > SEARCH_TIMEOUT,
         )
