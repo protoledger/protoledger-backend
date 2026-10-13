@@ -987,6 +987,87 @@ async fn every_action_of_the_journal_gets_its_exchange() {
     }
 }
 
+/// Часы журнала отстают от записи на 3,2 с: в окне после действий данных почти нет. Движок находит
+/// поправку сам, называет её в «что дальше» и не предлагает ничего, когда часы согласованы.
+#[tokio::test]
+async fn a_shifted_journal_clock_is_found_and_reported() {
+    let (state, _, _, _) = setup("clock").await;
+    let log = stand("main.actions.csv").to_string_lossy().into_owned();
+    let import = |offset: i64| {
+        let (state, log) = (state.clone(), log.clone());
+        async move {
+            let mapping = json!({ "time": "time", "action": "action", "params": "params",
+                "result": "result", "clockOffsetMs": offset });
+            call(
+                &state,
+                Method::POST,
+                "/api/action-logs",
+                Some(json!({ "path": log, "mapping": mapping })),
+            )
+            .await
+        }
+    };
+    let (status, _) = import(-3200).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, late) = call(
+        &state,
+        Method::GET,
+        "/api/action-logs/log-0001/clock-offset",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{late}");
+    let offset = late["offsetMs"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("{late}"));
+    assert!((3100..=3200).contains(&offset), "{late}");
+    assert_eq!(late["matchedShifted"], late["actions"], "{late}");
+    assert!(late["matchedNow"].as_u64().unwrap() < late["actions"].as_u64().unwrap());
+    assert_eq!(late["currentOffsetMs"], -3200);
+    assert!(late["reason"].as_str().unwrap().contains("с поправкой"));
+
+    let (_, next) = call(&state, Method::GET, "/api/project/next-steps", None).await;
+    let step = next["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "fix_journal_clock")
+        .unwrap_or_else(|| panic!("нет шага о часах: {next}"));
+    assert!(
+        step["detail"]
+            .as_str()
+            .unwrap()
+            .contains("main.actions.csv")
+    );
+
+    // Тот же журнал без сдвига: поправка не предлагается.
+    let (status, _) = import(0).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, exact) = call(
+        &state,
+        Method::GET,
+        "/api/action-logs/log-0002/clock-offset",
+        None,
+    )
+    .await;
+    assert!(exact["offsetMs"].is_null(), "{exact}");
+    assert_eq!(exact["matchedNow"], exact["actions"], "{exact}");
+
+    for (path, expected) in [
+        (
+            "/api/action-logs/log-0001/clock-offset?windowMs=0",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/action-logs/log-9999/clock-offset",
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, _) = call(&state, Method::GET, path, None).await;
+        assert_eq!(status, expected, "{path}");
+    }
+}
+
 /// Две записи сняты в одно время, у каждой свой журнал без колонки записи: по времени действия
 /// второго журнала подходят и к первой записи. Журнал относится к той записи, где нашлось больше
 /// его действий, и пары из чужой записи не берутся.

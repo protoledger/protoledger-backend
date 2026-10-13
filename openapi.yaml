@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.39
+  version: 0.1.40
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -957,6 +957,46 @@ paths:
                 total: 16
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/action-logs/{id}/clock-offset:
+    get:
+      tags: [actions]
+      operationId: estimateJournalClockOffset
+      summary: Сдвиг часов журнала относительно записей
+      description: |
+        Журнал ведёт одна машина, трафик пишет другая: их часы расходятся на секунды или на часы, и тогда
+        в окне времени после действия нет его данных. Движок ищет поправку (до 14 часов в обе стороны),
+        при которой кадры с данными идут сразу за наибольшим числом действий. `offsetMs` — сколько
+        прибавить ко времени журнала сверх уже заданной поправки `currentOffsetMs`; `null`, если часы
+        согласованы (расхождение меньше 100 мс или поправка ничего не добавляет), общего сдвига не видно
+        (после поправки данные идут менее чем за 60 % действий) или столько же действий совпадает и при
+        другом сдвиге. В `reason` — основание словами. Это предложение: чтобы применить поправку, журнал
+        импортируют заново с `clockOffsetMs` в сопоставлении. Описание протокола не нужно.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: log-0001 }
+        - { name: windowMs, in: query, description: 'Окно после действия, в котором ждём данные, мс', schema: { type: integer, minimum: 1, maximum: 600000, default: 2000 } }
+      responses:
+        '200':
+          description: Оценка сдвига с основанием
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClockOffset' }
+              example:
+                actions: 16
+                matchedNow: 2
+                offsetMs: 3200
+                matchedShifted: 16
+                currentOffsetMs: 0
+                windowMs: 2000
+                reason: 'с поправкой +3200 мс данные в окне 2000 мс идут после 16 из 16 действий, без неё — после 2'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2906,6 +2946,19 @@ components:
         messageId: { type: [string, 'null'] }
         category: { type: string }
         tsNs: { type: integer, minimum: 0 }
+
+    ClockOffset:
+      type: object
+      required: [actions, matchedNow, offsetMs, matchedShifted, currentOffsetMs, windowMs, reason]
+      additionalProperties: false
+      properties:
+        actions: { type: integer, minimum: 0, description: 'Действий журнала, относящихся к записям проекта' }
+        matchedNow: { type: integer, minimum: 0, description: 'После скольких из них данные идут в окне сейчас' }
+        offsetMs: { type: [integer, 'null'], description: 'Предлагаемая поправка, мс: прибавить ко времени журнала' }
+        matchedShifted: { type: integer, minimum: 0, description: 'То же с поправкой' }
+        currentOffsetMs: { type: integer, description: 'Поправка, заданная при импорте журнала' }
+        windowMs: { type: integer }
+        reason: { type: string }
 
     ActionExchangePage:
       type: object
