@@ -28,8 +28,8 @@ pub struct SourceInfo {
     pub format: String,
     pub frames: u64,
     pub connections: u64,
-    /// Диагностика захвата: код и число кадров.
-    pub diagnostics: Vec<(String, u64)>,
+    /// Диагностика захвата: название, код и число случаев.
+    pub diagnostics: Vec<(String, String, u64)>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -247,7 +247,7 @@ fn build(d: &ReportData) -> Vec<Block> {
         .flat_map(|s| {
             s.diagnostics
                 .iter()
-                .map(move |(code, n)| format!("{}: {code} — {n} кадров", s.name))
+                .map(move |(title, code, n)| format!("{}: {title} — {n} ({code})", s.name))
         })
         .collect();
     if !diag.is_empty() {
@@ -334,7 +334,12 @@ fn build(d: &ReportData) -> Vec<Block> {
                         .iter()
                         .map(|(m, c)| {
                             vec![
-                                m.clone(),
+                                // Так прогон помечает сообщения, не подошедшие ни под один тип.
+                                if m == "?" {
+                                    "тип не определён".to_owned()
+                                } else {
+                                    m.clone()
+                                },
                                 c.iter()
                                     .map(|(k, n)| format!("{}: {n}", category_title(k)))
                                     .collect::<Vec<_>>()
