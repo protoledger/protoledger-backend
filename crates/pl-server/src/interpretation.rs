@@ -29,6 +29,7 @@ pub fn routes() -> Router<AppState> {
         .route("/interpretation/field-hints", post(field_hints))
         .route("/interpretation/fix-hints", post(fix_hints))
         .route("/interpretation/coverage", post(coverage))
+        .route("/interpretation/compare", post(compare))
 }
 
 fn schema_problem(e: SchemaError) -> ApiError {
@@ -354,6 +355,80 @@ async fn preview(
     .await
     .map_err(|_| blocking_failed())??;
     Ok(Json(page))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompareRequest {
+    /// Первый и второй наборы записей (sha256).
+    a: Vec<String>,
+    b: Vec<String>,
+    /// Несохранённый текст описания; без него берётся текущая ревизия.
+    yaml: Option<String>,
+}
+
+/// Сравнение поведения в двух наборах записей по одному описанию.
+async fn compare(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<CompareRequest>,
+) -> Result<Json<pl_app::Comparison>, ApiError> {
+    if request.a.is_empty() || request.b.is_empty() {
+        return Err(ApiError::new(
+            ProblemKind::BadRequest,
+            "Нужны оба набора записей: a и b — хотя бы по одной записи.",
+        ));
+    }
+    let result = tokio::task::spawn_blocking(move || -> Result<pl_app::Comparison, ApiError> {
+        let yaml = match request.yaml {
+            Some(yaml) => yaml,
+            None => {
+                let guard = state.session.read();
+                let project = guard
+                    .as_ref()
+                    .ok_or_else(|| ApiError(Session::no_project()))?;
+                project
+                    .current_interpretation()
+                    .map_err(|e| ApiError(e.into()))?
+                    .ok_or_else(|| {
+                        ApiError::new(
+                            ProblemKind::NotFound,
+                            "Интерпретация ещё не сохранена: передайте yaml в запросе.",
+                        )
+                    })?
+                    .1
+            }
+        };
+        if state.session.read().is_none() {
+            return Err(ApiError(Session::no_project()));
+        }
+        let it = Interpretation::parse(&yaml).map_err(schema_problem)?;
+        let all = pl_app::all_sources(&state.sources);
+        let pick = |wanted: &[String]| {
+            wanted
+                .iter()
+                .map(|sha| {
+                    all.iter()
+                        .find(|s| &s.sha256 == sha)
+                        .cloned()
+                        .ok_or_else(|| {
+                            ApiError::new(
+                                ProblemKind::NotFound,
+                                format!("Записи {sha} нет в проекте."),
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let (a, b) = (pick(&request.a)?, pick(&request.b)?);
+        let started = std::time::Instant::now();
+        pl_app::compare(&a, &b, &it, &|| {
+            started.elapsed() > std::time::Duration::from_secs(20)
+        })
+        .map_err(ApiError)
+    })
+    .await
+    .map_err(|_| blocking_failed())??;
+    Ok(Json(result))
 }
 
 #[derive(Deserialize)]

@@ -658,3 +658,101 @@ async fn coverage_shows_what_is_described_and_what_is_not() {
     let (status, _) = ask(json!({ "yaml": answer_key(), "sources": ["нет"] })).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compare_shows_what_changed_between_two_recordings() {
+    let state = project_state("compare");
+    import_stand(&state, "main.pcapng").await;
+    import_stand(&state, "extra.pcapng").await;
+    let (_, sources) = call(&state, Method::GET, "/api/sources?limit=10", None).await;
+    let sha = |name: &str| {
+        sources["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
+            .unwrap_or_else(|| panic!("нет записи {name}: {sources}"))["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (main, extra) = (sha("main.pcapng"), sha("extra.pcapng"));
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/compare",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, diff) = ask(json!({ "a": [main], "b": [extra], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    assert_eq!(diff["incomplete"], false);
+    assert_eq!(
+        (&diff["a"]["sources"], &diff["b"]["sources"]),
+        (&json!(1), &json!(1))
+    );
+    // Дополнительная запись сделана другим клиентом: уставки −5, 70000 и 123456 в основной не встречались.
+    let value = diff["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["messageId"] == "set_param_req" && f["field"] == "value")
+        .unwrap_or_else(|| panic!("нет отличия в значении уставки: {diff}"));
+    assert_eq!(value["change"], "values");
+    let new: Vec<&str> = value["newValues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(new.contains(&"-5") && new.contains(&"70000"), "{value}");
+    assert!(value["b"]["min"].as_i64().unwrap() < 0);
+    let summary = diff["summary"].as_array().unwrap();
+    assert!(
+        summary.iter().any(|s| s
+            .as_str()
+            .unwrap()
+            .starts_with("set_param_req.value: во втором наборе новые значения")),
+        "{summary:?}"
+    );
+    // Чтений измерений в дополнительной записи нет: тип отмечен пропавшим.
+    let types = diff["types"].as_array().unwrap();
+    let total: u64 = types.iter().map(|t| t["a"].as_u64().unwrap()).sum();
+    assert_eq!(total, diff["a"]["messages"].as_u64().unwrap());
+    for t in types {
+        let expected = match (t["a"].as_u64().unwrap(), t["b"].as_u64().unwrap()) {
+            (0, _) => "new",
+            (_, 0) => "missing",
+            _ => "same",
+        };
+        assert_eq!(t["change"], expected, "{t}");
+    }
+
+    // Запись, сравнённая сама с собой, отличий не даёт.
+    let (status, same) = ask(json!({ "a": [main], "b": [main], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(same["fields"], json!([]));
+    assert!(
+        same["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["change"] == "same")
+    );
+    assert_eq!(same["summary"].as_array().unwrap().len(), 1);
+    for t in same["timing"].as_array().unwrap() {
+        assert_eq!(t["ratioPermille"], 1000, "{t}");
+    }
+
+    let (status, _) = ask(json!({ "a": [], "b": [main], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = ask(json!({ "a": [main], "b": ["нет"], "yaml": answer_key() })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = ask(json!({ "a": [main], "b": [extra] })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}
