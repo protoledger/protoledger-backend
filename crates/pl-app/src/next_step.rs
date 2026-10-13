@@ -151,6 +151,24 @@ pub fn next_steps(
                 .to_owned(),
         ));
     }
+    // Часы журнала расходятся с записью: без поправки действия не находят свои обмены.
+    let all = crate::all_sources(sources);
+    for log in logs.list() {
+        let found = crate::clock_offset(&all, &log, crate::DEFAULT_WINDOW_MS);
+        if let Some(offset) = found.offset_ms {
+            steps.push(step(
+                "fix_journal_clock",
+                Screen::Actions,
+                "Поправьте часы журнала действий",
+                format!(
+                    "Журнал {}: {}. Импортируйте его заново с поправкой часов {} мс.",
+                    log.record.name,
+                    found.reason,
+                    found.current_offset_ms.saturating_add(offset)
+                ),
+            ));
+        }
+    }
     if !state.has_interpretation {
         steps.insert(
             0,

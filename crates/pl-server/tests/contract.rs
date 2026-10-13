@@ -475,6 +475,11 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
     api.get(
+        "/api/action-logs/{id}/clock-offset",
+        &format!("/api/action-logs/{log_id}/clock-offset"),
+    )
+    .await;
+    api.get(
         "/api/action-logs/{id}/actions/{line}/exchange",
         &format!("/api/action-logs/{log_id}/actions/{line}/exchange"),
     )

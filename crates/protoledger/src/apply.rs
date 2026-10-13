@@ -356,6 +356,15 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
             errors: parsed.errors,
             skipped: parsed.skipped,
         });
+        // Часы журнала и записи расходятся — тесты гипотез останутся без примеров: скажем почему.
+        let clock = pl_app::clock_offset(&sources, &log, pl_app::DEFAULT_WINDOW_MS);
+        if let Some(offset) = clock.offset_ms {
+            eprintln!(
+                "Похоже, часы журнала сдвинуты: {}. Поправка задаётся в сопоставлении колонок: clockOffsetMs: {}",
+                clock.reason,
+                clock.current_offset_ms.saturating_add(offset)
+            );
+        }
         for h in interpretation
             .hypotheses
             .iter()

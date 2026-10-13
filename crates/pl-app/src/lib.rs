@@ -2,6 +2,7 @@
 
 mod actions;
 mod analysis;
+mod clock;
 mod compare;
 mod coverage;
 mod devices;
@@ -33,6 +34,7 @@ pub use analysis::{
     message_checksums, message_correlations, message_fields, message_types, message_variability,
     stream_entropy,
 };
+pub use clock::{ClockOffset, clock_offset};
 pub use compare::{
     Comparison, FieldChange, FieldDiff, SideSummary, Timing, TimingDiff, TypeChange, TypeDiff,
     ValueStats, compare,

@@ -37,6 +37,7 @@ pub fn routes() -> Router<AppState> {
         .route("/action-logs/{id}/actions", get(actions))
         .route("/action-logs/{id}/actions/{line}/exchange", get(exchange))
         .route("/action-logs/{id}/exchanges", get(exchanges))
+        .route("/action-logs/{id}/clock-offset", get(clock_offset))
 }
 
 fn bad_request(detail: impl Into<String>) -> ApiError {
@@ -473,6 +474,31 @@ struct ExchangeDto {
     interpretation_applied: bool,
     frames: Vec<FrameHitDto>,
     messages: Vec<MessageHitDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClockQuery {
+    window_ms: Option<u64>,
+}
+
+/// Оценка сдвига часов журнала относительно записей: предложение, а не правка.
+async fn clock_offset(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    q: Result<Query<ClockQuery>, QueryRejection>,
+) -> Result<Json<pl_app::ClockOffset>, ApiError> {
+    let window_ms = query(q)?.window_ms.unwrap_or(pl_app::DEFAULT_WINDOW_MS);
+    if window_ms == 0 || window_ms > MAX_WINDOW_MS {
+        return Err(bad_request(format!("windowMs — от 1 до {MAX_WINDOW_MS}.")));
+    }
+    let log = log(&state, &id)?;
+    let found = tokio::task::spawn_blocking(move || {
+        pl_app::clock_offset(&pl_app::all_sources(&state.sources), &log, window_ms)
+    })
+    .await
+    .map_err(|_| blocking_failed())?;
+    Ok(Json(found))
 }
 
 #[derive(Deserialize)]
