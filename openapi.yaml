@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.34
+  version: 0.1.35
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -2062,6 +2062,58 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/analysis/suggestions:
+    post:
+      tags: [analysis]
+      operationId: getResearchSuggestions
+      summary: Заготовки наблюдений и гипотез из связей с журналом
+      description: |
+        Для каждого типа сообщений сохранённой интерпретации ищет байты, равные значениям из журнала действий
+        (как `/api/analysis/correlations`), и каждую связь, сошедшуюся не меньше чем в 90 % примеров, превращает в
+        заготовки: `observation` — якорь на эти байты в примере сообщения и комментарий с числом совпадений;
+        `hypothesis` — формулировка и готовый тест (`x == action.params.y`, для дробных — `dec(…, n)`).
+        Если на этих байтах уже есть поле описания, тест опирается на него (`field`); если нет — в `newField`
+        поле, которое нужно добавить в описание. Ничего не создаётся: заготовки принимаются обычными
+        `POST /api/observations` и `POST /api/hypotheses` (в `basis` — идентификатор созданного наблюдения).
+        Нужны сохранённая интерпретация и журнал действий (`409`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DraftRequest' }
+            example: { streams: ['3f5a1c0d:c0001:ab', '3f5a1c0d:c0001:ba'] }
+      responses:
+        '200':
+          description: Заготовки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Suggestions' }
+              example:
+                items:
+                  - messageId: set_param_req
+                    param: params.value
+                    matches: 6
+                    samples: 6
+                    observation:
+                      source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5
+                      stream: '3f5a1c0d:c0001:ab'
+                      start: 31
+                      end: 35
+                      comment: 'Байты 7–10 сообщения set_param_req (i32be) равны значению «params.value» из журнала действий: совпало в 6 из 6 сообщений.'
+                    hypothesis:
+                      statement: 'value в сообщении set_param_req — значение «params.value» из журнала действий'
+                      test: value == action.params.value
+                    field: value
+                truncated: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /api/analysis/entropy:
     post:
       tags: [analysis]
@@ -3683,6 +3735,47 @@ components:
         framing: { $ref: '#/components/schemas/FramingSpec' }
         messageId: { type: string, description: 'Только сообщения этого типа (нужна сохранённая интерпретация)' }
         length: { type: integer, minimum: 1, description: 'Длина сообщений для анализа; по умолчанию самая частая' }
+
+    Suggestions:
+      type: object
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [messageId, param, matches, samples, observation, hypothesis, field]
+            properties:
+              messageId: { type: string }
+              param: { type: string, description: 'params.<имя> или result.<имя> из журнала' }
+              matches: { type: integer, minimum: 0 }
+              samples: { type: integer, minimum: 0 }
+              observation:
+                type: object
+                required: [source, stream, start, end, comment]
+                properties:
+                  source: { type: string }
+                  stream: { type: string }
+                  start: { type: integer, minimum: 0 }
+                  end: { type: integer, minimum: 0 }
+                  comment: { type: string }
+              hypothesis:
+                type: object
+                required: [statement, test]
+                properties:
+                  statement: { type: string }
+                  test: { type: string }
+              field: { type: [string, 'null'], description: 'Поле описания на этих байтах; null — его нужно добавить' }
+              newField:
+                type: object
+                required: [name, at, type]
+                properties:
+                  name: { type: string }
+                  at: { type: integer, minimum: 0 }
+                  type: { type: string }
+                  len: { type: integer, minimum: 1 }
+                  mask: { type: integer, minimum: 1 }
+        truncated: { type: boolean }
 
     EntropyPage:
       type: object
