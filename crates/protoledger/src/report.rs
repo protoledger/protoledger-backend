@@ -30,9 +30,9 @@ pub struct ReportArgs {
 }
 
 pub fn run(args: ReportArgs) -> Result<Exit, String> {
-    let project =
-        Project::open(&args.project).map_err(|e| format!("{}: {e}", args.project.display()))?;
-    let session = Session::new(args.project.parent().map(PathBuf::from).unwrap_or_default());
+    let path = crate::common::project_path(&args.project);
+    let project = Project::open(&path).map_err(|e| format!("{}: {e}", args.project.display()))?;
+    let session = Session::new(path.parent().map(PathBuf::from).unwrap_or_default());
     session.attach(project);
     let store = SourceStore::default();
     let logs = ActionLogStore::default();

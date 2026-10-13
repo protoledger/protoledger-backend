@@ -309,6 +309,18 @@ fn verify_confirms_a_reproducible_project() {
         "{stdout}"
     );
     assert!(stdout.contains("main.pcapng: цела"), "{stdout}");
+
+    // Свой путь пользователь пишет как привык: с «..» и «.» тоже.
+    let roundabout = root.join("..").join(".").join(root.file_name().unwrap());
+    for command in ["verify", "report"] {
+        let out = run(&[command, roundabout.to_str().unwrap()]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{command}: {}",
+            text(&out.stderr)
+        );
+    }
 }
 
 #[test]
