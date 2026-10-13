@@ -680,3 +680,34 @@ fn short_messages_keep_the_plain_byte_first_and_varint_as_an_equivalent() {
     assert_eq!((top.at, top.width, top.adjust), (1, 1, 2));
     assert!(top.equivalent.iter().any(|f| f.at == 1 && f.ty == "varint"));
 }
+
+/// Параметр почти всегда равен единице, и в сообщении есть постоянный байт с единицей: совпадений
+/// девять из десяти, но это не связь — байт не меняется вместе с параметром.
+#[test]
+fn a_constant_byte_is_not_linked_to_an_almost_constant_parameter() {
+    let samples: Vec<_> = (0..10)
+        .map(|i| {
+            let flag: i64 = if i == 3 { 0 } else { 1 };
+            pl_analysis::CorrSample {
+                stream: "s".to_owned(),
+                start: i as u64,
+                // Байт 0 — всегда 1; байт 1 — сам флаг.
+                bytes: vec![1, flag as u8, 0xEE],
+                params: [("params.enabled".to_owned(), flag.into())].into(),
+                action: Some("set".to_owned()),
+            }
+        })
+        .collect();
+    let found = pl_analysis::correlate(&samples);
+    let places: Vec<u32> = found
+        .values
+        .iter()
+        .filter(|v| v.param == "params.enabled")
+        .map(|v| v.at)
+        .collect();
+    assert!(places.contains(&1), "настоящая связь на месте: {places:?}");
+    assert!(
+        !places.contains(&0),
+        "постоянный байт связью не считается: {places:?}"
+    );
+}
