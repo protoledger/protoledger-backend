@@ -412,6 +412,13 @@ pub fn run(args: ApplyArgs) -> Result<Exit, String> {
         not_matched,
         output.summary.unknown_bytes,
     );
+    // Ноль сообщений без этой строки выглядит как сбой, а не как «описание не про эти потоки».
+    if output.summary.out_of_scope_streams > 0 {
+        eprintln!(
+            "Вне области описания (scope): потоков {} из {} — к ним описание не применялось.",
+            output.summary.out_of_scope_streams, output.summary.streams
+        );
+    }
     Ok(if args.strict && not_matched > 0 {
         Exit::Differences
     } else {

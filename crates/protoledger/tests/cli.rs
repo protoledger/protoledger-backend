@@ -883,3 +883,29 @@ fn exported_dissector_agrees_with_apply_in_tshark() {
         }
     }
 }
+
+#[test]
+fn apply_says_when_streams_are_outside_the_scope() {
+    let dir = temp("out-of-scope");
+    let spec = dir.join("other-port.yaml");
+    let stand = std::fs::read_to_string(repo("fixtures/stand/interpretation.yaml")).unwrap();
+    std::fs::write(&spec, stand.replace("4710", "1")).unwrap();
+    let capture = repo("fixtures/stand/main.pcapng");
+    let out = run(&[
+        "apply",
+        "--interpretation",
+        spec.to_str().unwrap(),
+        "--input",
+        capture.to_str().unwrap(),
+    ]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("сообщений 0"), "{err}");
+    assert!(
+        err.contains("Вне области описания (scope): потоков 2 из 2"),
+        "{err}"
+    );
+    // Когда всё в области, строки нет.
+    let inside = apply("fixtures/stand/main.pcapng", &[]);
+    assert!(!text(&inside.stderr).contains("Вне области"));
+}
