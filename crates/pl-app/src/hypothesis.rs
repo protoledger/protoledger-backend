@@ -177,30 +177,88 @@ impl Times {
     }
 }
 
-/// Пары «сообщение → ответ встречного потока» по порядку: k-е сообщение — следующий по порядку
-/// ответ, отправленный не раньше него (запросы могут идти конвейером, ответы — пачкой).
-/// `unsure[j]` — у ответа j нет байтов или они неоднозначны: сколько сообщений скрыто в дыре,
-/// неизвестно, поэтому начиная с него пары не строятся (тест — неприменим, а не опровергнут).
-pub(crate) fn pair_responses(
-    stamps: &[u64],
-    partner: &[u64],
-    unsure: &[bool],
-) -> Vec<Option<usize>> {
-    let mut next = 0usize;
-    let mut lost = false;
-    stamps
+/// Пары запрос→ответ в соединении, по ходам: подряд идущие сообщения одной стороны — ход, ход
+/// запросов сопоставляется со следующим ходом ответов. Пара есть, только когда запросов и ответов
+/// в соседних ходах поровну; запрос без ответа и ответ без запроса пары не получают и не сдвигают
+/// остальные.
+pub(crate) struct Links {
+    /// Для сообщения начавшей стороны — номер его ответа в потоке встречной.
+    pub(crate) response_of: Vec<Option<usize>>,
+    /// Для сообщения встречной стороны — на что оно отвечает.
+    pub(crate) request_of: Vec<Answer>,
+}
+
+/// Чей это ответ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answer {
+    /// Ответ на запрос с этим номером.
+    To(usize),
+    /// Запросов в ходе не меньше, чем ответов: каждый ответ — чей-то, но чей именно, по порядку
+    /// не определить. Действие подбирается по времени.
+    Someone,
+    /// Запроса нет или ответов больше, чем запросов: сообщение могло прийти само.
+    Nobody,
+}
+
+pub(crate) fn pair_turns(requests: &[u64], responses: &[u64]) -> Links {
+    let msgs: Vec<pl_analysis::Msg> = requests
         .iter()
-        .map(|ts| {
-            while partner.get(next).is_some_and(|p| p < ts) {
-                lost |= unsure.get(next).copied().unwrap_or(false);
-                next += 1;
-            }
-            lost |= unsure.get(next).copied().unwrap_or(false);
-            let found = (!lost && next < partner.len()).then_some(next);
-            next += 1;
-            found
+        .map(|ts| (*ts, true))
+        .chain(responses.iter().map(|ts| (*ts, false)))
+        .enumerate()
+        .map(|(id, (ts, from_initiator))| pl_analysis::Msg {
+            id,
+            from_initiator,
+            first_ts_ns: ts,
+            last_ts_ns: ts,
         })
-        .collect()
+        .collect();
+    let mut links = Links {
+        response_of: vec![None; requests.len()],
+        request_of: vec![Answer::Nobody; responses.len()],
+    };
+    for pair in pl_analysis::pair_exchanges(&msgs).0 {
+        if pair.certainty == pl_analysis::Certainty::Ambiguous
+            && pair.requests.len() >= pair.responses.len()
+        {
+            for resp in &pair.responses {
+                if let Some(slot) = resp
+                    .checked_sub(requests.len())
+                    .and_then(|r| links.request_of.get_mut(r))
+                {
+                    *slot = Answer::Someone;
+                }
+            }
+        }
+        if !matches!(
+            pair.certainty,
+            pl_analysis::Certainty::Certain | pl_analysis::Certainty::Ordered
+        ) {
+            continue;
+        }
+        let (Some(req), Some(resp)) = (pair.requests.first(), pair.responses.first()) else {
+            continue;
+        };
+        let Some(resp) = resp.checked_sub(requests.len()) else {
+            continue;
+        };
+        if let Some(slot) = links.response_of.get_mut(*req) {
+            *slot = Some(resp);
+        }
+        if let Some(slot) = links.request_of.get_mut(resp) {
+            *slot = Answer::To(*req);
+        }
+    }
+    links
+}
+
+fn exchange_links(per_stream: &[Vec<Msg<'_>>], initiator: usize) -> Links {
+    let stamps = |i: usize| -> Vec<u64> {
+        per_stream
+            .get(i)
+            .map_or_else(Vec::new, |m| m.iter().map(|x| x.first_ts).collect())
+    };
+    pair_turns(&stamps(initiator), &stamps(1 - initiator))
 }
 
 /// Назначает действия сообщениям одного потока: сообщению — ближайшее предшествующее
@@ -350,6 +408,43 @@ pub fn test_hypothesis(
                         .collect(),
                 );
             }
+            // Кто начинает обмен: сторона, чьё первое сообщение раньше. Сообщения без времени
+            // (целиком в дыре, время 0) не в счёт.
+            let first_real = |msgs: &Vec<Msg<'_>>| msgs.iter().map(|m| m.first_ts).find(|t| *t > 0);
+            let initiator = match (
+                per_stream.first().and_then(first_real),
+                per_stream.get(1).and_then(first_real),
+            ) {
+                (Some(a), Some(b)) => Some(usize::from(a > b)),
+                _ => None,
+            };
+            let links = initiator.map(|side| exchange_links(&per_stream, side));
+            // Ответ проверяется с действием своего запроса. Сообщение, которое встречная сторона
+            // могла прислать сама, действия не получает: по времени ему досталось бы чужое.
+            if let (Some(side), Some(links)) = (initiator, &links) {
+                let request_action = |k: usize| {
+                    per_stream
+                        .get(side)
+                        .and_then(|m| m.get(k))
+                        .and_then(|m| m.action)
+                };
+                let decided: Vec<Option<Option<&Action>>> = links
+                    .request_of
+                    .iter()
+                    .map(|answer| match answer {
+                        Answer::To(k) => Some(request_action(*k)),
+                        Answer::Nobody => Some(None),
+                        Answer::Someone => None,
+                    })
+                    .collect();
+                if let Some(answers) = per_stream.get_mut(1 - side) {
+                    for (m, action) in answers.iter_mut().zip(decided) {
+                        if let Some(action) = action {
+                            m.action = action;
+                        }
+                    }
+                }
+            }
             for (i, msgs) in per_stream.iter().enumerate() {
                 let (src, dst) = if i == 0 {
                     (connection.a.port(), connection.b.port())
@@ -365,8 +460,6 @@ pub fn test_hypothesis(
                 }
                 let partner = per_stream.get(1 - i);
                 let stamps: Vec<u64> = msgs.iter().map(|m| m.first_ts).collect();
-                let partner_stamps: Vec<u64> =
-                    partner.map_or_else(Vec::new, |p| p.iter().map(|m| m.first_ts).collect());
                 let partner_unsure: Vec<bool> = partner.map_or_else(Vec::new, |p| {
                     p.iter()
                         // Граница неизвестна (тип не определить: заголовок в дыре) — сколько ответов
@@ -381,17 +474,16 @@ pub fn test_hypothesis(
                         })
                         .collect()
                 });
-                // Ответы ищутся только для стороны, которая начинает обмен (её первое сообщение раньше);
-                // сообщения без времени (целиком в дыре, время 0) не в счёт.
-                let first_real = |v: &[u64]| v.iter().find(|t| **t > 0).copied();
-                let initiates = match (first_real(&stamps), first_real(&partner_stamps)) {
-                    (Some(own), Some(other)) => own <= other,
-                    _ => false,
-                };
-                let pairs = if initiates {
-                    pair_responses(&stamps, &partner_stamps, &partner_unsure)
-                } else {
-                    vec![None; stamps.len()]
+                // Ответы ищутся только для стороны, которая начинает обмен. После сообщения
+                // встречной стороны с неизвестной границей счёт ответов ненадёжен: пар дальше нет.
+                let unsure_from = partner_unsure.iter().position(|u| *u);
+                let pairs: Vec<Option<usize>> = match (&links, initiator == Some(i)) {
+                    (Some(links), true) => links
+                        .response_of
+                        .iter()
+                        .map(|r| r.filter(|j| unsure_from.is_none_or(|u| *j < u)))
+                        .collect(),
+                    _ => vec![None; stamps.len()],
                 };
                 for (k, m) in msgs.iter().enumerate() {
                     if m.result.message_id.is_none() {
@@ -406,7 +498,7 @@ pub fn test_hypothesis(
                         evidence.not_applicable += 1;
                         continue;
                     }
-                    // Парный ответ — по времени (pair_responses); ответ без байтов или с неоднозначными
+                    // Парный ответ — по ходам обмена (exchange_links); ответ без байтов или с неоднозначными
                     // байтами парой не считается.
                     let response = pairs
                         .get(k)
@@ -547,21 +639,32 @@ mod tests {
     }
 
     #[test]
-    fn responses_pair_in_order_not_earlier_than_the_request() {
+    fn responses_pair_by_turns_and_gaps_do_not_shift_them() {
         // Конвейер: запросы в 6 и 14, оба ответа в 18; пачка запросов в 30 и ответы 31, 31.
+        let links = pair_turns(&[6, 14, 30, 30], &[18, 18, 31, 31]);
+        assert_eq!(links.response_of, [Some(0), Some(1), Some(2), Some(3)]);
         assert_eq!(
-            pair_responses(&[6, 14, 30, 30], &[18, 18, 31, 31], &[false; 4]),
-            [Some(0), Some(1), Some(2), Some(3)]
+            links.request_of,
+            [Answer::To(0), Answer::To(1), Answer::To(2), Answer::To(3)]
         );
-        // Ответ, пришедший раньше запроса, — не его ответ.
+        // Ответ, пришедший раньше запроса, — не его ответ и ничей.
+        let links = pair_turns(&[10, 20], &[5, 12, 25]);
+        assert_eq!(links.response_of, [Some(1), Some(2)]);
         assert_eq!(
-            pair_responses(&[10, 20], &[5, 12, 25], &[false; 3]),
-            [Some(1), Some(2)]
+            links.request_of,
+            [Answer::Nobody, Answer::To(0), Answer::To(1)]
         );
-        // После неполного ответа счёт неизвестен: дальше пар нет.
+        // Четыре запроса без ответа, затем запрос с ответом: какой запрос подтверждён, неизвестно —
+        // пар нет, но следующий обмен не сдвигается.
+        let links = pair_turns(&[1, 2, 3, 4, 10, 20], &[11, 21]);
+        assert_eq!(links.response_of, [None, None, None, None, None, Some(1)]);
+        assert_eq!(links.request_of, [Answer::Someone, Answer::To(5)]);
+        // Сообщение, которое встречная сторона прислала сама, после ответа: запрос один, ответов
+        // два — действие запроса не достаётся ни одному.
+        let links = pair_turns(&[10, 30], &[11, 12, 31]);
         assert_eq!(
-            pair_responses(&[1, 2, 3], &[1, 2, 3], &[false, true, false]),
-            [Some(0), None, None]
+            links.request_of,
+            [Answer::Nobody, Answer::Nobody, Answer::To(1)]
         );
     }
 
