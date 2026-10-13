@@ -211,6 +211,7 @@ pub fn collect(
             name: r.name.clone(),
             rows: r.rows,
             skipped: logs.get(&r.id).map_or(0, |l| l.skipped),
+            replaced_by: logs.replaced_by(&r.id),
         })
         .collect();
 

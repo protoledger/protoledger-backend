@@ -161,7 +161,7 @@ pub fn next_steps(
                 Screen::Actions,
                 "Поправьте часы журнала действий",
                 format!(
-                    "Журнал {}: {}. Импортируйте его заново с поправкой часов {} мс.",
+                    "Журнал {}: {}. Примените к нему поправку часов {} мс.",
                     log.record.name,
                     found.reason,
                     found.current_offset_ms.saturating_add(offset)

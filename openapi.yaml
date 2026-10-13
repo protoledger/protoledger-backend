@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.41
+  version: 0.1.42
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -804,6 +804,11 @@ paths:
       tags: [actions]
       operationId: listActionLogs
       summary: Журналы действий проекта
+      description: |
+        Все записи журналов в порядке импорта. Файл, импортированный повторно (с другим сопоставлением
+        колонок или поправкой часов), в анализе представлен последней записью: у прежних в `replacedBy`
+        стоит её `id`. Заменённые записи остаются в проекте — по ним воспроизводятся прогоны, выполненные
+        до замены, — и читаются по своему `id`, но в анализ «по всем журналам» не входят.
       responses:
         '200':
           description: Журналы в порядке импорта
@@ -835,7 +840,8 @@ paths:
         миллисекундах, микросекундах, наносекундах; `clockOffsetMs` — поправка на сдвиг часов клиента относительно
         часов записи; параметры — `ключ=значение;…` или JSON. Строки, которые не разобрались, перечислены в
         `errors` (до 100), а не теряются молча; если разобрана меньше половины — `422`. Файл копируется в проект
-        и хранится неизменным; повторный импорт — новая запись списка.
+        и хранится неизменным; повторный импорт — новая запись списка, она заменяет прежние записи того же
+        файла в анализе (`replacedBy`), а прогоны с тестами гипотез помечаются устаревшими (`action_logs`).
       requestBody:
         required: true
         content:
@@ -975,8 +981,8 @@ paths:
         прибавить ко времени журнала сверх уже заданной поправки `currentOffsetMs`; `null`, если часы
         согласованы (расхождение меньше 100 мс или поправка ничего не добавляет), общего сдвига не видно
         (после поправки данные идут менее чем за 60 % действий) или столько же действий совпадает и при
-        другом сдвиге. В `reason` — основание словами. Это предложение: чтобы применить поправку, журнал
-        импортируют заново с `clockOffsetMs` в сопоставлении. Описание протокола не нужно.
+        другом сдвиге. В `reason` — основание словами. Это предложение: применяет поправку `POST` этого же
+        пути с `clockOffsetMs` = `currentOffsetMs` + `offsetMs`. Описание протокола не нужно.
       parameters:
         - name: id
           in: path
@@ -1002,6 +1008,52 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NoProject' }
+    post:
+      tags: [actions]
+      operationId: applyJournalClockOffset
+      summary: Применить поправку часов к импортированному журналу
+      description: |
+        Сохранённая копия журнала разбирается заново с тем же сопоставлением колонок и новой поправкой
+        `clockOffsetMs` (полное значение, а не добавка к прежнему). Результат — новая запись списка: она
+        заменяет прежнюю в анализе, прежняя получает `replacedBy` и остаётся в проекте, чтобы прогоны,
+        выполненные до поправки, воспроизводились. Прогоны с тестами гипотез помечаются устаревшими
+        (`action_logs`); вернуть прежнюю поправку — тем же запросом, и прежние прогоны снова актуальны.
+        `409` — проект не открыт, запись уже заменена (поправку применяют к действующей) или поправка
+        уже такая.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: log-0001 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyClockOffsetRequest' }
+            example: { clockOffsetMs: 3200 }
+      responses:
+        '200':
+          description: Журнал разобран с поправкой и заменил прежнюю запись
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionLog' }
+              example:
+                id: log-0002
+                sha256: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d
+                name: main.actions.csv
+                rows: 16
+                skipped: 0
+                errors: []
+                mapping: { time: time, action: action, params: params, result: result, timeFormat: rfc3339, paramsFormat: kv, resultFormat: kv, utcOffsetMinutes: 0, clockOffsetMs: 3200 }
+                firstTime: '2026-10-01T00:00:03.556179000Z'
+                lastTime: '2026-10-01T00:00:25.042006000Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
 
   /api/action-logs/{id}/exchanges:
     get:
@@ -3265,7 +3317,7 @@ components:
     StaleReason:
       type: string
       enum: [interpretation, settings, sources, action_logs]
-      description: Почему прогон устарел — интерпретацию или настройки сборки изменили, записи пропали из проекта, сменились журналы действий для тестов гипотез
+      description: Почему прогон устарел — интерпретацию или настройки сборки изменили, записи пропали из проекта, сменились журналы действий для тестов гипотез (другие файлы либо тот же файл с другим сопоставлением колонок или поправкой часов)
 
     RunSummary:
       type: object
@@ -3536,6 +3588,14 @@ components:
         mapping: { $ref: '#/components/schemas/ActionLogMapping' }
         firstTime: { type: [string, 'null'], format: date-time }
         lastTime: { type: [string, 'null'], format: date-time }
+        replacedBy: { type: string, description: 'Запись, заменившая эту в анализе: тот же файл импортирован заново. У действующей записи поля нет', example: log-0002 }
+
+    ApplyClockOffsetRequest:
+      type: object
+      additionalProperties: false
+      required: [clockOffsetMs]
+      properties:
+        clockOffsetMs: { type: integer, format: int64, description: 'Поправка часов журнала целиком, мс: прибавляется ко времени журнала' }
 
     ActionLogList:
       type: object

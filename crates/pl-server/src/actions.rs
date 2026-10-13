@@ -16,6 +16,7 @@ use pl_interp::Category;
 use serde::{Deserialize, Serialize};
 
 use crate::encode::rfc3339;
+use crate::json::ApiJson;
 use crate::{ApiError, AppState};
 
 const DEFAULT_LIMIT: u64 = 50;
@@ -37,7 +38,10 @@ pub fn routes() -> Router<AppState> {
         .route("/action-logs/{id}/actions", get(actions))
         .route("/action-logs/{id}/actions/{line}/exchange", get(exchange))
         .route("/action-logs/{id}/exchanges", get(exchanges))
-        .route("/action-logs/{id}/clock-offset", get(clock_offset))
+        .route(
+            "/action-logs/{id}/clock-offset",
+            get(clock_offset).post(apply_clock_offset),
+        )
 }
 
 fn bad_request(detail: impl Into<String>) -> ApiError {
@@ -79,11 +83,15 @@ struct LogDto {
     mapping: Mapping,
     first_time: Option<String>,
     last_time: Option<String>,
+    /// Запись, заменившая эту в анализе: тот же файл импортирован заново.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replaced_by: Option<String>,
 }
 
-fn log_dto(l: &LoadedLog) -> LogDto {
+fn log_dto(l: &LoadedLog, replaced_by: Option<String>) -> LogDto {
     let range = l.time_range();
     LogDto {
+        replaced_by,
         id: l.record.id.clone(),
         sha256: l.record.sha256.clone(),
         name: l.record.name.clone(),
@@ -113,7 +121,12 @@ async fn list(State(state): State<AppState>) -> Result<Json<LogList>, ApiError> 
         return Err(ApiError(Session::no_project()));
     }
     Ok(Json(LogList {
-        items: state.actions.list().iter().map(|l| log_dto(l)).collect(),
+        items: state
+            .actions
+            .all()
+            .iter()
+            .map(|l| log_dto(l, state.actions.replaced_by(&l.record.id)))
+            .collect(),
     }))
 }
 
@@ -322,7 +335,7 @@ async fn import(State(state): State<AppState>, request: Request) -> Result<Json<
     .await
     .map_err(|_| blocking_failed())?
     .map_err(ApiError)?;
-    Ok(Json(log_dto(&loaded)))
+    Ok(Json(log_dto(&loaded, None)))
 }
 
 // ------------------------------------------------------------- действия
@@ -499,6 +512,31 @@ async fn clock_offset(
     .await
     .map_err(|_| blocking_failed())?;
     Ok(Json(found))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClockOffsetRequest {
+    clock_offset_ms: i64,
+}
+
+/// Применяет поправку часов: сохранённая копия журнала разбирается заново, новая запись
+/// заменяет прежнюю в анализе.
+async fn apply_clock_offset(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(request): ApiJson<ClockOffsetRequest>,
+) -> Result<Json<LogDto>, ApiError> {
+    if state.session.read().is_none() {
+        return Err(ApiError(Session::no_project()));
+    }
+    let loaded = tokio::task::spawn_blocking(move || {
+        pl_app::apply_clock_offset(&state.session, &state.actions, &id, request.clock_offset_ms)
+    })
+    .await
+    .map_err(|_| blocking_failed())?
+    .map_err(ApiError)?;
+    Ok(Json(log_dto(&loaded, None)))
 }
 
 #[derive(Deserialize)]

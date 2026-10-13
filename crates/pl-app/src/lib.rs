@@ -23,8 +23,8 @@ mod suggest;
 mod verify;
 
 pub use actions::{
-    ActionLogStore, Exchange, FrameHit, LoadedLog, MessageHit, all_sources, current_interpretation,
-    find_exchange, import_action_log, reload_action_logs,
+    ActionLogStore, Exchange, FrameHit, LoadedLog, MessageHit, all_sources, apply_clock_offset,
+    current_interpretation, find_exchange, import_action_log, reload_action_logs,
 };
 pub use analysis::{
     ByteMatch, ChecksumAlgorithm, ChecksumCounterView, ChecksumHintView, ChecksumRequest,

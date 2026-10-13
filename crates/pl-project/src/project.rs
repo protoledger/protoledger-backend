@@ -540,6 +540,14 @@ impl Project {
                 unit: "bytes",
             });
         }
+        // Больше записей манифест не примет при следующем открытии проекта.
+        if self.manifest.action_logs.len() >= MAX_ACTION_LOGS {
+            return Err(ProjectError::LimitExceeded {
+                name: "max_action_logs",
+                value: MAX_ACTION_LOGS as u64,
+                unit: "",
+            });
+        }
         let sha256 = hex(&Sha256::digest(bytes));
         let dir = self.root.join(ACTION_LOGS_DIR);
         if !dir.is_dir() {
@@ -1446,6 +1454,18 @@ mod tests {
         let reopened = Project::open(project.root()).unwrap();
         assert_eq!(reopened.action_logs().len(), 2);
         assert_eq!(reopened.action_logs()[0].mapping, mapping);
+
+        // Больше предела манифест не открылся бы: запись отклоняется до сохранения.
+        while project.manifest.action_logs.len() < MAX_ACTION_LOGS {
+            project.manifest.action_logs.push(b.clone());
+        }
+        assert!(matches!(
+            project.add_action_log("full.csv", csv, &mapping, 1),
+            Err(ProjectError::LimitExceeded {
+                name: "max_action_logs",
+                ..
+            })
+        ));
     }
 
     #[test]

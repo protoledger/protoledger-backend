@@ -1,11 +1,13 @@
 //! Журналы действий проекта и поиск обмена по действию.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use pl_actions::{Action, LogError, Mapping, RowError};
 use pl_core::{Limit, Problem, ProblemKind};
 use pl_interp::{Category, Interpretation};
 use pl_project::ActionLogRecord;
+use pl_verify::RunInputs;
 
 use crate::{Session, SourceData, SourceStore, stream_input};
 
@@ -37,12 +39,60 @@ pub struct ActionLogStore {
 }
 
 impl ActionLogStore {
-    pub fn list(&self) -> Vec<Arc<LoadedLog>> {
+    /// Все записи журналов проекта в порядке импорта, включая заменённые.
+    pub fn all(&self) -> Vec<Arc<LoadedLog>> {
         self.inner.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
+    /// Действующие журналы: файл, импортированный повторно, представлен последней записью —
+    /// иначе его действия учитывались бы дважды, со старым и с новым сопоставлением.
+    pub fn list(&self) -> Vec<Arc<LoadedLog>> {
+        let all = self.all();
+        all.iter()
+            .enumerate()
+            .filter(|(i, l)| {
+                !all.iter()
+                    .skip(i + 1)
+                    .any(|next| next.record.sha256 == l.record.sha256)
+            })
+            .map(|(_, l)| Arc::clone(l))
+            .collect()
+    }
+
     pub fn get(&self, id: &str) -> Option<Arc<LoadedLog>> {
-        self.list().into_iter().find(|l| l.record.id == id)
+        self.all().into_iter().find(|l| l.record.id == id)
+    }
+
+    /// Запись, заменившая эту: последний импорт того же файла.
+    pub fn replaced_by(&self, id: &str) -> Option<String> {
+        let all = self.all();
+        let sha256 = &all.iter().find(|l| l.record.id == id)?.record.sha256;
+        let last = all.iter().rev().find(|l| &l.record.sha256 == sha256)?;
+        (last.record.id != id).then(|| last.record.id.clone())
+    }
+
+    /// Журналы, по которым выполнен сохранённый прогон, в порядке импорта: запись с тем
+    /// сопоставлением, которое прогон запомнил, иначе — первый импорт файла.
+    pub fn for_run(&self, inputs: &RunInputs) -> Vec<Arc<LoadedLog>> {
+        let all = self.all();
+        let chosen: Vec<&str> = inputs
+            .logs
+            .iter()
+            .filter_map(|sha256| {
+                let mut same = all.iter().filter(|l| &l.record.sha256 == sha256);
+                match inputs.log_mappings.get(sha256) {
+                    Some(digest) => {
+                        same.rfind(|l| &pl_verify::digest_of(&l.record.mapping) == digest)
+                    }
+                    None => same.next(),
+                }
+            })
+            .map(|l| l.record.id.as_str())
+            .collect();
+        all.iter()
+            .filter(|l| chosen.contains(&l.record.id.as_str()))
+            .cloned()
+            .collect()
     }
 
     pub fn clear(&self) {
@@ -105,6 +155,59 @@ pub fn import_action_log(
     });
     store.push(Arc::clone(&loaded));
     Ok(loaded)
+}
+
+/// Сопоставления действующих журналов, отличные от первого импорта того же файла:
+/// sha256 → дайджест. Пока файл импортирован один раз, здесь пусто.
+pub fn mapping_overrides(records: &[ActionLogRecord]) -> BTreeMap<String, String> {
+    let mut first: BTreeMap<&str, String> = BTreeMap::new();
+    let mut last: BTreeMap<&str, String> = BTreeMap::new();
+    for r in records {
+        let digest = pl_verify::digest_of(&r.mapping);
+        first
+            .entry(r.sha256.as_str())
+            .or_insert_with(|| digest.clone());
+        last.insert(r.sha256.as_str(), digest);
+    }
+    last.into_iter()
+        .filter(|(sha256, digest)| first.get(sha256) != Some(digest))
+        .map(|(sha256, digest)| (sha256.to_owned(), digest))
+        .collect()
+}
+
+/// Разбирает сохранённую копию журнала заново с другой поправкой часов. Новая запись заменяет
+/// прежнюю в анализе; прежняя остаётся в проекте: по ней воспроизводятся старые прогоны.
+pub fn apply_clock_offset(
+    session: &Session,
+    store: &ActionLogStore,
+    id: &str,
+    clock_offset_ms: i64,
+) -> Result<Arc<LoadedLog>, Problem> {
+    let log = store.get(id).ok_or_else(|| {
+        Problem::new(ProblemKind::NotFound, format!("Журнала действий {id} нет."))
+    })?;
+    if let Some(newer) = store.replaced_by(id) {
+        return Err(Problem::new(
+            ProblemKind::Conflict,
+            format!("Журнал {id} заменён записью {newer}: поправку применяют к ней."),
+        ));
+    }
+    if log.record.mapping.clock_offset_ms == clock_offset_ms {
+        return Err(Problem::new(
+            ProblemKind::Conflict,
+            format!("Поправка часов журнала {id} уже равна {clock_offset_ms} мс."),
+        ));
+    }
+    let bytes = {
+        let guard = session.read();
+        let project = guard.as_ref().ok_or_else(Session::no_project)?;
+        project.read_action_log(id).map_err(Problem::from)?
+    };
+    let mapping = Mapping {
+        clock_offset_ms,
+        ..log.record.mapping.clone()
+    };
+    import_action_log(session, store, &log.record.name, &bytes, mapping)
 }
 
 /// После открытия проекта заново разбирает его журналы; испорченные пропускаются с записью в лог.

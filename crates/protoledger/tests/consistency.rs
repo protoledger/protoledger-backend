@@ -251,3 +251,133 @@ fn apply_and_a_run_through_the_api_agree() {
     assert_eq!(from_api.len() as u64, total);
     assert_eq!(from_api, from_cli, "сообщения по одному");
 }
+
+/// Поправка часов журнала заменяет его запись в анализе, а прогоны до и после поправки
+/// остаются воспроизводимыми: каждый повторяется со своим сопоставлением колонок.
+#[test]
+fn runs_before_and_after_a_clock_fix_both_verify() {
+    let mapping =
+        json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+    let server = Server::start("clock");
+    server.call(
+        "POST",
+        "/api/project",
+        Some(json!({ "path": "check.protoledger", "mode": "create" })),
+    );
+    let imported = server.call(
+        "POST",
+        "/api/sources",
+        Some(json!({ "path": repo("fixtures/stand/main.pcapng") })),
+    );
+    server.job(&imported);
+    server.call(
+        "POST",
+        "/api/action-logs",
+        Some(json!({ "path": repo("fixtures/stand/main.actions.csv"), "mapping": mapping })),
+    );
+    let yaml = std::fs::read_to_string(repo("fixtures/stand/interpretation.yaml")).unwrap();
+    server.call("PUT", "/api/interpretation", Some(json!({ "yaml": yaml })));
+    let run = |id: &str| {
+        let started = server.call("POST", "/api/runs", Some(json!({})));
+        server.job(&started);
+        server.call("GET", &format!("/api/runs/{id}"), None)
+    };
+    let before = run("run-0001");
+    assert_eq!(before["stale"], false);
+
+    // Десять минут — действия уходят из окон своих обменов: тесты гипотез остаются без примеров.
+    let offset = "/api/action-logs/log-0001/clock-offset";
+    let shifted = server.call("POST", offset, Some(json!({ "clockOffsetMs": 600_000 })));
+    assert_eq!(shifted["id"], "log-0002");
+    assert_eq!(shifted["mapping"]["clockOffsetMs"], 600_000);
+    let logs = server.call("GET", "/api/action-logs", None);
+    assert_eq!(logs["items"][0]["replacedBy"], "log-0002", "{logs}");
+    assert!(logs["items"][1].get("replacedBy").is_none(), "{logs}");
+
+    let status =
+        |path: &str, body: Value| http(server.port, &server.token, "POST", path, Some(&body)).0;
+    assert_eq!(
+        status(offset, json!({ "clockOffsetMs": 5 })),
+        409,
+        "заменён"
+    );
+    let current = "/api/action-logs/log-0002/clock-offset";
+    assert_eq!(status(current, json!({ "clockOffsetMs": 600_000 })), 409);
+    assert_eq!(status(current, json!({})), 400);
+    assert_eq!(
+        status(
+            "/api/action-logs/log-9999/clock-offset",
+            json!({ "clockOffsetMs": 5 })
+        ),
+        404
+    );
+    assert_eq!(
+        http(
+            server.port,
+            "",
+            "POST",
+            current,
+            Some(&json!({ "clockOffsetMs": 5 }))
+        )
+        .0,
+        401
+    );
+
+    let stale = server.call("GET", "/api/runs/run-0001", None);
+    assert_eq!(stale["staleReasons"], json!(["action_logs"]), "{stale}");
+    let after = run("run-0002");
+    assert_eq!(after["stale"], false);
+    assert_ne!(
+        verdicts(&before["hypotheses"]),
+        verdicts(&after["hypotheses"]),
+        "со сдвигом в десять минут действия не находят свои сообщения"
+    );
+
+    // Обратная поправка возвращает сопоставление первого импорта: первый прогон снова актуален.
+    let restored = server.call("POST", current, Some(json!({ "clockOffsetMs": 0 })));
+    assert_eq!(restored["id"], "log-0003");
+    assert_eq!(
+        server.call("GET", "/api/runs/run-0001", None)["stale"],
+        false
+    );
+    assert_eq!(
+        server.call("GET", "/api/runs/run-0002", None)["staleReasons"],
+        json!(["action_logs"])
+    );
+    drop(server);
+
+    let root = std::env::temp_dir()
+        .join(format!("pl-consistency-{}-clock", std::process::id()))
+        .join("check.protoledger");
+    // Прогон на первом импорте журнала записан как раньше, без нового поля.
+    let saved = |id: &str| std::fs::read_to_string(root.join("runs").join(id)).unwrap();
+    assert!(!saved("run-0001.json").contains("logMappings"));
+    assert!(saved("run-0002.json").contains("logMappings"));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_protoledger"))
+        .arg("verify")
+        .arg(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    for id in ["run-0001", "run-0002"] {
+        assert!(
+            stdout.contains(&format!("{id}: результат воспроизводится")),
+            "{stdout}"
+        );
+    }
+
+    // Состав журналов в отчёте не скрыт: заменённые записи названы.
+    let out = Command::new(env!("CARGO_BIN_EXE_protoledger"))
+        .args(["report", "--format", "md"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        report.matches("заменён записью log-0003").count(),
+        2,
+        "{report}"
+    );
+}

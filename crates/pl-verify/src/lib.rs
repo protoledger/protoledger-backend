@@ -162,6 +162,10 @@ pub struct RunInputs {
     /// sha256 журналов действий, по которым выполнены тесты гипотез, по возрастанию.
     #[serde(default)]
     pub logs: Vec<String>,
+    /// Журналы, разобранные не с первым своим сопоставлением колонок: sha256 → дайджест
+    /// сопоставления. Журнала здесь нет — действовало сопоставление первого импорта.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub log_mappings: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,6 +379,8 @@ pub struct Current {
     pub sources: Vec<String>,
     /// sha256 журналов действий проекта, по возрастанию.
     pub logs: Vec<String>,
+    /// Действующие сопоставления журналов в том же виде, что `RunInputs::log_mappings`.
+    pub log_mappings: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,7 +412,9 @@ pub fn stale_reasons(run: &Run, current: &Current) -> Vec<StaleReason> {
     {
         out.push(StaleReason::Sources);
     }
-    if !run.hypotheses.is_empty() && run.inputs.logs != current.logs {
+    if !run.hypotheses.is_empty()
+        && (run.inputs.logs != current.logs || run.inputs.log_mappings != current.log_mappings)
+    {
         out.push(StaleReason::ActionLogs);
     }
     out

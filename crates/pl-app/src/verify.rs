@@ -59,6 +59,7 @@ pub fn current_signature(session: &Session, store: &SourceStore) -> Option<Curre
         }),
         sources: store.list().iter().map(|s| s.sha256.clone()).collect(),
         logs: log_digests(project.action_logs().iter().map(|l| l.sha256.clone())),
+        log_mappings: crate::actions::mapping_overrides(project.action_logs()),
     })
 }
 
@@ -117,6 +118,7 @@ pub fn execute_run(
         corpus: corpus.clone(),
         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
         logs: log_digests(logs.iter().map(|l| l.record.sha256.clone())),
+        log_mappings: Default::default(),
     };
     let mut run = pl_verify::execute(interpretation, &targets, inputs, cancelled, progress)
         .map_err(verify_problem)?;
@@ -248,6 +250,8 @@ pub fn start_verify(
             )?;
 
             ctx.progress(ProgressStage::Saving, 0, 0, ProgressUnit::Bytes);
+            // Сопоставления журналов — из той же подписи, с которой прогон потом сверяется.
+            run.inputs.log_mappings = current.log_mappings;
             let mut guard = session.write();
             let project = guard.as_mut().ok_or_else(Session::no_project)?;
             run.id = project.next_run_id();
