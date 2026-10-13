@@ -582,6 +582,190 @@ pub fn test_hypothesis(
     Ok(evidence)
 }
 
+/// Сообщение, найденное для действия журнала.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionMessage {
+    pub source: String,
+    pub stream: String,
+    pub start: u64,
+    pub end: u64,
+    pub message_id: Option<String>,
+    pub category: pl_interp::Category,
+    pub ts_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionExchangeState {
+    /// Найдены запрос и его ответ.
+    Paired,
+    /// Запрос найден, ответ определить нельзя: его нет или пара неоднозначна.
+    RequestOnly,
+    /// В окне времени действия нет ни одного запроса.
+    NotFound,
+}
+
+/// Обмен, соответствующий одному действию журнала.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionExchange {
+    /// Номер строки журнала.
+    pub line: u64,
+    pub action: String,
+    pub ts_ns: u64,
+    pub state: ActionExchangeState,
+    pub request: Option<ActionMessage>,
+    pub response: Option<ActionMessage>,
+    /// Время от запроса до ответа.
+    pub delay_ns: Option<u64>,
+    /// Сколько запросов в разных соединениях подошли по времени: больше одного — выбор неоднозначен,
+    /// показан первый.
+    pub candidates: u32,
+}
+
+/// Обмены для всех действий журнала разом: каждому действию — запрос стороны, начавшей соединение,
+/// и ответ на него. Сопоставление то же, что в тестах гипотез.
+pub fn action_exchanges(
+    sources: &[Arc<SourceData>],
+    it: &Interpretation,
+    log: &LoadedLog,
+    options: &TestOptions,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<ActionExchange>, Problem> {
+    let mut actions: Vec<&Action> = log.actions.iter().collect();
+    actions.sort_by_key(|a| (a.ts_ns, a.line));
+    let window_ns = options.window_ms.saturating_mul(1_000_000);
+    let mut found: BTreeMap<u64, ActionExchange> = BTreeMap::new();
+
+    for data in sources {
+        let own: Vec<&Action> = actions
+            .iter()
+            .copied()
+            .filter(|a| a.belongs_to(&data.name))
+            .collect();
+        if own.is_empty() {
+            continue;
+        }
+        for connection in &data.connections {
+            if cancelled() {
+                return Err(Problem::new(
+                    ProblemKind::Conflict,
+                    "Поиск обменов прерван: слишком много данных.",
+                ));
+            }
+            let id = connection.id(&data.sha256);
+            // Сообщения обоих потоков: место, тип, время первого кадра.
+            let mut per_stream: Vec<Vec<ActionMessage>> = Vec::new();
+            let mut timed: Vec<Vec<u64>> = Vec::new();
+            for (i, stream) in connection.streams.iter().enumerate() {
+                let input = stream_input(&data.file, connection, stream, i);
+                let result = pl_interp::apply(it, &input, cancelled).map_err(|e| {
+                    Problem::new(
+                        ProblemKind::LimitExceeded,
+                        format!("Разбор остановлен: {e}."),
+                    )
+                })?;
+                let times = Times::new(data, stream);
+                let mut last = 0u64;
+                let mut exact = Vec::new();
+                let list = result
+                    .messages
+                    .iter()
+                    .map(|m| {
+                        let t = times.first_ts(m.start, m.end);
+                        exact.push(t.unwrap_or(0));
+                        last = t.unwrap_or(last);
+                        ActionMessage {
+                            source: data.sha256.clone(),
+                            stream: format!("{id}:{}", SUFFIX.get(i).copied().unwrap_or("ab")),
+                            start: m.start,
+                            end: m.end,
+                            message_id: m.message_id.clone(),
+                            category: m.category,
+                            ts_ns: last,
+                        }
+                    })
+                    .collect();
+                per_stream.push(list);
+                timed.push(exact);
+            }
+            let first_real = |v: &Vec<u64>| v.iter().find(|t| **t > 0).copied();
+            let side = match (
+                timed.first().and_then(first_real),
+                timed.get(1).and_then(first_real),
+            ) {
+                (Some(a), Some(b)) => usize::from(a > b),
+                (None, Some(_)) => 1,
+                _ => 0,
+            };
+            let (Some(requests), Some(stamps)) = (per_stream.get(side), timed.get(side)) else {
+                continue;
+            };
+            let answers = per_stream.get(1 - side);
+            let ordered = |i: usize| -> Vec<u64> {
+                per_stream
+                    .get(i)
+                    .map_or_else(Vec::new, |m| m.iter().map(|x| x.ts_ns).collect())
+            };
+            let links = pair_turns(&ordered(side), &ordered(1 - side));
+            for (k, action) in assign(stamps, &own, window_ns).into_iter().enumerate() {
+                let (Some(action), Some(request)) = (action, requests.get(k)) else {
+                    continue;
+                };
+                let response = links
+                    .response_of
+                    .get(k)
+                    .copied()
+                    .flatten()
+                    .and_then(|j| answers.and_then(|a| a.get(j)))
+                    .cloned();
+                let row = found.entry(action.line).or_insert_with(|| ActionExchange {
+                    line: action.line,
+                    action: action.action.clone(),
+                    ts_ns: action.ts_ns,
+                    state: ActionExchangeState::NotFound,
+                    request: None,
+                    response: None,
+                    delay_ns: None,
+                    candidates: 0,
+                });
+                row.candidates += 1;
+                if row.request.is_none() {
+                    row.delay_ns = response
+                        .as_ref()
+                        .map(|r| r.ts_ns.saturating_sub(request.ts_ns));
+                    row.state = if response.is_some() {
+                        ActionExchangeState::Paired
+                    } else {
+                        ActionExchangeState::RequestOnly
+                    };
+                    row.request = Some(request.clone());
+                    row.response = response;
+                }
+            }
+        }
+    }
+
+    // Действия без запроса тоже в таблице: видно, чего в записи нет.
+    Ok(log
+        .actions
+        .iter()
+        .map(|a| {
+            found.remove(&a.line).unwrap_or_else(|| ActionExchange {
+                line: a.line,
+                action: a.action.clone(),
+                ts_ns: a.ts_ns,
+                state: ActionExchangeState::NotFound,
+                request: None,
+                response: None,
+                delay_ns: None,
+                candidates: 0,
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
