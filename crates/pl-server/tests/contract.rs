@@ -596,6 +596,12 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
 
+    api.get(
+        "/api/streams/{stream}/explain",
+        &format!("/api/streams/{stream}/explain?offset=3"),
+    )
+    .await;
+
     // Отказы — тоже по схеме.
     api.call(
         Method::GET,

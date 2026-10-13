@@ -4,6 +4,7 @@ mod actions;
 mod analysis;
 mod coverage;
 mod draft;
+mod explain;
 mod field_hints;
 mod fix_hints;
 mod hypothesis;
@@ -30,6 +31,10 @@ pub use coverage::{
     COVERAGE_MAP_BYTES, Cover, CoverBytes, CoverRegion, Coverage, TypeCoverage, coverage,
 };
 pub use draft::{DraftRequest, DraftStep, DraftSummary, DraftView, draft_interpretation};
+pub use explain::{
+    ByteExplanation, ByteField, ByteFrame, ByteHypothesis, ByteKind, ByteMessage, ByteObservation,
+    ByteProjectHypothesis, ByteRun, explain_byte,
+};
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use fix_hints::{Fix, FixHints, FixKind, hypothesis_fix_hints};
 pub use hypothesis::{

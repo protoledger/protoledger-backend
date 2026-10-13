@@ -737,3 +737,104 @@ async fn draft_without_boundaries_is_refused_with_a_reason() {
     assert_eq!(status, StatusCode::OK, "{draft}");
     assert!(!draft["yaml"].as_str().unwrap().contains("action."));
 }
+
+#[tokio::test]
+async fn explain_byte_gathers_everything_known_about_it() {
+    let (state, ab) = with_log("explain").await;
+    let (_, sources) = call(&state, Method::GET, "/api/sources?limit=1", None).await;
+    let source = sources["items"][0]["sha256"].as_str().unwrap().to_owned();
+    let (status, observation) = call(
+        &state,
+        Method::POST,
+        "/api/observations",
+        Some(json!({
+            "anchor": { "source": source, "stream": ab, "start": 2, "end": 4 },
+            "comment": "тип и номер сеанса"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{observation}");
+    let (status, hypothesis) = call(
+        &state,
+        Method::POST,
+        "/api/hypotheses",
+        Some(json!({ "statement": "байт 3 — номер сеанса", "basis": [observation["id"]] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{hypothesis}");
+    let (status, _) = call(&state, Method::POST, "/api/runs", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    wait_jobs(&state).await;
+
+    let (status, e) = call(
+        &state,
+        Method::GET,
+        &format!("/api/streams/{ab}/explain?offset=3"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{e}");
+    assert_eq!((&e["kind"], &e["offset"]), (&json!("data"), &json!(3)));
+    assert!(e["value"].is_u64());
+    // Откуда байт: первый кадр с данными потока.
+    let frame = &e["frames"][0];
+    assert!(frame["frame"].as_u64().unwrap() >= 1);
+    assert_eq!(
+        (&frame["start"], &frame["duplicate"]),
+        (&json!(0), &json!(false))
+    );
+    assert!(frame["tsNs"].as_u64().unwrap() > 0);
+    // К чему относится: первое сообщение потока и поле описания стенда.
+    assert_eq!(e["message"]["start"], 0);
+    assert_eq!(e["message"]["offset"], 3);
+    assert!(e["message"]["messageId"].is_string(), "{e}");
+    let field = &e["fields"][0];
+    assert_eq!(
+        (&field["start"], &field["end"]),
+        (&json!(3), &json!(4)),
+        "{e}"
+    );
+    assert!(field["value"].is_string());
+    // Что о нём записал исследователь.
+    assert_eq!(e["observations"][0]["id"], observation["id"]);
+    assert_eq!(e["hypotheses"][0]["id"], hypothesis["id"]);
+    // Где проверен.
+    let run = &e["runs"][0];
+    assert_eq!(run["sameInterpretation"], true, "{e}");
+    assert_eq!(run["category"], "matched");
+    assert_eq!(run["messageId"], e["message"]["messageId"]);
+
+    // Байт без наблюдений: списки пусты, остальное на месте.
+    let (_, other) = call(
+        &state,
+        Method::GET,
+        &format!("/api/streams/{ab}/explain?offset=0"),
+        None,
+    )
+    .await;
+    assert_eq!(other["observations"], json!([]));
+    assert_eq!(other["hypotheses"], json!([]));
+    assert_eq!(other["fields"][0]["status"], "rule");
+
+    for (path, expected) in [
+        (
+            format!("/api/streams/{ab}/explain?offset=99999999"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("/api/streams/{ab}/explain"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("/api/streams/{ab}/explain?offset=-1"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/streams/00000000:c0001:ab/explain?offset=0".to_owned(),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, _) = call(&state, Method::GET, &path, None).await;
+        assert_eq!(status, expected, "{path}");
+    }
+}
