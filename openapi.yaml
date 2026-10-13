@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.31
+  version: 0.1.32
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -333,6 +333,54 @@ paths:
                 timing:
                   - { messageId: set_param_req, a: { pairs: 6, medianNs: 2000000, maxNs: 2400000 }, b: { pairs: 5, medianNs: 2100000, maxNs: 2500000 }, ratioPermille: 1050 }
                 summary: ['set_param_req.value: во втором наборе новые значения — -5, 123456, 70000']
+                incomplete: false
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/graph:
+    post:
+      tags: [interpretation]
+      operationId: getExchangeGraph
+      summary: Граф обмена — типы сообщений, ответы и переходы
+      description: |
+        По всем соединениям записей: `nodes` — типы сообщений и сколько раз их отправила каждая сторона;
+        `answers` — чем отвечают на запрос (только пары, где ответ определён однозначно или по порядку);
+        `next` — какой запрос той же стороны идёт следом в соединении; `starts` — с чего соединения
+        начинаются; счётчики запросов без ответа и сообщений без запроса. `dot` — тот же граф в формате
+        Graphviz DOT: сплошные стрелки — ответы, пунктирные — следующий запрос. Это наблюдаемое поведение
+        на записях, а не заявленный автомат состояний. `yaml` — несохранённый текст описания; `sources` —
+        только эти записи.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CoverageRequest' }
+            example: {}
+      responses:
+        '200':
+          description: Граф обмена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExchangeGraph' }
+              example:
+                connections: 1
+                messages: 32
+                nodes:
+                  - { id: set_param_req, requests: 6, responses: 0 }
+                  - { id: set_param_resp, requests: 0, responses: 6 }
+                answers: [{ from: set_param_req, to: set_param_resp, count: 6 }]
+                next: [{ from: set_param_req, to: set_param_req, count: 5 }]
+                starts: [{ from: начало, to: set_param_req, count: 1 }]
+                unanswered: 0
+                unsolicited: 0
+                dot: "digraph exchange {\n  rankdir=LR;\n}\n"
+                truncated: false
                 incomplete: false
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2574,6 +2622,38 @@ components:
               b: { $ref: '#/components/schemas/CompareTiming' }
               ratioPermille: { type: integer, minimum: 0, description: 'Медиана второго набора к первому, в тысячных' }
         summary: { type: array, items: { type: string }, description: 'Главное словами' }
+        incomplete: { type: boolean }
+
+    GraphEdge:
+      type: object
+      required: [from, to, count]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        count: { type: integer, minimum: 0 }
+
+    ExchangeGraph:
+      type: object
+      required: [connections, messages, nodes, answers, next, starts, unanswered, unsolicited, dot, truncated, incomplete]
+      properties:
+        connections: { type: integer, minimum: 0 }
+        messages: { type: integer, minimum: 0 }
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, requests, responses]
+            properties:
+              id: { type: string, description: 'Тип сообщения; ? — тип не определён' }
+              requests: { type: integer, minimum: 0, description: 'Отправлено стороной, начавшей соединение' }
+              responses: { type: integer, minimum: 0, description: 'Отправлено встречной стороной' }
+        answers: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Запрос → ответ' }
+        next: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Запрос → следующий запрос' }
+        starts: { type: array, items: { $ref: '#/components/schemas/GraphEdge' }, description: 'Первый запрос соединения' }
+        unanswered: { type: integer, minimum: 0 }
+        unsolicited: { type: integer, minimum: 0 }
+        dot: { type: string, description: 'Граф в формате Graphviz DOT' }
+        truncated: { type: boolean, description: 'Рёбер больше 200: показаны самые частые' }
         incomplete: { type: boolean }
 
     CoverageRequest:

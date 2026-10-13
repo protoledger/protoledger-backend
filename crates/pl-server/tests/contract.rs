@@ -428,6 +428,13 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
     api.post(
+        "/api/interpretation/graph",
+        "/api/interpretation/graph",
+        json!({ "yaml": wrong }),
+        200,
+    )
+    .await;
+    api.post(
         "/api/interpretation/coverage",
         "/api/interpretation/coverage",
         json!({ "yaml": wrong }),
