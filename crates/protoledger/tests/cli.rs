@@ -921,3 +921,31 @@ fn apply_says_when_streams_are_outside_the_scope() {
     let inside = apply("fixtures/stand/main.pcapng", &[]);
     assert!(!text(&inside.stderr).contains("Вне области"));
 }
+
+#[test]
+fn apply_guesses_journal_columns_without_a_mapping() {
+    let dir = temp("guess");
+    let mapping = mapping_file(&dir);
+    let log = repo("fixtures/stand/main.actions.csv");
+    let with = apply(
+        "fixtures/stand/main.pcapng",
+        &[
+            "--action-log",
+            log.to_str().unwrap(),
+            "--mapping",
+            mapping.to_str().unwrap(),
+        ],
+    );
+    let guessed = apply(
+        "fixtures/stand/main.pcapng",
+        &["--action-log", log.to_str().unwrap()],
+    );
+    assert_eq!(
+        text(&guessed.stdout),
+        text(&with.stdout),
+        "догадка даёт тот же результат, что ручное сопоставление"
+    );
+    let err = text(&guessed.stderr);
+    assert!(err.contains("колонки журнала угаданы"), "{err}");
+    assert!(err.contains("time: «time»"), "{err}");
+}

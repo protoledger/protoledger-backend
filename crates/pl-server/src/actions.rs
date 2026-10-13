@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::header;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use pl_actions::{Action, Mapping, Param};
 use pl_app::{LoadedLog, Session};
@@ -29,6 +29,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/action-logs",
             get(list).post(import).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/action-logs/guess",
+            post(guess).layer(DefaultBodyLimit::disable()),
         )
         .route("/action-logs/{id}/actions", get(actions))
         .route("/action-logs/{id}/actions/{line}/exchange", get(exchange))
@@ -139,6 +143,87 @@ fn read_file(path: &std::path::Path) -> Result<Vec<u8>, Problem> {
         ));
     }
     std::fs::read(path).map_err(unreadable)
+}
+
+#[derive(Deserialize)]
+struct GuessByPath {
+    path: PathBuf,
+}
+
+/// Догадка о колонках журнала: JSON `{path}` или multipart с полем `file`. Проект не нужен.
+async fn guess(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Json<pl_actions::Guess>, ApiError> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let bytes = if content_type.starts_with("application/json") {
+        let body = axum::body::to_bytes(request.into_body(), crate::MAX_JSON_BODY)
+            .await
+            .map_err(|_| {
+                ApiError::new(ProblemKind::LimitExceeded, "Тело запроса слишком большое.")
+            })?;
+        let req: GuessByPath = serde_json::from_slice(&body)
+            .map_err(|_| bad_request("Ожидается JSON {\"path\": \"…\"}."))?;
+        let path = if req.path.is_relative() {
+            state.session.workspace().join(&req.path)
+        } else {
+            req.path
+        };
+        tokio::task::spawn_blocking(move || read_file(&path))
+            .await
+            .map_err(|_| blocking_failed())?
+            .map_err(ApiError)?
+    } else if content_type.starts_with("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, &state)
+            .await
+            .map_err(|_| bad_request("Тело запроса не похоже на multipart/form-data."))?;
+        let mut file = None;
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|_| bad_request("Загрузка прервана или повреждена."))?
+        {
+            if field.name() != Some("file") {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|_| bad_request("Загрузка прервана."))?
+            {
+                if bytes.len() + chunk.len() > pl_actions::MAX_FILE_BYTES {
+                    return Err(ApiError::new(
+                        ProblemKind::LimitExceeded,
+                        "Файл журнала больше предела 256 МиБ.",
+                    ));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            file = Some(bytes);
+        }
+        file.ok_or_else(|| bad_request("Нужно поле file (файл журнала)."))?
+    } else {
+        return Err(ApiError::new(
+            ProblemKind::UnsupportedMedia,
+            "Ожидается application/json или multipart/form-data.",
+        ));
+    };
+    let guessed = tokio::task::spawn_blocking(move || pl_actions::guess_mapping(&bytes))
+        .await
+        .map_err(|_| blocking_failed())?
+        .map_err(|e| {
+            ApiError::new(
+                ProblemKind::Unprocessable,
+                format!("Колонки журнала не угадываются: {e}."),
+            )
+        })?;
+    Ok(Json(guessed))
 }
 
 /// Импорт: JSON `{path, mapping}` или multipart с полями `file` и `mapping` (JSON).

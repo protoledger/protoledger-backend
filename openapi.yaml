@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.37
+  version: 0.1.38
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -871,6 +871,59 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/action-logs/guess:
+    post:
+      tags: [actions]
+      operationId: guessActionLogMapping
+      summary: Угадать колонки журнала действий
+      description: |
+        Предложение сопоставления колонок по заголовкам и содержимому: разделитель, колонка времени и её формат
+        (из нескольких — начало действия), действие, параметры и результат (JSON или `ключ=значение`), колонка записи.
+        Для каждой роли — причина в `reasons`; догадка сразу проверяется пробным разбором (`rows`, `skipped`).
+        Это предложение: пользователь принимает его или правит перед импортом. Проект не нужен; относительный
+        `path` — от каталога проектов.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              additionalProperties: false
+              properties:
+                path: { type: string, description: Путь к файлу журнала на диске }
+            example: { path: thermostand/sample_protocol/action_journal.csv }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: CSV журнала }
+      responses:
+        '200':
+          description: Догадка с причинами и пробным разбором
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionLogGuess' }
+              example:
+                mapping: { time: start_utc, action: action, params: parameters, result: observed_result, timeFormat: rfc3339, paramsFormat: json, resultFormat: json, delimiter: null, utcOffsetMinutes: 0, clockOffsetMs: 0, source: capture }
+                columns: [capture, session, action_id, start_utc, end_utc, action, parameters, observed_result]
+                reasons:
+                  delimiter: "«,»: при нём 8 колонок и строки с ним согласны"
+                  time: "«start_utc»: 100 % значений читаются как время (Rfc3339)"
+                  action: "«action»: 6 разных действий на 109 строк"
+                  params: "«parameters»: 100 % значений — JSON-объект"
+                  result: "«observed_result»: 100 % значений — JSON-объект"
+                  source: "«capture»: 100 % значений — имена файлов записей; журнал на несколько записей"
+                rows: 109
+                skipped: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
@@ -3339,6 +3392,23 @@ components:
         utcOffsetMinutes: { type: integer, default: 0, description: Пояс для времени без указания пояса }
         clockOffsetMs: { type: integer, default: 0, description: "Поправка на сдвиг часов клиента, мс" }
         source: { type: [string, 'null'], description: 'Колонка с именем или путём записи: журнал на несколько записей, действия сопоставляются только со своей записью (по имени файла, без учёта регистра)' }
+
+    ActionLogGuess:
+      type: object
+      required: [mapping, columns, reasons, rows, skipped]
+      additionalProperties: false
+      properties:
+        mapping: { $ref: '#/components/schemas/ActionLogMapping' }
+        columns:
+          type: array
+          description: Колонки файла в исходном порядке
+          items: { type: string }
+        reasons:
+          type: object
+          description: 'Почему выбрана роль: ключи delimiter, time, action, params, result, source'
+          additionalProperties: { type: string }
+        rows: { type: integer, minimum: 0, description: Разобрано строк с этой догадкой }
+        skipped: { type: integer, minimum: 0, description: Не разобрано строк }
 
     ImportActionLogRequest:
       type: object
