@@ -46,6 +46,36 @@ pub fn project_path(path: &Path) -> PathBuf {
     out
 }
 
+/// Записи из аргументов: файл берётся как есть, из каталога — его `.pcap` и `.pcapng` по имени,
+/// без вложенных каталогов.
+pub fn capture_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    for p in paths {
+        let meta = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        if meta.is_dir() {
+            let mut found: Vec<PathBuf> = std::fs::read_dir(p)
+                .map_err(|e| format!("{}: {e}", p.display()))?
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|f| {
+                    f.is_file()
+                        && f.extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| matches!(e, "pcap" | "pcapng"))
+                })
+                .collect();
+            found.sort();
+            out.extend(found);
+        } else {
+            out.push(p.clone());
+        }
+    }
+    if out.is_empty() {
+        return Err("Записей .pcap и .pcapng не найдено.".to_owned());
+    }
+    Ok(out)
+}
+
 /// Размер текстовых входов CLI (интерпретация, сопоставление): те же пределы, что у API.
 const MAX_TEXT: u64 = 4 << 20;
 
