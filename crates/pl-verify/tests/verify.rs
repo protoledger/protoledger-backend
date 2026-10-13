@@ -70,6 +70,7 @@ fn inputs(it: &Interpretation) -> RunInputs {
         corpus: pl_verify::CorpusFilter::default(),
         engine_version: "test".into(),
         logs: vec![],
+        log_mappings: Default::default(),
     }
 }
 
@@ -177,6 +178,7 @@ fn staleness_follows_the_signature() {
         settings_digest: digest_of(&"settings"),
         sources: vec!["a".repeat(64), "b".repeat(64)],
         logs: vec![],
+        log_mappings: Default::default(),
     };
     assert!(stale_reasons(&r, &fresh).is_empty());
     let new_log = Current {
@@ -221,6 +223,23 @@ fn staleness_follows_the_signature() {
         errors: 0,
     });
     assert_eq!(stale_reasons(&tested, &new_log), [StaleReason::ActionLogs]);
+
+    // Тот же файл журнала, но разобран заново с другим сопоставлением колонок.
+    tested.inputs.logs = vec!["c".repeat(64)];
+    assert!(stale_reasons(&tested, &new_log).is_empty());
+    let remapped = Current {
+        log_mappings: [("c".repeat(64), digest_of(&"mapping"))].into(),
+        ..new_log
+    };
+    assert_eq!(stale_reasons(&tested, &remapped), [StaleReason::ActionLogs]);
+    tested.inputs.log_mappings = remapped.log_mappings.clone();
+    assert!(stale_reasons(&tested, &remapped).is_empty());
+
+    // Прогон без этого поля читается как раньше и в файл его не пишет.
+    let json = serde_json::to_string(&r.inputs).unwrap();
+    assert!(!json.contains("logMappings"), "{json}");
+    let back: pl_verify::RunInputs = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, r.inputs);
 }
 
 #[test]

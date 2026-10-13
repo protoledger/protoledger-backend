@@ -120,6 +120,9 @@ pub struct ActionLogInfo {
     pub name: String,
     pub rows: u64,
     pub skipped: u64,
+    /// Запись, заменившая эту: тот же файл импортирован заново.
+    #[serde(default)]
+    pub replaced_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -263,8 +266,11 @@ fn build(d: &ReportData) -> Vec<Block> {
             d.action_logs
                 .iter()
                 .map(|l| {
+                    let replaced = l.replaced_by.as_ref().map_or_else(String::new, |by| {
+                        format!("; заменён записью {by}, в анализе не участвует")
+                    });
                     format!(
-                        "{} ({}): разобрано действий {}, строк с ошибками {}",
+                        "{} ({}): разобрано действий {}, строк с ошибками {}{replaced}",
                         l.name, l.id, l.rows, l.skipped
                     )
                 })

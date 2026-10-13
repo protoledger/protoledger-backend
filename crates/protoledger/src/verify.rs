@@ -135,7 +135,6 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
     // Журналы действий проекта: по ним прогон выполняет тесты гипотез.
     let logs = pl_app::ActionLogStore::default();
     pl_app::reload_action_logs(&session, &logs);
-    let logs = logs.list();
     let current = pl_app::current_signature(&session, &store);
     let sources = store.list();
     for (id, old) in &stored {
@@ -167,12 +166,9 @@ pub fn run(args: VerifyArgs) -> Result<Exit, String> {
             &interpretation,
             Some(rev),
             &run_sources,
-            // Те же журналы, что у прогона: смена журналов — устаревание, а не невоспроизводимость.
-            &logs
-                .iter()
-                .filter(|l| old.inputs.logs.contains(&l.record.sha256))
-                .cloned()
-                .collect::<Vec<_>>(),
+            // Те же журналы и с тем же сопоставлением колонок, что у прогона: их смена —
+            // устаревание, а не невоспроизводимость.
+            &logs.for_run(&old.inputs),
             &old.inputs.corpus,
             settings_digest.clone(),
             !legacy,

@@ -484,6 +484,43 @@ async fn responses_match_the_contract_schemas() {
         &format!("/api/action-logs/{log_id}/actions/{line}/exchange"),
     )
     .await;
+    // Поправка и её отмена: к концу действует запись с исходным сопоставлением.
+    let shifted = api
+        .post(
+            "/api/action-logs/{id}/clock-offset",
+            &format!("/api/action-logs/{log_id}/clock-offset"),
+            json!({ "clockOffsetMs": 250 }),
+            200,
+        )
+        .await;
+    api.call(
+        Method::POST,
+        "/api/action-logs/{id}/clock-offset",
+        &format!("/api/action-logs/{log_id}/clock-offset"),
+        Some(json!({ "clockOffsetMs": 0 })),
+        409,
+    )
+    .await;
+    let log_id = api
+        .post(
+            "/api/action-logs/{id}/clock-offset",
+            &format!(
+                "/api/action-logs/{}/clock-offset",
+                shifted["id"].as_str().unwrap()
+            ),
+            json!({ "clockOffsetMs": 0 }),
+            200,
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let listed = api.get("/api/action-logs", "/api/action-logs").await;
+    assert_eq!(
+        listed["items"][0]["replacedBy"],
+        log_id.as_str(),
+        "{listed}"
+    );
 
     api.post(
         "/api/observations",
