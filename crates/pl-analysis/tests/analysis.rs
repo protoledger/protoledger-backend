@@ -711,3 +711,31 @@ fn a_constant_byte_is_not_linked_to_an_almost_constant_parameter() {
         "постоянный байт связью не считается: {places:?}"
     );
 }
+
+/// Редкое значение параметра не тонет в общей доле: байт равен флагу в девяти случаях из двенадцати
+/// только потому, что флаг почти всегда единица, а на нулях совпал один раз из трёх.
+#[test]
+fn a_link_must_hold_for_each_repeated_parameter_value() {
+    let samples: Vec<_> = (0..12)
+        .map(|i| {
+            let flag: i64 = if i < 3 { 0 } else { 1 };
+            // Байт 0 «угадывает» ноль только однажды; байт 1 — сам флаг.
+            let guess = if i == 0 { 0 } else { 1 };
+            pl_analysis::CorrSample {
+                stream: "s".to_owned(),
+                start: i as u64,
+                bytes: vec![guess, flag as u8, 0xEE],
+                params: [("result.alarm".to_owned(), flag.into())].into(),
+                action: Some("read".to_owned()),
+            }
+        })
+        .collect();
+    let places: Vec<u32> = pl_analysis::correlate(&samples)
+        .values
+        .iter()
+        .filter(|v| v.param == "result.alarm")
+        .map(|v| v.at)
+        .collect();
+    assert!(places.contains(&1), "{places:?}");
+    assert!(!places.contains(&0), "{places:?}");
+}

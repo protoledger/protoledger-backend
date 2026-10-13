@@ -443,7 +443,26 @@ fn value_hints(samples: &[CorrSample]) -> Vec<ValueHint> {
                         }
                     }
                     let share = permille(matches, total);
-                    if matches >= MIN_SAMPLES && share >= MIN_SHARE && varied {
+                    // Редкое значение параметра не должно теряться в общей доле: если байты совпадают
+                    // только с самым частым значением, это его частота, а не связь. Проверка идёт
+                    // вторым проходом и только для связей, прошедших остальные пороги.
+                    let every_value_holds = || {
+                        let mut per_value: BTreeMap<Decimal, (u64, u64)> = BTreeMap::new();
+                        for (_, _, p, d) in &readable {
+                            let equal = match d {
+                                Reading::Int(v) => p.times_equals(scale, *v),
+                                Reading::Dec(v, _) => v == p,
+                            };
+                            let entry = per_value.entry(*p).or_default();
+                            entry.0 += 1;
+                            entry.1 += u64::from(equal);
+                        }
+                        per_value
+                            .values()
+                            .all(|(seen, held)| *seen < 2 || held * 2 >= *seen)
+                    };
+                    if matches >= MIN_SAMPLES && share >= MIN_SHARE && varied && every_value_holds()
+                    {
                         found.push(Found {
                             rank: encoding.rank(),
                             hint: ValueHint {
