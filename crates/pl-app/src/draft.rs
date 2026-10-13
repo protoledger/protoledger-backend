@@ -548,6 +548,11 @@ pub fn draft_interpretation(
                 // Счётчик — свойство потока: добавляется во все сообщения, где его байты свободны.
                 FieldKind::Counter => {
                     let Some(size) = h.size else { continue };
+                    let span = (u64::from(h.at), u64::from(h.at) + u64::from(size));
+                    // Байты заняты во всех типах — гипотезе не на что опереться.
+                    if !messages.iter().any(|m| m.free("counter", Some(span))) {
+                        continue;
+                    }
                     let hypothesis = hyps.id(
                         &format!("counter{}", h.at),
                         || {
@@ -568,7 +573,7 @@ pub fn draft_interpretation(
                             expect: None,
                             mask: None,
                             hypothesis,
-                            span: Some((u64::from(h.at), u64::from(h.at) + u64::from(size))),
+                            span: Some(span),
                         });
                     }
                     if added && !counter_seen {
