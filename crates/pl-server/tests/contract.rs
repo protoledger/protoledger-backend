@@ -470,6 +470,11 @@ async fn responses_match_the_contract_schemas() {
         .await;
     let line = actions["items"][3]["line"].as_u64().unwrap_or(2);
     api.get(
+        "/api/action-logs/{id}/exchanges",
+        &format!("/api/action-logs/{log_id}/exchanges?limit=5"),
+    )
+    .await;
+    api.get(
         "/api/action-logs/{id}/actions/{line}/exchange",
         &format!("/api/action-logs/{log_id}/actions/{line}/exchange"),
     )

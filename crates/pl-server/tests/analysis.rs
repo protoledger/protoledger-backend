@@ -885,3 +885,62 @@ async fn entropy_map_is_reported_per_stream() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn every_action_of_the_journal_gets_its_exchange() {
+    let (state, ab) = with_log("exchanges-all").await;
+    let (status, page) = call(
+        &state,
+        Method::GET,
+        "/api/action-logs/log-0001/exchanges?limit=500",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let rows = page["items"].as_array().unwrap();
+    assert_eq!(rows.len() as u64, page["total"].as_u64().unwrap());
+    let count = |state: &str| rows.iter().filter(|r| r["state"] == state).count() as u64;
+    assert_eq!(count("paired"), page["paired"].as_u64().unwrap());
+    assert_eq!(count("request_only"), page["requestOnly"].as_u64().unwrap());
+    assert_eq!(count("not_found"), page["notFound"].as_u64().unwrap());
+    // Запись стенда сделана по этому журналу: почти каждое действие находит запрос и ответ.
+    assert!(count("paired") * 10 >= rows.len() as u64 * 8, "{page}");
+    for row in rows.iter().filter(|r| r["state"] == "paired") {
+        let (request, response) = (&row["request"], &row["response"]);
+        assert_eq!(request["stream"], json!(ab), "{row}");
+        assert_ne!(response["stream"], request["stream"]);
+        assert!(response["tsNs"].as_u64().unwrap() >= request["tsNs"].as_u64().unwrap());
+        assert_eq!(
+            row["delayNs"].as_u64().unwrap(),
+            response["tsNs"].as_u64().unwrap() - request["tsNs"].as_u64().unwrap()
+        );
+        assert_eq!(row["candidates"], 1);
+    }
+    // Запрос уставки и ответ на него — свои типы сообщений.
+    let set = rows
+        .iter()
+        .find(|r| r["action"] == "set_param" && r["state"] == "paired")
+        .unwrap_or_else(|| panic!("нет обмена для set_param: {page}"));
+    assert_eq!(set["request"]["messageId"], "set_param_req");
+    assert_eq!(set["response"]["messageId"], "set_param_resp");
+
+    let (_, small) = call(
+        &state,
+        Method::GET,
+        "/api/action-logs/log-0001/exchanges?limit=2&offset=1",
+        None,
+    )
+    .await;
+    assert_eq!(small["items"].as_array().unwrap().len(), 2);
+    assert_eq!(small["items"][0], rows[1]);
+    for (path, expected) in [
+        (
+            "/api/action-logs/log-0001/exchanges?limit=0",
+            StatusCode::BAD_REQUEST,
+        ),
+        ("/api/action-logs/log-9999/exchanges", StatusCode::NOT_FOUND),
+    ] {
+        let (status, _) = call(&state, Method::GET, path, None).await;
+        assert_eq!(status, expected, "{path}");
+    }
+}

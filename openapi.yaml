@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.32
+  version: 0.1.33
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -861,6 +861,54 @@ paths:
                 total: 16
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/action-logs/{id}/exchanges:
+    get:
+      tags: [actions]
+      operationId: listActionExchanges
+      summary: Обмены для всех действий журнала разом
+      description: |
+        По строке на каждое действие журнала: запрос стороны, начавшей соединение, найденный в окне времени
+        действия, и ответ на него. Сопоставление то же, что в тестах гипотез: действие получает ближайший
+        следующий запрос, ответ берётся по ходам обмена. `state`: `paired` — есть запрос и ответ;
+        `request_only` — ответ определить нельзя (его нет или пара неоднозначна); `not_found` — запроса в окне
+        нет. `candidates` больше 1 — по времени подошли запросы в нескольких соединениях, показан первый.
+        Нужна сохранённая интерпретация (`409`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: log-0001 }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: windowMs, in: query, description: 'Окно подбора запроса, мс', schema: { type: integer, minimum: 0, maximum: 600000, default: 2000 } }
+      responses:
+        '200':
+          description: Таблица действие → запрос и ответ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionExchangePage' }
+              example:
+                items:
+                  - line: 2
+                    action: set_param
+                    tsNs: 1791190809001270000
+                    state: paired
+                    request: { source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5, stream: '3f5a1c0d:c0001:ab', start: 0, end: 12, messageId: set_param_req, category: matched, tsNs: 1791190809001270000 }
+                    response: { source: 3f5a1c0d9e2b47a1b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5, stream: '3f5a1c0d:c0001:ba', start: 0, end: 13, messageId: set_param_resp, category: matched, tsNs: 1791190809003870000 }
+                    delayNs: 2600000
+                    candidates: 1
+                total: 16
+                limit: 50
+                offset: 0
+                paired: 15
+                requestOnly: 0
+                notFound: 1
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2655,6 +2703,49 @@ components:
         dot: { type: string, description: 'Граф в формате Graphviz DOT' }
         truncated: { type: boolean, description: 'Рёбер больше 200: показаны самые частые' }
         incomplete: { type: boolean }
+
+    ActionMessage:
+      type: object
+      required: [source, stream, start, end, messageId, category, tsNs]
+      properties:
+        source: { type: string }
+        stream: { type: string }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        messageId: { type: [string, 'null'] }
+        category: { type: string }
+        tsNs: { type: integer, minimum: 0 }
+
+    ActionExchangePage:
+      type: object
+      required: [items, total, limit, offset, paired, requestOnly, notFound]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [line, action, tsNs, state, request, response, delayNs, candidates]
+            properties:
+              line: { type: integer, minimum: 1 }
+              action: { type: string }
+              tsNs: { type: integer, minimum: 0 }
+              state: { type: string, enum: [paired, request_only, not_found] }
+              request:
+                oneOf:
+                  - { $ref: '#/components/schemas/ActionMessage' }
+                  - { type: 'null' }
+              response:
+                oneOf:
+                  - { $ref: '#/components/schemas/ActionMessage' }
+                  - { type: 'null' }
+              delayNs: { type: [integer, 'null'], minimum: 0 }
+              candidates: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
+        paired: { type: integer, minimum: 0 }
+        requestOnly: { type: integer, minimum: 0 }
+        notFound: { type: integer, minimum: 0 }
 
     CoverageRequest:
       type: object

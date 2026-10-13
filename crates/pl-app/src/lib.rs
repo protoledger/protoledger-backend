@@ -45,6 +45,7 @@ pub use explain::{
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
 pub use fix_hints::{Fix, FixHints, FixKind, hypothesis_fix_hints};
 pub use graph::{ExchangeGraph, GraphEdge, GraphNode, exchange_graph};
+pub use hypothesis::{ActionExchange, ActionExchangeState, ActionMessage, action_exchanges};
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,
 };
