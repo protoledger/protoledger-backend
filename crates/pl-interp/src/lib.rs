@@ -18,6 +18,7 @@ pub mod expr;
 pub mod framing;
 pub mod input;
 pub mod schema;
+mod yaml_error;
 
 pub use apply::{
     Category, FieldResult, FieldState, MessageResult, StreamResult, Violation, ViolationKind, apply,
