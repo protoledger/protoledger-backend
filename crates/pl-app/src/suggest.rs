@@ -128,6 +128,7 @@ pub fn research_suggestions(
                 message_id: Some(message.id.clone()),
                 log_id: request.log_id.clone(),
                 window_ms: None,
+                action: None,
             },
             cancelled,
         )?;

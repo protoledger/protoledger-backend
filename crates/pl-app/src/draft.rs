@@ -668,6 +668,7 @@ pub fn draft_interpretation(
                 message_id: filter,
                 log_id: request.log_id.clone(),
                 window_ms: None,
+                action: None,
             },
             cancelled,
         )?;

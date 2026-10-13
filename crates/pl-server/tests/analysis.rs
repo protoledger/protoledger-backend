@@ -367,6 +367,48 @@ async fn correlations_need_an_action_log() {
 }
 
 /// Действие, которого нет в журнале, не подменяется действием соседнего сообщения другого типа.
+/// Описания ещё нет, типы сообщений не названы: связи одного действия отбираются по его имени,
+/// и поля других действий в ответ не попадают.
+#[tokio::test]
+async fn correlations_can_be_limited_to_one_action() {
+    let (state, ab) = with_log("corr-action").await;
+    let ask = |body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/analysis/correlations",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, all) = ask(json!({ "streams": [ab.clone()] })).await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    let (status, one) = ask(json!({ "streams": [ab.clone()], "action": "set_param" })).await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+
+    assert_eq!(one["samples"], 6, "{one}");
+    assert_eq!(one["withAction"], one["samples"]);
+    assert!(all["samples"].as_u64().unwrap() > 6, "{all}");
+    let params = |c: &Value| -> Vec<String> {
+        c["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["param"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert!(params(&one).contains(&"params.value".to_owned()), "{one}");
+    // Номер канала есть только у измерений.
+    assert!(!params(&one).iter().any(|p| p.contains("channel")), "{one}");
+
+    let (status, none) = ask(json!({ "streams": [ab], "action": "нет такого" })).await;
+    assert_eq!(status, StatusCode::OK, "{none}");
+    assert_eq!(none["samples"], 0);
+}
+
 #[tokio::test]
 async fn correlations_do_not_borrow_actions_from_other_message_types() {
     let (state, _, ab, _) = setup("corr-borrow").await;
