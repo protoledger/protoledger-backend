@@ -4,6 +4,7 @@ mod actions;
 mod analysis;
 mod draft;
 mod field_hints;
+mod fix_hints;
 mod hypothesis;
 mod interp;
 mod jobs;
@@ -26,6 +27,7 @@ pub use analysis::{
 };
 pub use draft::{DraftRequest, DraftStep, DraftSummary, DraftView, draft_interpretation};
 pub use field_hints::{FieldHints, HintTest, TypeCandidate, field_type_hints};
+pub use fix_hints::{Fix, FixHints, FixKind, hypothesis_fix_hints};
 pub use hypothesis::{
     Counterexample, DEFAULT_WINDOW_MS, Evidence, Issue, TestOptions, Verdict, test_hypothesis,
 };

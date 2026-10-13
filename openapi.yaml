@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.25
+  version: 0.1.26
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -282,6 +282,54 @@ paths:
                 total: 1
                 limit: 50
                 offset: 0
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NoProject' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/interpretation/fix-hints:
+    post:
+      tags: [interpretation]
+      operationId: getHypothesisFixHints
+      summary: Подсказка исправления опровергнутой гипотезы
+      description: |
+        Для гипотезы описания с тестом ищет простую правку, после которой контрпримеров становится меньше.
+        Перебираются: знак и порядок байтов целых полей из теста (`sign`, `byte_order`), ширина поля — 1, 2 или
+        4 байта с тем же началом или тем же младшим байтом (`width`), число знаков после запятой у значения из
+        журнала — `x == action.params.t` ↔ `x == dec(action.params.t, 2)` (`scale`). Каждая правка проверяется на
+        записях проекта: в ответе итог теста после неё и контрпримеры остальных гипотез с тем же полем до и после.
+        Правка не применяется: `fixes[]` — предложения, лучшее первым; пустой список — простой правки нет или
+        контрпримеров нет. `yaml` — несохранённый текст описания; без него берётся текущая ревизия.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FixHintsRequest' }
+            example: { hypothesis: H6 }
+      responses:
+        '200':
+          description: Предложения правок
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FixHints' }
+              example:
+                hypothesis: H6
+                test: threshold_centi_c == dec(action.params.threshold_c, 2)
+                current: { id: H6, verdict: refuted, applicable: 12, held: 10, counterexamples: 2 }
+                fixes:
+                  - kind: sign
+                    summary: 'threshold_centi_c: u16be → i16be (знак): контрпримеров 0 вместо 2, тест выполняется на 12 из 12'
+                    field: threshold_centi_c
+                    messages: [set_config_req]
+                    fromType: u16be
+                    toType: i16be
+                    result: { id: H6, verdict: no_counterexample, applicable: 12, held: 12, counterexamples: 0 }
+                    otherBefore: 0
+                    otherAfter: 0
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2151,6 +2199,51 @@ components:
         или ожидание; `incomplete` — задевает дыру или обрывается в конце потока; `ambiguous` — задевает
         неоднозначный участок; `unmatched` — ни одно описание не подошло; `limit_exceeded` — ограничение
         реализации (заявленная длина больше предела).
+
+    FixHintsRequest:
+      type: object
+      required: [hypothesis]
+      additionalProperties: false
+      properties:
+        hypothesis: { type: string, description: 'Идентификатор гипотезы описания (H6)' }
+        yaml: { type: string, description: 'Несохранённый текст описания; без него — текущая ревизия' }
+        windowMs: { type: integer, minimum: 0, maximum: 600000, description: 'Окно подбора действия журнала, мс (по умолчанию 2000)' }
+
+    FixTestResult:
+      type: object
+      required: [id, verdict, applicable, held, counterexamples]
+      properties:
+        id: { type: string }
+        verdict: { type: string }
+        applicable: { type: integer, minimum: 0 }
+        held: { type: integer, minimum: 0 }
+        counterexamples: { type: integer, minimum: 0 }
+
+    Fix:
+      type: object
+      required: [kind, summary, result, otherBefore, otherAfter]
+      properties:
+        kind: { type: string, enum: [sign, byte_order, scale, width] }
+        summary: { type: string, description: 'Что изменить и что это даёт' }
+        field: { type: string, description: 'Поле, которое меняется; нет у правки теста' }
+        messages: { type: array, items: { type: string }, description: 'Сообщения, где поле меняется вместе' }
+        fromType: { type: string }
+        toType: { type: string }
+        fromAt: { type: integer, minimum: 0, description: 'Смещение поля сейчас, если правка его сдвигает' }
+        toAt: { type: integer, minimum: 0 }
+        test: { type: string, description: 'Новый текст теста (kind = scale)' }
+        result: { $ref: '#/components/schemas/FixTestResult' }
+        otherBefore: { type: integer, minimum: 0, description: 'Контрпримеры остальных гипотез с этим полем сейчас' }
+        otherAfter: { type: integer, minimum: 0, description: 'То же после правки' }
+
+    FixHints:
+      type: object
+      required: [hypothesis, test, current, fixes]
+      properties:
+        hypothesis: { type: string }
+        test: { type: string }
+        current: { $ref: '#/components/schemas/FixTestResult' }
+        fixes: { type: array, items: { $ref: '#/components/schemas/Fix' } }
 
     FieldHintsRequest:
       type: object

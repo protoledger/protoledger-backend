@@ -56,7 +56,7 @@ pub struct FieldHints {
 }
 
 /// Целочисленные типы той же ширины: замена не сдвигает соседние поля.
-fn same_width(ty: FieldType) -> Option<Vec<FieldType>> {
+pub(crate) fn same_width(ty: FieldType) -> Option<Vec<FieldType>> {
     use FieldType::{
         I8, I16be, I16le, I32be, I32le, I64be, I64le, U8, U16be, U16le, U32be, U32le, U64be, U64le,
     };
@@ -69,14 +69,18 @@ fn same_width(ty: FieldType) -> Option<Vec<FieldType>> {
 }
 
 /// Имя поля в описании: `group.child` для поля повторяющейся группы.
-fn split_name(field: &str) -> (Option<&str>, &str) {
+pub(crate) fn split_name(field: &str) -> (Option<&str>, &str) {
     match field.split_once('.') {
         Some((group, child)) => (Some(group), child.rsplit('.').next().unwrap_or(child)),
         None => (None, field),
     }
 }
 
-fn find<'a>(fields: &'a [FieldDef], group: Option<&str>, name: &str) -> Option<&'a FieldDef> {
+pub(crate) fn find<'a>(
+    fields: &'a [FieldDef],
+    group: Option<&str>,
+    name: &str,
+) -> Option<&'a FieldDef> {
     match group {
         None => fields.iter().find(|f| f.name == name),
         Some(g) => fields
@@ -87,7 +91,7 @@ fn find<'a>(fields: &'a [FieldDef], group: Option<&str>, name: &str) -> Option<&
     }
 }
 
-fn find_mut<'a>(
+pub(crate) fn find_mut<'a>(
     fields: &'a mut [FieldDef],
     group: Option<&str>,
     name: &str,
@@ -104,7 +108,7 @@ fn find_mut<'a>(
 
 /// Относится ли имя из результата или выражения к полю: `value`, `response.value`,
 /// `items.3.value` для поля группы `items.value`.
-fn refers(name: &str, group: Option<&str>, field: &str) -> bool {
+pub(crate) fn refers(name: &str, group: Option<&str>, field: &str) -> bool {
     let name = name.strip_prefix("response.").unwrap_or(name);
     match group {
         None => name == field,

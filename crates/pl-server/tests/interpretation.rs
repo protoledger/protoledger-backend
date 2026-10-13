@@ -482,3 +482,97 @@ async fn field_hints_explain_what_they_cannot_do() {
     let (status, _) = ask(json!({ "yaml": yaml, "messageId": "set_param_req", "field": "value", "windowMs": 9_999_999 })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fix_hints_propose_the_edit_that_removes_counterexamples() {
+    let state = project_state("fix-hints");
+    import_stand(&state, "main.pcapng").await;
+    import_stand(&state, "extra.pcapng").await;
+    for log in ["main.actions.csv", "extra.actions.csv"] {
+        let mapping =
+            json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+        let path = stand(log).to_string_lossy().into_owned();
+        call(
+            &state,
+            Method::POST,
+            "/api/action-logs",
+            Some(json!({ "path": path, "mapping": mapping })),
+        )
+        .await;
+    }
+    let ask = |yaml: String| {
+        let state = state.clone();
+        async move {
+            call(
+                &state,
+                Method::POST,
+                "/api/interpretation/fix-hints",
+                Some(json!({ "yaml": yaml, "hypothesis": "H2" })),
+            )
+            .await
+        }
+    };
+
+    // Знак: значение описано беззнаковым, отрицательное из дополнительной записи его опровергает.
+    let (status, hints) = ask(answer_key().replace("type: i32be", "type: u32be")).await;
+    assert_eq!(status, StatusCode::OK, "{hints}");
+    assert_eq!(hints["current"]["verdict"], "refuted", "{hints}");
+    let best = &hints["fixes"][0];
+    assert_eq!(best["kind"], "sign", "{hints}");
+    assert_eq!(
+        (&best["fromType"], &best["toType"]),
+        (&json!("u32be"), &json!("i32be"))
+    );
+    assert_eq!(best["field"], "value");
+    assert_eq!(best["result"]["counterexamples"], 0);
+    assert!(
+        best["summary"]
+            .as_str()
+            .unwrap()
+            .contains("u32be → i32be (знак)")
+    );
+    assert!(
+        best["messages"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("set_param_req"))
+    );
+
+    // Масштаб: тест сравнивает с параметром, умноженным на десять.
+    let test_line = "value == action.params.value";
+    assert!(
+        answer_key().contains(test_line),
+        "тест H2 в описании стенда изменился"
+    );
+    let scaled = answer_key().replace(test_line, "value == dec(action.params.value, 1)");
+    let (status, hints) = ask(scaled).await;
+    assert_eq!(status, StatusCode::OK, "{hints}");
+    let best = &hints["fixes"][0];
+    assert_eq!(best["kind"], "scale", "{hints}");
+    assert_eq!(best["test"], test_line);
+    assert_eq!(best["result"]["counterexamples"], 0);
+
+    // Верное описание: исправлять нечего.
+    let (status, fine) = ask(answer_key()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fine["current"]["counterexamples"], 0, "{fine}");
+    assert_eq!(fine["fixes"], json!([]));
+
+    // Гипотезы нет или у неё нет теста — понятный отказ.
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/fix-hints",
+        Some(json!({ "yaml": answer_key(), "hypothesis": "H999" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/interpretation/fix-hints",
+        Some(json!({ "hypothesis": "H2" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "нет сохранённого описания");
+}
