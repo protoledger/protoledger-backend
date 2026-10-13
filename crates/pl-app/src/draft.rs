@@ -386,7 +386,9 @@ pub fn draft_interpretation(
         },
         None,
     );
-    let header = |m: &mut Message, hyps: &mut Hypotheses| {
+    // `limit` — сколько первых байтов может занять сигнатура: байт-различитель типа внутри
+    // «постоянного начала» важнее, иначе условие типа ссылалось бы на поле, которого нет.
+    let header = |m: &mut Message, hyps: &mut Hypotheses, limit: u64| {
         m.add(Field {
             name: "length".to_owned(),
             at: length.at.to_string(),
@@ -397,8 +399,12 @@ pub fn draft_interpretation(
             hypothesis: length_hyp,
             span: Some((length_at, length_at + length_size)),
         });
-        if let Some(bytes) = &signature {
-            let size = (bytes.len() / 2) as u64;
+        let cut = signature.as_ref().and_then(|bytes| {
+            let size = ((bytes.len() / 2) as u64).min(limit);
+            let hex = bytes.get(..usize::try_from(size).ok()? * 2)?;
+            (size > 0).then_some((hex, size))
+        });
+        if let Some((bytes, size)) = cut {
             let hypothesis = hyps.id(
                 "signature",
                 || format!("signature — постоянное начало сообщения ({bytes}): стоит в начале каждого сообщения"),
@@ -429,6 +435,15 @@ pub fn draft_interpretation(
         cancelled,
     )?;
     incomplete |= types.incomplete;
+    let first_key = types
+        .keys
+        .iter()
+        .filter_map(|k| match k.key {
+            TypeKey::Byte { at } => Some(u64::from(at)),
+            TypeKey::Side => None,
+        })
+        .min()
+        .unwrap_or(u64::MAX);
     let mut messages: Vec<Message> = Vec::new();
     for t in &types.types {
         let mut m = Message {
@@ -437,7 +452,7 @@ pub fn draft_interpretation(
             count: t.count,
             fields: Vec::new(),
         };
-        header(&mut m, &mut hyps);
+        header(&mut m, &mut hyps, first_key);
         for (i, k) in types.keys.iter().enumerate() {
             let TypeKey::Byte { at } = k.key else {
                 continue;
@@ -480,7 +495,7 @@ pub fn draft_interpretation(
             count: types.messages,
             fields: Vec::new(),
         };
-        header(&mut m, &mut hyps);
+        header(&mut m, &mut hyps, u64::MAX);
         messages.push(m);
         step(
             "Типы сообщений",
