@@ -1003,3 +1003,106 @@ async fn next_steps_follow_the_state_of_the_project() {
             .contains("run-0001")
     );
 }
+
+#[tokio::test]
+async fn suggestions_turn_journal_links_into_observations_and_tested_hypotheses() {
+    let (state, ab) = with_log("suggestions").await;
+    let ba = ab.replace(":ab", ":ba");
+    let (status, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/suggestions",
+        Some(json!({ "streams": [ab.clone(), ba] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    let items = found["items"].as_array().unwrap();
+    let value = items
+        .iter()
+        .find(|s| s["messageId"] == "set_param_req" && s["param"] == "params.value")
+        .unwrap_or_else(|| panic!("нет заготовки для значения уставки: {found}"));
+    // На этих байтах в описании стенда уже есть поле: тест опирается на него.
+    assert_eq!(value["field"], "value");
+    assert!(value.get("newField").is_none());
+    assert_eq!(value["hypothesis"]["test"], "value == action.params.value");
+    assert_eq!(value["matches"], value["samples"]);
+
+    // Заготовки принимаются обычными запросами: наблюдение, затем гипотеза с ним в основании.
+    let o = &value["observation"];
+    let (status, observation) = call(
+        &state,
+        Method::POST,
+        "/api/observations",
+        Some(json!({
+            "anchor": { "source": o["source"], "stream": o["stream"], "start": o["start"], "end": o["end"] },
+            "comment": o["comment"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{observation}");
+    let (status, hypothesis) = call(
+        &state,
+        Method::POST,
+        "/api/hypotheses",
+        Some(json!({
+            "statement": value["hypothesis"]["statement"],
+            "basis": [observation["id"]],
+            "test": value["hypothesis"]["test"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{hypothesis}");
+    // Тест принятой гипотезы выполняется на записи без контрпримеров.
+    let id = hypothesis["id"].as_str().unwrap();
+    let (status, tested) = call(
+        &state,
+        Method::POST,
+        &format!("/api/hypotheses/{id}/test"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    let text = tested.to_string();
+    assert!(text.contains("no_counterexample"), "{text}");
+
+    // Описание без этого поля: заготовка называет поле, которое нужно добавить.
+    let yaml = std::fs::read_to_string(stand("interpretation.yaml"))
+        .unwrap()
+        .replace(
+            "      - { name: value, at: 7, type: i32be, status: hypothesis, hypothesis: H2 }\n",
+            "",
+        );
+    let (status, saved) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(json!({ "yaml": yaml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, found) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/suggestions",
+        Some(json!({ "streams": [ab.clone()] })),
+    )
+    .await;
+    let fresh = found["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["messageId"] == "set_param_req" && s["param"] == "params.value")
+        .unwrap_or_else(|| panic!("{found}"));
+    assert!(fresh["field"].is_null());
+    assert_eq!(fresh["newField"]["name"], "value");
+    assert!(fresh["newField"]["at"].is_u64());
+
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/analysis/suggestions",
+        Some(json!({ "streams": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

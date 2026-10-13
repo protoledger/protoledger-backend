@@ -577,6 +577,13 @@ async fn responses_match_the_contract_schemas() {
     )
     .await;
     api.post(
+        "/api/analysis/suggestions",
+        "/api/analysis/suggestions",
+        json!({ "streams": [stream, format!("{conn}:ba")] }),
+        200,
+    )
+    .await;
+    api.post(
         "/api/analysis/entropy",
         "/api/analysis/entropy",
         json!({ "streams": [stream, format!("{conn}:ba")] }),

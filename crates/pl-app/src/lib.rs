@@ -17,6 +17,7 @@ mod report;
 mod research;
 mod session;
 mod sources;
+mod suggest;
 mod verify;
 
 pub use actions::{
@@ -67,5 +68,9 @@ pub use session::{OpenMode, ProjectInfo, Session, SettingsPatch};
 pub use sources::{
     SourceData, SourceStore, analyze, analyze_with, import_path, load_project_sources, policy_from,
     read_capture_file, reload_sources,
+};
+pub use suggest::{
+    FieldDraft, HypothesisDraft, ObservationDraft, SuggestRequest, Suggestion, Suggestions,
+    research_suggestions,
 };
 pub use verify::{current_signature, execute_run, start_verify};

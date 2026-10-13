@@ -31,6 +31,7 @@ pub fn routes() -> Router<AppState> {
         .route("/analysis/fields", post(fields))
         .route("/analysis/draft", post(draft))
         .route("/analysis/entropy", post(entropy))
+        .route("/analysis/suggestions", post(suggestions))
         .route("/exchanges", post(exchanges))
 }
 
@@ -221,6 +222,34 @@ async fn entropy(
     let streams =
         blocking(move || pl_app::stream_entropy(&state.sources, &request.streams)).await?;
     Ok(Json(EntropyPage { streams }))
+}
+
+/// Заготовки наблюдений и гипотез из связей с журналом действий.
+async fn suggestions(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<DraftBody>,
+) -> Result<Json<pl_app::Suggestions>, ApiError> {
+    let result = blocking(move || {
+        let Some(it) = pl_app::current_interpretation(&state.session) else {
+            return Err(pl_core::Problem::new(
+                ProblemKind::Conflict,
+                "Нужна сохранённая интерпретация с типами сообщений: связи ищутся по каждому типу.",
+            ));
+        };
+        let started = Instant::now();
+        pl_app::research_suggestions(
+            &it,
+            &state.sources,
+            &state.actions,
+            &pl_app::SuggestRequest {
+                streams: body.streams,
+                log_id: body.log_id,
+            },
+            &|| started.elapsed() > SEARCH_TIMEOUT,
+        )
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 #[derive(Deserialize)]
