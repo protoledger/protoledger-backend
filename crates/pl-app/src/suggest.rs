@@ -191,6 +191,7 @@ pub fn research_suggestions(
             continue;
         };
         let mut taken: Vec<(u32, u32)> = Vec::new();
+        let mut linked: Vec<&str> = Vec::new();
         for v in found
             .values
             .iter()
@@ -200,11 +201,17 @@ pub fn research_suggestions(
             if taken.iter().any(|(a, b)| v.at < *b && *a < v.at + v.size) {
                 continue;
             }
+            // И одно значение журнала — одна строка: второе место в том же сообщении слабее первого
+            // и чаще оказывается совпадением.
+            if linked.contains(&v.param.as_str()) {
+                continue;
+            }
             if out.items.len() >= MAX_SUGGESTIONS {
                 out.truncated = true;
                 break;
             }
             taken.push((v.at, v.at + v.size));
+            linked.push(v.param.as_str());
             let digits = match v.scale {
                 1 => 0,
                 10 => 1,

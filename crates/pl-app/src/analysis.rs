@@ -1176,6 +1176,22 @@ pub(crate) fn correlations_on(
             .iter()
             .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
             .collect();
+        // Сторона, начавшая обмен, шлёт запросы: результата действия в них быть не может —
+        // он появляется только в ответе. Совпадение запроса с результатом — случайность.
+        let started = |i: usize| {
+            connection.streams.get(i).and_then(|s| {
+                s.frames
+                    .iter()
+                    .filter(|f| f.end > f.start)
+                    .filter_map(|f| data.index.frame(f.frame).map(|frame| frame.ts_ns))
+                    .min()
+            })
+        };
+        let requests = match (started(dir), started(1 - dir.min(1))) {
+            (Some(own), Some(other)) => own < other,
+            (Some(_), None) => true,
+            _ => false,
+        };
         let own: Vec<&pl_actions::Action> = actions
             .iter()
             .copied()
@@ -1217,9 +1233,11 @@ pub(crate) fn correlations_on(
                         params.insert(format!("params.{k}"), d);
                     }
                 }
-                for (k, v) in &a.result {
-                    if let Some(d) = decimal(v) {
-                        params.insert(format!("result.{k}"), d);
+                if !requests {
+                    for (k, v) in &a.result {
+                        if let Some(d) = decimal(v) {
+                            params.insert(format!("result.{k}"), d);
+                        }
                     }
                 }
             }
