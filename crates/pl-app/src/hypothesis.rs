@@ -5,7 +5,7 @@
 //! в сообщении нет нужных данных, к нему не применяется — это не успех и не неудача. Совпадение на k из n
 //! примеров не доказывает гипотезу: итог — «контрпримеров нет» или «опровергнута».
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use pl_actions::{Action, Param};
@@ -301,6 +301,83 @@ pub(crate) fn assign<'a>(
     out
 }
 
+/// К какой записи относится каждый журнал без колонки записи: sha256 записи или `None`.
+///
+/// Такой журнал описывает один сеанс, но не говорит чей. Если записи сняты в одно время, его
+/// действия по времени подходят к сообщениям каждой, и тесты гипотез сравнивали бы сообщения
+/// одной записи с параметрами действий другой. Журнал относится к записи, в которой сообщение
+/// в окне времени нашлось для наибольшего числа его действий. При равенстве выбора нет: действия
+/// остаются общими, как у журнала на одну запись.
+pub(crate) fn log_scopes(
+    sources: &[Arc<SourceData>],
+    it: &Interpretation,
+    logs: &[&LoadedLog],
+    window_ns: u64,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<Option<String>>, Problem> {
+    let mut chosen: Vec<Option<String>> = vec![None; logs.len()];
+    let free: Vec<(usize, Vec<&Action>)> = logs
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| !l.actions.is_empty() && l.actions.iter().all(|a| a.source.is_none()))
+        .map(|(i, l)| {
+            let mut actions: Vec<&Action> = l.actions.iter().collect();
+            actions.sort_by_key(|a| (a.ts_ns, a.line));
+            (i, actions)
+        })
+        .collect();
+    if sources.len() < 2 || free.is_empty() {
+        return Ok(chosen);
+    }
+    // Строки журнала, для которых в записи нашлось сообщение: [журнал][запись].
+    let mut matched: Vec<Vec<BTreeSet<u64>>> =
+        vec![vec![BTreeSet::new(); sources.len()]; free.len()];
+    for (number, data) in sources.iter().enumerate() {
+        for connection in &data.connections {
+            for (i, stream) in connection.streams.iter().enumerate() {
+                let input = stream_input(&data.file, connection, stream, i);
+                let result = pl_interp::apply(it, &input, cancelled).map_err(|e| {
+                    Problem::new(
+                        ProblemKind::LimitExceeded,
+                        format!("Разбор остановлен: {e}."),
+                    )
+                })?;
+                let times = Times::new(data, stream);
+                let timed: Vec<u64> = result
+                    .messages
+                    .iter()
+                    .map(|m| times.first_ts(m.start, m.end).unwrap_or(0))
+                    .collect();
+                for ((_, actions), per_source) in free.iter().zip(&mut matched) {
+                    let Some(lines) = per_source.get_mut(number) else {
+                        continue;
+                    };
+                    lines.extend(
+                        assign(&timed, actions, window_ns)
+                            .into_iter()
+                            .flatten()
+                            .map(|a| a.line),
+                    );
+                }
+            }
+        }
+    }
+    for ((log, _), per_source) in free.iter().zip(&matched) {
+        let best = per_source.iter().map(BTreeSet::len).max().unwrap_or(0);
+        let mut leaders = per_source
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.len() == best);
+        if best > 0
+            && let (Some((number, _)), None) = (leaders.next(), leaders.next())
+            && let (Some(slot), Some(data)) = (chosen.get_mut(*log), sources.get(number))
+        {
+            *slot = Some(data.sha256.clone());
+        }
+    }
+    Ok(chosen)
+}
+
 pub struct TestOptions {
     pub window_ms: u64,
     /// Потоки, чьи сообщения проверяются; без значения — все. Парный ответ берётся из встречного
@@ -332,9 +409,15 @@ pub fn test_hypothesis(
         )
     })?;
     let names = expr.names();
-    let mut actions: Vec<&Action> = logs.iter().flat_map(|l| l.actions.iter()).collect();
-    actions.sort_by_key(|a| (a.ts_ns, a.line));
     let window_ns = options.window_ms.saturating_mul(1_000_000);
+    let plain: Vec<&LoadedLog> = logs.iter().map(AsRef::as_ref).collect();
+    let scopes = log_scopes(sources, it, &plain, window_ns, &|| false)?;
+    let mut actions: Vec<(&Action, Option<&str>)> = logs
+        .iter()
+        .zip(&scopes)
+        .flat_map(|(l, scope)| l.actions.iter().map(move |a| (a, scope.as_deref())))
+        .collect();
+    actions.sort_by_key(|(a, _)| (a.ts_ns, a.line));
 
     let mut evidence = Evidence {
         test: expr_text.to_owned(),
@@ -352,8 +435,10 @@ pub fn test_hypothesis(
     for data in sources {
         let actions: Vec<&Action> = actions
             .iter()
-            .copied()
-            .filter(|a| a.belongs_to(&data.name))
+            .filter(|(a, scope)| {
+                a.belongs_to(&data.name) && scope.is_none_or(|sha| sha == data.sha256)
+            })
+            .map(|(a, _)| *a)
             .collect();
         for connection in &data.connections {
             let id = connection.id(&data.sha256);
@@ -620,7 +705,8 @@ pub struct ActionExchange {
     /// Время от запроса до ответа.
     pub delay_ns: Option<u64>,
     /// Сколько запросов в разных соединениях подошли по времени: больше одного — выбор неоднозначен,
-    /// показан первый.
+    /// показан первый. Журнал без колонки записи сначала относится к записи, где нашлось больше
+    /// всего его действий; запросы других записей в счёт не идут.
     pub candidates: u32,
 }
 
@@ -637,8 +723,15 @@ pub fn action_exchanges(
     actions.sort_by_key(|a| (a.ts_ns, a.line));
     let window_ns = options.window_ms.saturating_mul(1_000_000);
     let mut found: BTreeMap<u64, ActionExchange> = BTreeMap::new();
+    let scope = log_scopes(sources, it, &[log], window_ns, cancelled)?
+        .into_iter()
+        .next()
+        .flatten();
 
     for data in sources {
+        if scope.as_ref().is_some_and(|sha| *sha != data.sha256) {
+            continue;
+        }
         let own: Vec<&Action> = actions
             .iter()
             .copied()

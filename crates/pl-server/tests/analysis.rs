@@ -945,6 +945,55 @@ async fn every_action_of_the_journal_gets_its_exchange() {
     }
 }
 
+/// Две записи сняты в одно время, у каждой свой журнал без колонки записи: по времени действия
+/// второго журнала подходят и к первой записи. Журнал относится к той записи, где нашлось больше
+/// его действий, и пары из чужой записи не берутся.
+#[tokio::test]
+async fn a_journal_without_a_capture_column_is_bound_to_its_recording() {
+    let (state, ab) = with_log("two-journals").await;
+    let mapping =
+        json!({ "time": "time", "action": "action", "params": "params", "result": "result" });
+    call(
+        &state,
+        Method::POST,
+        "/api/sources",
+        Some(json!({ "path": stand("extra.pcapng").to_string_lossy() })),
+    )
+    .await;
+    wait_jobs(&state).await;
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/action-logs",
+        Some(json!({ "path": stand("extra.actions.csv").to_string_lossy(), "mapping": mapping })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let main_source = ab.split(':').next().unwrap().to_owned();
+
+    for (log, own) in [("log-0001", true), ("log-0002", false)] {
+        let (status, page) = call(
+            &state,
+            Method::GET,
+            &format!("/api/action-logs/{log}/exchanges?limit=500"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let rows = page["items"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows.iter().filter(|r| !r["request"].is_null()) {
+            let stream = row["request"]["stream"].as_str().unwrap();
+            assert_eq!(stream.starts_with(&main_source), own, "{log}: {row}");
+            assert_eq!(row["candidates"], 1, "{log}: {row}");
+        }
+        // Уставка находит запрос уставки, а не соседнее по времени сообщение другой записи.
+        for row in rows.iter().filter(|r| r["action"] == "set_param") {
+            assert_eq!(row["request"]["messageId"], "set_param_req", "{log}: {row}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn next_steps_follow_the_state_of_the_project() {
     let ids = |v: &Value| -> Vec<String> {
