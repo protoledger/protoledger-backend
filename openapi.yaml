@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.43
+  version: 0.1.44
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -1711,6 +1711,27 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NoProject' }
+
+  /api/connections/{id}:
+    get:
+      tags: [explore]
+      operationId: getConnection
+      summary: TCP-соединение по идентификатору
+      description: |
+        Соединение по идентификатору из якоря (`<первые 8 hex sha256>:c0001`): переход от контрпримера,
+        наблюдения или отчёта к соединению без перебора списка.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: '3f5a1c0d:c0001' }
+      responses:
+        '200':
+          description: Соединение
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connection' }
+              example: { id: '3f5a1c0d:c0001', source: 3f5a1c0d9e8b7a6f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d, a: { address: 192.168.1.10, port: 51234 }, b: { address: 192.168.1.20, port: 9000 }, rolesKnown: true, firstFrameTime: '2026-10-09T12:00:00.100000000Z', lastFrameTime: '2026-10-09T12:00:05.420000000Z', frameCount: 42, close: fin, flags: [], flagCounts: {}, streams: [{ id: '3f5a1c0d:c0001:ab', direction: a_to_b, length: 310, dataBytes: 310, gapBytes: 0, ambiguousBytes: 0, startAvailable: true }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/streams/{stream}/bytes:
     get:
