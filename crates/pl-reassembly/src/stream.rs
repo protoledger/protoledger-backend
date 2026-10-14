@@ -1,4 +1,4 @@
-use pl_capture::TcpSegment;
+use pl_capture::{TcpSegment, tcp_flags};
 
 use crate::{OverlapPolicy, ReassemblyError};
 
@@ -60,6 +60,9 @@ pub struct Stream {
     pub pieces: Vec<Piece>,
     /// Кадры с данными, по номеру кадра.
     pub frames: Vec<FrameSpan>,
+    /// Кадры с данными целиком до начала потока по seq (скачок номера, чужое соединение на тех
+    /// же портах): в поток не вошли и перечисляются явно.
+    pub out_of_window: Vec<u32>,
 }
 
 impl Stream {
@@ -102,11 +105,21 @@ struct Seg {
 }
 
 /// Смещение seq относительно `base` по модулю 2^32 (RFC 9293): отрицательное — раньше начала.
-fn distance(seq: u32, base: u32) -> i64 {
+pub(crate) fn distance(seq: u32, base: u32) -> i64 {
     i64::from(seq.wrapping_sub(base) as i32)
 }
 
 /// Собирает одно направление. `segs` — сегменты с данными в порядке захвата;
+/// Номер первого байта данных сегмента: SYN занимает один номер (RFC 9293), данные в SYN
+/// (TCP Fast Open) начинаются с seq + 1.
+fn data_seq(s: &TcpSegment) -> u32 {
+    if s.has(tcp_flags::SYN) {
+        s.seq.wrapping_add(1)
+    } else {
+        s.seq
+    }
+}
+
 /// `isn` — ISN, если захвачен SYN этого направления.
 pub(crate) fn build(
     segs: &[&TcpSegment],
@@ -134,19 +147,23 @@ pub(crate) fn build(
             // Без SYN начало — самый ранний по seq сегмент, даже если захвачен позже.
             let min = segs
                 .iter()
-                .map(|s| distance(s.seq, first.seq))
+                .map(|s| distance(data_seq(s), data_seq(first)))
                 .min()
                 .unwrap_or(0);
-            first.seq.wrapping_add(min as u32)
+            data_seq(first).wrapping_add(min as u32)
         }
     };
 
     let mut items: Vec<Seg> = Vec::with_capacity(segs.len());
     let mut captured_total = 0u64;
     for s in segs {
-        let d = distance(s.seq, base);
+        let d = distance(data_seq(s), base);
         let declared_end = d + i64::from(s.payload_len);
         if declared_end <= 0 {
+            // ТЗ 7.3: данные не пропадают молча — кадр перечисляется в диагностике потока.
+            if s.payload_len > 0 {
+                stream.out_of_window.push(s.frame);
+            }
             continue;
         }
         // Байты до начала потока (повтор данных до SYN) отбрасываем.

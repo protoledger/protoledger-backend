@@ -23,6 +23,9 @@ pub use stream::{
 
 /// Соединений в одной записи.
 pub const MAX_CONNECTIONS: usize = 100_000;
+/// Насколько далеко (в номерах seq) данные после закрытия должны уйти от прежнего потока,
+/// чтобы считаться новым соединением: больше максимального окна без масштабирования.
+const REOPEN_DISTANCE: u64 = 1 << 20;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OverlapPolicy {
@@ -78,6 +81,8 @@ pub enum Flag {
     BadChecksum,
     Truncated,
     ReusedPorts,
+    /// Данные до начала потока по seq: в поток не вошли.
+    OutOfWindow,
 }
 
 impl Flag {
@@ -90,6 +95,7 @@ impl Flag {
             Flag::BadChecksum => "bad_checksum",
             Flag::Truncated => "truncated",
             Flag::ReusedPorts => "reused_ports",
+            Flag::OutOfWindow => "out_of_window",
         }
     }
 }
@@ -143,11 +149,24 @@ struct Epoch<'a> {
     fin: bool,
     rst: bool,
     reused: bool,
+    /// Кто прислал FIN: соединение закрыто, когда FIN пришёл от обеих сторон.
+    fin_from: BTreeSet<SocketAddrV4>,
+    /// Номер за последним байтом данных каждой стороны.
+    data_end: BTreeMap<SocketAddrV4, u32>,
 }
 
 impl Epoch<'_> {
     /// SYN начинает новое соединение, если это не повтор SYN текущего (D7, повтор портов).
     fn new_connection_by(&self, s: &TcpSegment) -> bool {
+        // ТЗ, раздел 2: после закрытия (RST или FIN с обеих сторон) данные с номером далеко от
+        // прежнего потока — новое соединение, даже если его SYN не попал в запись.
+        let closed = self.rst || self.fin_from.len() >= 2;
+        if closed && s.payload_len > 0 && !s.has(tcp_flags::SYN) {
+            return self
+                .data_end
+                .get(&s.src)
+                .is_some_and(|end| stream::distance(s.seq, *end).unsigned_abs() > REOPEN_DISTANCE);
+        }
         if !s.has(tcp_flags::SYN) || s.has(tcp_flags::ACK) {
             return false;
         }
@@ -292,6 +311,12 @@ pub fn reassemble_limited(
         }
         e.fin |= s.has(tcp_flags::FIN);
         e.rst |= s.has(tcp_flags::RST);
+        if s.has(tcp_flags::FIN) {
+            e.fin_from.insert(s.src);
+        }
+        if s.payload_len > 0 {
+            e.data_end.insert(s.src, s.seq.wrapping_add(s.payload_len));
+        }
         e.segs.push(s);
     }
 
@@ -394,6 +419,10 @@ fn connection(
             .count() as u64,
     );
     count(Flag::ReusedPorts, u64::from(e.reused));
+    count(
+        Flag::OutOfWindow,
+        streams.iter().map(|s| s.out_of_window.len() as u64).sum(),
+    );
     let flags: BTreeSet<Flag> = flag_counts.keys().copied().collect();
 
     let ts = |frame: u32| idx.frame(frame).map_or(0, |f| f.ts_ns);

@@ -418,3 +418,32 @@ fn connections_over_the_limit_are_skipped_explicitly() {
         "каждый кадр либо в собранном соединении, либо в списке пропущенных"
     );
 }
+
+fn hostile(name: &str) -> (Vec<u8>, Vec<Connection>) {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/hostile")
+        .join(name);
+    let file = std::fs::read(&p).unwrap();
+    let idx = index(&file, Limits::default(), &|| false, &mut |_| {}).unwrap();
+    let conns = reassemble(&idx, &file, Policy::default(), &|| false).unwrap();
+    (file, conns)
+}
+
+#[test]
+fn segments_before_the_stream_start_are_listed_not_dropped() {
+    // Скачок seq на 2 ГиБ: часть сегментов оказывается «до начала» потока.
+    let (_, conns) = hostile("tcp-seq-jump-2gib.pcap");
+    let c = &conns[0];
+    let listed: usize = c.streams.iter().map(|s| s.out_of_window.len()).sum();
+    assert!(listed > 0, "кадры вне окна перечислены");
+    assert!(c.flags.contains(&Flag::OutOfWindow));
+    assert_eq!(c.flag_counts[&Flag::OutOfWindow], listed as u64);
+}
+
+#[test]
+fn data_in_a_syn_segment_starts_after_the_syn_number() {
+    // RFC 9293: SYN занимает один номер; данные SYN-сегмента — с seq + 1, первый байт не теряется.
+    let (file, conns) = hostile("tcp-all-flags.pcap");
+    let s = conns[0].streams.iter().find(|s| s.length > 0).unwrap();
+    assert_eq!(known_bytes(&file, s), b"hello");
+}
