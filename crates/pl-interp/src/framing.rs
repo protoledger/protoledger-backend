@@ -347,6 +347,25 @@ pub fn frame(
                     continue;
                 }
                 let end = pos + u64::try_from(total).unwrap_or(u64::MAX);
+                // С сигнатурой длина за концом потока — скорее мусор (сигнатура внутри тела
+                // после дыры): кадр помечается, разбор продолжается со следующей сигнатуры.
+                let next = if end > len && sync.is_some() {
+                    resync(pos)
+                } else {
+                    len
+                };
+                if end > len && next < len {
+                    push(
+                        &mut out,
+                        Frame {
+                            start: pos,
+                            end: next,
+                            problem: Some(Problem::BadLength(total)),
+                        },
+                    )?;
+                    pos = next;
+                    continue;
+                }
                 if end > len {
                     push(
                         &mut out,
@@ -546,6 +565,32 @@ mod tests {
         let bytes = [3, 9, 9, 2, 7, 4, 1, 1, 1];
         let frames = frame(&prefixed(0, IntType::U8, 0), &data(&bytes), &no_cancel).unwrap();
         assert_eq!(spans(&frames), [(0, 3, None), (3, 5, None), (5, 9, None)]);
+    }
+
+    #[test]
+    fn garbage_length_past_the_end_resyncs_on_the_signature() {
+        // Сигнатура a5, длина u8 @1 — всё сообщение. Первая «длина» 0x50 указывает за конец потока
+        // (сигнатура в мусоре); дальше два нормальных сообщения — они не должны пропасть.
+        let framing = Framing {
+            sync: Some("a5".to_owned()),
+            ..prefixed(1, IntType::U8, 0)
+        };
+        let bytes = [0xa5, 0x50, 1, 0xa5, 3, 9, 0xa5, 3, 8];
+        let frames = frame(&framing, &data(&bytes), &no_cancel).unwrap();
+        assert_eq!(
+            spans(&frames),
+            [
+                (0, 3, Some(Problem::BadLength(0x50))),
+                (3, 6, None),
+                (6, 9, None)
+            ]
+        );
+        // Без следующей сигнатуры — по-прежнему «конец потока».
+        let tail = frame(&framing, &data(&[0xa5, 0x50, 1, 2]), &no_cancel).unwrap();
+        assert_eq!(
+            tail.last().and_then(|f| f.problem),
+            Some(Problem::EndOfStream)
+        );
     }
 
     #[test]
