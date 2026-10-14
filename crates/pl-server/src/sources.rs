@@ -369,7 +369,7 @@ struct ConnectionQuery {
     flag: Option<String>,
 }
 
-const FLAGS: [Flag; 7] = [
+const FLAGS: [Flag; 8] = [
     Flag::Retransmissions,
     Flag::Gaps,
     Flag::Ambiguous,
@@ -377,6 +377,7 @@ const FLAGS: [Flag; 7] = [
     Flag::BadChecksum,
     Flag::Truncated,
     Flag::ReusedPorts,
+    Flag::OutOfWindow,
 ];
 
 async fn list_connections(
