@@ -78,6 +78,19 @@ pub enum TimeFormat {
     UnixNanos,
 }
 
+impl TimeFormat {
+    /// Название для текстов пользователю.
+    pub fn title(self) -> &'static str {
+        match self {
+            TimeFormat::Rfc3339 => "RFC 3339",
+            TimeFormat::UnixSeconds => "Unix, секунды",
+            TimeFormat::UnixMillis => "Unix, миллисекунды",
+            TimeFormat::UnixMicros => "Unix, микросекунды",
+            TimeFormat::UnixNanos => "Unix, наносекунды",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PairsFormat {
@@ -522,9 +535,9 @@ pub fn parse(bytes: &[u8], mapping: &Mapping) -> Result<ParsedLog, LogError> {
         let Some(ts) = parse_time(get(c_time), mapping).and_then(|t| t.checked_add(offset_ns))
         else {
             fail(format!(
-                "время «{}» не разобрано как {:?}",
+                "время «{}» не разобрано как {}",
                 excerpt(get(c_time)),
-                mapping.time_format
+                mapping.time_format.title()
             ));
             continue;
         };
@@ -615,6 +628,12 @@ mod tests {
             .to_string();
         assert!(text.contains("нет колонки «time»"), "{text}");
         assert!(text.chars().count() < 300, "{}", text.chars().count());
+
+        // Формат времени назван для человека, а не именем из кода.
+        let text = parse(b"time,action,params,result\ns1,a,,\n", &mapping())
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("не разобрано как RFC 3339"), "{text}");
     }
 
     #[test]
