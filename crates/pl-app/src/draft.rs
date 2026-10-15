@@ -779,21 +779,19 @@ pub fn draft_interpretation(
             let hypothesis = hyps.id(
                 &format!("link.{id}.{name}"),
                 || {
+                    // Сколько раз совпало, видно в итогах проверки; здесь — что это за поле.
                     format!(
-                        "{name} — значение «{}» из журнала действий{}: совпало в {} из {} сообщений{}",
-                        v.param,
-                        if digits == 0 {
-                            String::new()
-                        } else {
-                            format!(" с {digits} знаками после запятой")
+                        "{name} — «{}» из журнала действий{}{}",
+                        v.param.trim_start_matches("params.").trim_start_matches("result."),
+                        match digits {
+                            0 => String::new(),
+                            d => format!(", в байтах — значение × {}", 10u64.pow(d)),
                         },
-                        v.matches,
-                        v.samples,
                         if ty == v.ty {
                             String::new()
                         } else {
                             format!(
-                                "; соседние байты всегда нулевые — возможно, поле шире ({} по смещению {})",
+                                "; соседние байты всегда нулевые — возможно, поле шире ({} с байта {})",
                                 v.ty, v.at
                             )
                         }

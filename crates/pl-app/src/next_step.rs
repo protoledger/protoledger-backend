@@ -258,10 +258,7 @@ pub fn next_steps(
             "unknown_fields",
             Screen::Interpretation,
             "Остались неразобранные байты",
-            format!(
-                "Полей с пометкой «не описано»: {}.",
-                state.unknown_fields
-            ),
+            format!("Полей с пометкой «не описано»: {}.", state.unknown_fields),
         ));
     }
     if proposed > 0 {

@@ -125,6 +125,25 @@ pub struct ActionLogInfo {
     pub replaced_by: Option<String>,
 }
 
+/// Поле в описании протокола — строка таблицы спецификации.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FieldSpec {
+    pub bytes: String,
+    pub name: String,
+    pub read_as: String,
+    pub meaning: String,
+    pub status: String,
+    pub check: String,
+}
+
+/// Сообщение в описании протокола.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MessageSpec {
+    pub id: String,
+    pub title: String,
+    pub fields: Vec<FieldSpec>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReportData {
     pub project: String,
@@ -141,6 +160,12 @@ pub struct ReportData {
     /// Гипотезы исследования (с основаниями-наблюдениями).
     pub hypotheses: Vec<HypothesisInfo>,
     pub questions: Vec<QuestionInfo>,
+    /// Как поток делится на сообщения — словами.
+    #[serde(default)]
+    pub framing_text: String,
+    /// Описание протокола таблицами: сообщения и их поля.
+    #[serde(default)]
+    pub spec: Vec<MessageSpec>,
 }
 
 /// Контрпримеров гипотезы в тексте отчёта.
@@ -241,6 +266,40 @@ fn build(d: &ReportData) -> Vec<Block> {
         "Версия движка {}. Политики сборки потоков: {}. Отчёт описывает, что установлено на записях проекта, на чём это основано и чего мы не знаем.",
         d.engine_version, d.settings
     )));
+
+    if !d.spec.is_empty() {
+        out.push(Heading(2, "Описание протокола".to_owned()));
+        if !d.framing_text.is_empty() {
+            out.push(Para(d.framing_text.clone()));
+        }
+        out.push(Para("Статус «установлено» — исследователь подтвердил правило; «предположение» — проверено только на записях проекта и может не выполняться на других данных.".to_owned()));
+        for m in &d.spec {
+            out.push(Heading(3, format!("{} ({})", m.title, m.id)));
+            out.push(Table(
+                vec![
+                    "Байты".into(),
+                    "Поле".into(),
+                    "Как читать".into(),
+                    "Что означает".into(),
+                    "Статус".into(),
+                    "Проверка на записях".into(),
+                ],
+                m.fields
+                    .iter()
+                    .map(|f| {
+                        vec![
+                            f.bytes.clone(),
+                            f.name.clone(),
+                            f.read_as.clone(),
+                            f.meaning.clone(),
+                            f.status.clone(),
+                            f.check.clone(),
+                        ]
+                    })
+                    .collect(),
+            ));
+        }
+    }
 
     out.push(Heading(2, "Область применимости".to_owned()));
     out.push(Para("Выводы справедливы для записей ниже и условий их проверки. На других данных они не проверены.".to_owned()));

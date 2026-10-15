@@ -302,7 +302,7 @@ pub fn collect(
         .collect();
 
     // Итоги тестов берутся из прогона: тот же корпус и те же журналы, что в разделе «Результат».
-    let interpretation_hypotheses = interpretation
+    let interpretation_hypotheses: Vec<HypothesisInfo> = interpretation
         .as_ref()
         .map(|it| {
             it.hypotheses
@@ -370,7 +370,7 @@ pub fn collect(
         settings,
         sources,
         action_logs,
-        interpretation: interpretation.map(|it| InterpretationInfo {
+        interpretation: interpretation.as_ref().map(|it| InterpretationInfo {
             rev: revision.as_ref().map_or(0, |r| r.rev),
             digest: revision.map(|r| r.digest).unwrap_or_default(),
             direction: direction_title(it.scope.direction).to_owned(),
@@ -380,8 +380,167 @@ pub fn collect(
         }),
         run: run.map(|r| run_info(&r, stale)),
         observations,
+        spec: interpretation
+            .as_ref()
+            .map(|it| spec_of(it, &interpretation_hypotheses))
+            .unwrap_or_default(),
+        framing_text: interpretation
+            .as_ref()
+            .map(framing_text)
+            .unwrap_or_default(),
         interpretation_hypotheses,
         hypotheses,
         questions,
     })
+}
+
+/// Тип поля словами, как его читает сетевик.
+fn read_as(ty: &str) -> String {
+    let order = if ty.ends_with("le") {
+        ", младший первым"
+    } else if ty.ends_with("be") {
+        ", старший первым"
+    } else {
+        ""
+    };
+    let size = crate::draft::type_size(ty).unwrap_or(0);
+    let bytes = match size {
+        1 => "1 байт".to_owned(),
+        8 => "8 байт".to_owned(),
+        n => format!("{n} байта"),
+    };
+    match ty {
+        "bcd" => "двоично-десятичное число".to_owned(),
+        "varint" => "число переменной длины".to_owned(),
+        "bytes" => "байты как есть".to_owned(),
+        "string" => "текст UTF-8".to_owned(),
+        "unknown" => "не разобрано".to_owned(),
+        t if t.starts_with('f') => format!("дробное число, {bytes}{order}"),
+        t if t.starts_with('i') => format!("число со знаком, {bytes}{order}"),
+        _ => format!("число, {bytes}{order}"),
+    }
+}
+
+fn framing_text(it: &pl_interp::Interpretation) -> String {
+    let f = &it.framing;
+    let mut parts = Vec::new();
+    if let Some(l) = &f.length {
+        let ty = serde_json::to_value(l.ty)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let size = crate::draft::type_size(&ty).unwrap_or(1);
+        let end = u64::from(l.at) + size.saturating_sub(1);
+        let mut text = format!(
+            "Длина сообщения — поле в байтах {}–{end} ({})",
+            l.at,
+            read_as(&ty)
+        );
+        if l.adjust != 0 {
+            text.push_str(&format!(", к значению прибавляется {}", l.adjust));
+        }
+        parts.push(text);
+    } else if let Some(size) = f.size {
+        parts.push(format!("Все сообщения длиной {size} байт"));
+    } else if let Some(bytes) = &f.bytes {
+        parts.push(format!(
+            "Граница сообщения — байты {}",
+            bytes.to_uppercase()
+        ));
+    }
+    if let Some(sync) = &f.sync {
+        parts.push(format!(
+            "каждое сообщение начинается с {}",
+            sync.to_uppercase()
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("{}.", parts.join("; "))
+    }
+}
+
+fn spec_of(
+    it: &pl_interp::Interpretation,
+    results: &[HypothesisInfo],
+) -> Vec<pl_report::MessageSpec> {
+    it.messages
+        .iter()
+        .map(|m| {
+            let title = m
+                .description
+                .as_deref()
+                .and_then(|d| d.split(" · ").next())
+                .filter(|t| !t.starts_with("сообщений в данных"))
+                .unwrap_or(&m.id)
+                .to_owned();
+            let fields = m
+                .fields
+                .iter()
+                .map(|f| {
+                    let ty = serde_json::to_value(f.ty)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    let size = crate::draft::type_size(&ty).or(match f.len {
+                        Some(pl_interp::schema::Len::Fixed(n)) => Some(u64::from(n)),
+                        _ => None,
+                    });
+                    let bytes = match (&f.at, size) {
+                        (pl_interp::schema::At::Abs(a), Some(1)) => a.to_string(),
+                        (pl_interp::schema::At::Abs(a), Some(n)) => {
+                            format!("{a}–{}", u64::from(*a) + n - 1)
+                        }
+                        (pl_interp::schema::At::Abs(a), None) => format!("{a}…"),
+                        (pl_interp::schema::At::Text(t), _) => t.clone(),
+                    };
+                    let hypothesis = f
+                        .hypothesis
+                        .as_ref()
+                        .and_then(|id| results.iter().find(|h| &h.id == id));
+                    let meaning = hypothesis
+                        .map(|h| {
+                            h.statement
+                                .strip_prefix(&format!("{} — ", f.name))
+                                .unwrap_or(&h.statement)
+                                .to_owned()
+                        })
+                        .or_else(|| f.description.clone())
+                        .unwrap_or_default();
+                    let check = match hypothesis
+                        .filter(|h| h.test.is_some())
+                        .and_then(|h| h.result.as_ref())
+                    {
+                        Some(r) if r.verdict == "refuted" => {
+                            format!("расхождений: {}", r.counterexamples_total)
+                        }
+                        Some(r) if r.verdict == "no_counterexample" => {
+                            format!("совпало в {} из {}", r.held, r.applicable)
+                        }
+                        Some(_) => "нет примеров".to_owned(),
+                        None => "—".to_owned(),
+                    };
+                    let status = match f.status {
+                        pl_interp::schema::Status::Rule => "установлено",
+                        pl_interp::schema::Status::Hypothesis => "предположение",
+                        pl_interp::schema::Status::Unknown => "не описано",
+                    };
+                    pl_report::FieldSpec {
+                        bytes,
+                        name: f.name.clone(),
+                        read_as: read_as(&ty),
+                        meaning,
+                        status: status.to_owned(),
+                        check,
+                    }
+                })
+                .collect();
+            pl_report::MessageSpec {
+                id: m.id.clone(),
+                title,
+                fields,
+            }
+        })
+        .collect()
 }
