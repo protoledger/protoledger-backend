@@ -263,7 +263,7 @@ fn build(d: &ReportData) -> Vec<Block> {
     use Block::{Code, Heading, List, Para, Table};
     let mut out = vec![Heading(1, format!("Отчёт по проекту «{}»", d.project))];
     out.push(Para(format!(
-        "Версия движка {}. Политики сборки потоков: {}. Отчёт описывает, что установлено на записях проекта, на чём это основано и чего мы не знаем.",
+        "Версия protoledger {}. Политики сборки потоков: {}. Отчёт описывает, что установлено на записях проекта, на чём это основано и чего мы не знаем.",
         d.engine_version, d.settings
     )));
 
@@ -623,7 +623,7 @@ fn build(d: &ReportData) -> Vec<Block> {
 
     out.push(Heading(2, "Как воспроизвести".to_owned()));
     out.push(Para(format!(
-        "Нужен движок protoledger версии {}: статический бинарник для Linux, Windows или macOS либо установщик настольного приложения со страницы Releases репозитория github.com/protoledger/protoledger, или сборка из этого репозитория командой docker compose up --build. Сеть и другие зависимости не нужны.",
+        "Нужен protoledger версии {}: статический бинарник для Linux, Windows или macOS либо установщик настольного приложения со страницы Releases репозитория github.com/protoledger/protoledger, или сборка из этого репозитория командой docker compose up --build. Сеть и другие зависимости не нужны.",
         d.engine_version
     )));
     out.push(Para("Проект переносится копированием папки. Результаты перепроверяются командой (код возврата 0 — совпало, 1 — отличия):".to_owned()));
