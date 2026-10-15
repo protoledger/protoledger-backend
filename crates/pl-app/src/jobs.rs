@@ -83,6 +83,8 @@ struct Entry {
 struct Inner {
     next_id: u64,
     jobs: BTreeMap<String, Entry>,
+    /// Идёт смена проекта или его настроек: новые задачи не стартуют.
+    exclusive: bool,
 }
 
 /// Реестр долгих задач: прогресс, отмена, изоляция паник.
@@ -131,6 +133,30 @@ impl JobRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Смена проекта или его настроек без задач в работе. Проверка «задач нет» и запрет новых —
+    /// одна операция: иначе задача, запущенная между ними, допишет результат в чужой проект.
+    /// Запрет держится, пока жив возвращённый замок.
+    pub fn exclusive(&self, busy: &str) -> Result<Exclusive, Problem> {
+        let mut inner = self.lock();
+        if inner.exclusive {
+            return Err(Problem::new(
+                ProblemKind::Conflict,
+                "Проект уже меняется: повторите через несколько секунд.",
+            ));
+        }
+        if inner
+            .jobs
+            .values()
+            .any(|e| !e.tx.borrow().state.is_terminal())
+        {
+            return Err(Problem::new(ProblemKind::Conflict, busy));
+        }
+        inner.exclusive = true;
+        Ok(Exclusive {
+            registry: self.clone(),
+        })
+    }
+
     /// Запускает задачу; вызывать внутри рантайма tokio.
     /// Паника в `work` превращается в ошибку задачи, сервер продолжает работать.
     pub fn spawn<F, Fut>(&self, kind: JobKind, work: F) -> Result<String, Problem>
@@ -138,9 +164,23 @@ impl JobRegistry {
         F: FnOnce(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = Result<serde_json::Value, Problem>> + Send + 'static,
     {
+        self.start(kind, work, false)
+    }
+
+    fn start<F, Fut>(&self, kind: JobKind, work: F, owner: bool) -> Result<String, Problem>
+    where
+        F: FnOnce(JobContext) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<serde_json::Value, Problem>> + Send + 'static,
+    {
         let cancel = CancellationToken::new();
         let (id, tx) = {
             let mut inner = self.lock();
+            if inner.exclusive && !owner {
+                return Err(Problem::new(
+                    ProblemKind::Conflict,
+                    "Проект меняется, задача не запущена: повторите, когда он откроется.",
+                ));
+            }
             let active = inner
                 .jobs
                 .values()
@@ -269,6 +309,28 @@ impl JobRegistry {
     }
 }
 
+/// Замок смены проекта (`JobRegistry::exclusive`): пока он жив, задачи запускает только его владелец.
+pub struct Exclusive {
+    registry: JobRegistry,
+}
+
+impl Exclusive {
+    /// Задача самой смены — разбор записей открытого проекта.
+    pub fn spawn<F, Fut>(&self, kind: JobKind, work: F) -> Result<String, Problem>
+    where
+        F: FnOnce(JobContext) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<serde_json::Value, Problem>> + Send + 'static,
+    {
+        self.registry.start(kind, work, true)
+    }
+}
+
+impl Drop for Exclusive {
+    fn drop(&mut self) {
+        self.registry.lock().exclusive = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -284,6 +346,41 @@ mod tests {
             }
             rx.changed().await.expect("задача не исчезает");
         }
+    }
+
+    #[tokio::test]
+    async fn switching_the_project_and_starting_jobs_do_not_interleave() {
+        let registry = JobRegistry::new();
+        async fn idle(_: JobContext) -> Result<serde_json::Value, Problem> {
+            Ok(serde_json::Value::Null)
+        }
+        let gate = registry.exclusive("заняты").unwrap();
+        assert_eq!(
+            registry.spawn(JobKind::Import, idle).unwrap_err().status,
+            409
+        );
+        assert_eq!(
+            registry.exclusive("заняты").err().map(|p| p.status),
+            Some(409)
+        );
+        // Разбор записей нового проекта запускает сама смена.
+        let own = gate.spawn(JobKind::Import, idle).unwrap();
+        drop(gate);
+        assert_eq!(finished(&registry, &own).await.state, JobState::Succeeded);
+
+        // Задача в работе — смену не начать, пока она не завершится.
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let running = registry
+            .spawn(JobKind::Verify, |_| async move {
+                let _ = wait.await;
+                Ok(serde_json::Value::Null)
+            })
+            .unwrap();
+        let busy = registry.exclusive("заняты").err().unwrap();
+        assert_eq!((busy.status, busy.detail.as_deref()), (409, Some("заняты")));
+        let _ = release.send(());
+        finished(&registry, &running).await;
+        assert!(registry.exclusive("заняты").is_ok());
     }
 
     #[tokio::test]

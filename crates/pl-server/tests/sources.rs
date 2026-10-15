@@ -378,3 +378,40 @@ async fn connection_is_found_by_its_anchor_id() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(missing["detail"].as_str().unwrap().contains("c9999"));
 }
+
+/// Смена проекта и запуск задач не перемежаются: пока проект меняется, новые задачи не стартуют,
+/// а разбор записей нового проекта запускает сама смена.
+#[tokio::test(flavor = "multi_thread")]
+async fn jobs_do_not_start_while_the_project_is_switching() {
+    let state = project_state("switch");
+    import(&state, "normal.pcapng").await;
+
+    let switching = state.jobs.exclusive("занято").unwrap();
+    let (status, body) = send(
+        &state,
+        Method::POST,
+        "/api/sources",
+        Some(json!({ "path": fixture("normal.pcapng") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["detail"].as_str().unwrap().contains("Проект меняется"),
+        "{body}"
+    );
+    let open = json!({ "path": "demo.protoledger", "mode": "open" });
+    let (status, body) = send(&state, Method::POST, "/api/project", Some(open.clone())).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["detail"].as_str().unwrap().contains("уже меняется"),
+        "{body}"
+    );
+    drop(switching);
+
+    let (status, body) = send(&state, Method::POST, "/api/project", Some(open)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    wait_jobs(&state).await;
+    let (_, sources) = get(&state, "/api/sources").await;
+    assert_eq!(sources["items"].as_array().unwrap().len(), 1, "{sources}");
+    import(&state, "normal.pcapng").await;
+}

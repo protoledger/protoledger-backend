@@ -5,7 +5,7 @@ use pl_core::{Problem, ProblemKind};
 use pl_project::{Project, Settings};
 use serde::{Deserialize, Serialize};
 
-use crate::JobRegistry;
+use crate::{Exclusive, JobRegistry};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -47,6 +47,11 @@ impl ProjectInfo {
         }
     }
 }
+
+pub const SWITCH_BUSY: &str =
+    "Пока идут задачи, проект сменить нельзя: дождитесь завершения или отмените их.";
+pub const SETTINGS_BUSY: &str =
+    "Пока идут задачи, настройки менять нельзя: дождитесь завершения или отмените их.";
 
 /// Сессия движка: каталог проектов и открытый проект (один на сессию).
 #[derive(Clone)]
@@ -98,17 +103,12 @@ impl Session {
 
     /// Меняет настройки сборки. Возвращает проект и признак «настройки изменились»:
     /// только тогда записи нужно собрать заново.
+    /// Замок держит вызывающий: записи собираются заново, пока он не отпущен.
     pub fn update_settings(
         &self,
-        jobs: &JobRegistry,
+        _switch: &Exclusive,
         patch: SettingsPatch,
     ) -> Result<(ProjectInfo, bool), Problem> {
-        if jobs.has_active() {
-            return Err(Problem::new(
-                ProblemKind::Conflict,
-                "Пока идут задачи, настройки менять нельзя: дождитесь завершения или отмените их.",
-            ));
-        }
         let mut guard = self.write();
         let project = guard.as_mut().ok_or_else(Self::no_project)?;
         let mut settings = project.manifest().settings;
@@ -132,12 +132,17 @@ impl Session {
         path: &str,
         mode: OpenMode,
     ) -> Result<ProjectInfo, Problem> {
-        if jobs.has_active() {
-            return Err(Problem::new(
-                ProblemKind::Conflict,
-                "Пока идут задачи, проект сменить нельзя: дождитесь завершения или отмените их.",
-            ));
-        }
+        let switch = jobs.exclusive(SWITCH_BUSY)?;
+        self.open_locked(&switch, path, mode)
+    }
+
+    /// Смена проекта под замком вызывающего: он же потом разбирает записи нового проекта.
+    pub fn open_locked(
+        &self,
+        _switch: &Exclusive,
+        path: &str,
+        mode: OpenMode,
+    ) -> Result<ProjectInfo, Problem> {
         let path = self.workspace.join(path);
         let project = match mode {
             OpenMode::Open => Project::open(&path),

@@ -44,27 +44,34 @@ async fn open_project(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<OpenProjectRequest>,
 ) -> Result<Json<ProjectInfo>, ApiError> {
+    // Вся смена — под одним замком: задача, начатая посередине, попала бы в чужой проект.
+    let switch = state
+        .jobs
+        .exclusive(pl_app::SWITCH_BUSY)
+        .map_err(ApiError)?;
     let opened = {
         let state = state.clone();
         // Файловые операции короткие, но блокирующие: не держим рантайм.
         tokio::task::spawn_blocking(move || {
-            state.session.open(&state.jobs, &request.path, request.mode)
+            let info = state
+                .session
+                .open_locked(&switch, &request.path, request.mode);
+            (switch, info)
         })
         .await
     };
-    let info = opened
-        .map_err(|_| {
-            ApiError::new(
-                pl_core::ProblemKind::Internal,
-                "Не удалось открыть проект, повторите.",
-            )
-        })?
-        .map_err(ApiError)?;
+    let (switch, info) = opened.map_err(|_| {
+        ApiError::new(
+            pl_core::ProblemKind::Internal,
+            "Не удалось открыть проект, повторите.",
+        )
+    })?;
+    let info = info.map_err(ApiError)?;
     // Записи прежнего проекта не должны остаться видны; записи нового разбираются фоновой задачей.
     state.sources.clear();
     // Журналы действий небольшие: заново разбираются сразу, без задачи.
     pl_app::reload_action_logs(&state.session, &state.actions);
-    pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
+    pl_app::reload_sources(&switch, &state.sources, &state.session).map_err(ApiError)?;
     Ok(Json(info))
 }
 
@@ -73,21 +80,28 @@ async fn update_settings(
     State(state): State<AppState>,
     ApiJson(patch): ApiJson<SettingsPatch>,
 ) -> Result<Json<ProjectInfo>, ApiError> {
+    let switch = state
+        .jobs
+        .exclusive(pl_app::SETTINGS_BUSY)
+        .map_err(ApiError)?;
     let updated = {
         let state = state.clone();
-        tokio::task::spawn_blocking(move || state.session.update_settings(&state.jobs, patch)).await
+        tokio::task::spawn_blocking(move || {
+            let result = state.session.update_settings(&switch, patch);
+            (switch, result)
+        })
+        .await
     };
-    let (info, changed) = updated
-        .map_err(|_| {
-            ApiError::new(
-                pl_core::ProblemKind::Internal,
-                "Не удалось сохранить настройки, повторите.",
-            )
-        })?
-        .map_err(ApiError)?;
+    let (switch, result) = updated.map_err(|_| {
+        ApiError::new(
+            pl_core::ProblemKind::Internal,
+            "Не удалось сохранить настройки, повторите.",
+        )
+    })?;
+    let (info, changed) = result.map_err(ApiError)?;
     if changed {
         state.sources.clear();
-        pl_app::reload_sources(&state.jobs, &state.sources, &state.session).map_err(ApiError)?;
+        pl_app::reload_sources(&switch, &state.sources, &state.session).map_err(ApiError)?;
     }
     Ok(Json(info))
 }
