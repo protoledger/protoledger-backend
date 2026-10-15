@@ -48,8 +48,8 @@ jobs:
             --interpretation fixtures/synthetic/interpretation.yaml --repeat 5 >> "$GITHUB_STEP_SUMMARY"
       - name: Замер через API (импорт в проект, прогон с гипотезами, отчёт)
         run: |
-          ulimit -v $((8 * 1024 * 1024))
-          node scripts/bench-api.mjs target/release/protoledger bench-data/profile.pcapng --json bench-api.json | tee -a "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          node scripts/bench-api.mjs target/release/protoledger bench-data/profile.pcapng --json bench-api.json --memory-gib 8 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: bench

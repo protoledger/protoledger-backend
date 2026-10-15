@@ -1,6 +1,7 @@
 // Замер пути интерфейса на записи профиля: импорт в проект, прогон описания с гипотезами, отчёт.
 // В отличие от `protoledger bench`, сюда входят копирование записи с sha256, задачи, сохранение прогона.
-// Использование: node scripts/bench-api.mjs <protoledger> <запись> [--json <файл>]
+// Использование: node scripts/bench-api.mjs <protoledger> <запись> [--json <файл>] [--memory-gib <N>]
+// --memory-gib ограничивает адресное пространство движка (prlimit, Linux), как память в профиле проверки.
 // Пик памяти — VmHWM процесса движка (Linux); на других ОС — null.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -8,18 +9,21 @@ import os from "node:os";
 import path from "node:path";
 
 const [bin, capture] = process.argv.slice(2);
-const jsonOut = process.argv.includes("--json") ? process.argv[process.argv.indexOf("--json") + 1] : null;
+const option = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
+const jsonOut = option("--json");
+const memoryGib = Number(option("--memory-gib") ?? 0);
 if (!bin || !capture) {
-  console.error("использование: node scripts/bench-api.mjs <protoledger> <запись> [--json <файл>]");
+  console.error("использование: node scripts/bench-api.mjs <protoledger> <запись> [--json <файл>] [--memory-gib <N>]");
   process.exit(2);
 }
 
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pl-bench-"));
 const port = 18474;
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(path.resolve(bin), ["serve", "--workspace", workspace, "--port", String(port)], {
-  stdio: "ignore",
-});
+const serve = [path.resolve(bin), "serve", "--workspace", workspace, "--port", String(port)];
+// prlimit запускает движок в том же процессе (exec), поэтому pid и VmHWM — движка.
+const command = memoryGib > 0 ? ["prlimit", `--as=${memoryGib * 2 ** 30}`, "--", ...serve] : serve;
+const server = spawn(command[0], command.slice(1), { stdio: "ignore" });
 process.on("exit", () => {
   server.kill();
   fs.rmSync(workspace, { recursive: true, force: true });
