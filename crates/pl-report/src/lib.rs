@@ -143,6 +143,8 @@ pub struct ReportData {
     pub questions: Vec<QuestionInfo>,
 }
 
+/// Контрпримеров гипотезы в тексте отчёта.
+const SHOWN_HYPOTHESIS_COUNTEREXAMPLES: usize = 3;
 /// Максимум контрпримеров в тексте отчёта.
 const SHOWN_COUNTEREXAMPLES: usize = 20;
 
@@ -180,6 +182,27 @@ fn stale_title(code: &str) -> &str {
 
 fn short(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
+}
+
+/// Первые контрпримеры гипотезы; если показаны не все — сказано сколько и где остальные.
+fn counterexample_lines(lines: &mut Vec<String>, r: &HypothesisTestInfo, all_in: &str) {
+    for c in r
+        .counterexamples
+        .iter()
+        .take(SHOWN_HYPOTHESIS_COUNTEREXAMPLES)
+    {
+        lines.push(format!("Контрпример: {c}"));
+    }
+    let shown = r
+        .counterexamples
+        .len()
+        .min(SHOWN_HYPOTHESIS_COUNTEREXAMPLES) as u64;
+    if r.counterexamples_total > shown {
+        lines.push(format!(
+            "Показаны {shown} из {} контрпримеров{all_in}.",
+            r.counterexamples_total
+        ));
+    }
 }
 
 fn hypothesis_result(h: &HypothesisInfo) -> String {
@@ -413,7 +436,8 @@ fn build(d: &ReportData) -> Vec<Block> {
                 .to_owned(),
         }));
         for h in &d.interpretation_hypotheses {
-            out.push(Heading(3, format!("{}. {}", h.id, h.statement)));
+            // Номера гипотез описания и исследования независимы: источник — в заголовке.
+            out.push(Heading(3, format!("Описание, {}. {}", h.id, h.statement)));
             let mut lines = vec![
                 format!("Статус: {}.", status_title(&h.status)),
                 format!("Проверка: {}.", hypothesis_result(h)),
@@ -422,9 +446,11 @@ fn build(d: &ReportData) -> Vec<Block> {
                 lines.push(format!("Тест: {test}"));
             }
             if let Some(r) = &h.result {
-                for c in r.counterexamples.iter().take(3) {
-                    lines.push(format!("Контрпример: {c}"));
-                }
+                let all_in = d
+                    .run
+                    .as_ref()
+                    .map_or_else(String::new, |run| format!("; все — в прогоне {}", run.id));
+                counterexample_lines(&mut lines, r, &all_in);
             }
             out.push(List(lines));
         }
@@ -433,7 +459,10 @@ fn build(d: &ReportData) -> Vec<Block> {
         }
     }
     for h in &d.hypotheses {
-        out.push(Heading(3, format!("{}. {}", h.id, h.statement)));
+        out.push(Heading(
+            3,
+            format!("Исследование, {}. {}", h.id, h.statement),
+        ));
         let mut lines = vec![
             format!("Статус: {}.", status_title(&h.status)),
             format!("Проверка: {}.", hypothesis_result(h)),
@@ -461,9 +490,7 @@ fn build(d: &ReportData) -> Vec<Block> {
             lines.push(format!("Заметка: {note}"));
         }
         if let Some(r) = &h.result {
-            for c in r.counterexamples.iter().take(3) {
-                lines.push(format!("Контрпример: {c}"));
-            }
+            counterexample_lines(&mut lines, r, "; все — на экране «Гипотезы»");
         }
         out.push(List(lines));
     }
@@ -536,6 +563,10 @@ fn build(d: &ReportData) -> Vec<Block> {
     }
 
     out.push(Heading(2, "Как воспроизвести".to_owned()));
+    out.push(Para(format!(
+        "Нужен движок protoledger версии {}: статический бинарник для Linux, Windows или macOS либо установщик настольного приложения со страницы Releases репозитория github.com/protoledger/protoledger, или сборка из этого репозитория командой docker compose up --build. Сеть и другие зависимости не нужны.",
+        d.engine_version
+    )));
     out.push(Para("Проект переносится копированием папки. Результаты перепроверяются командой (код возврата 0 — совпало, 1 — отличия):".to_owned()));
     out.push(Code("protoledger verify <папка проекта>".to_owned()));
     out.push(Para(
@@ -779,5 +810,53 @@ mod tests {
         assert!(md.contains("опровергнута тестом: контрпримеров 2 из 6"));
         assert!(md.contains("threshold = 65286"));
         assert!(!md.contains("Гипотез нет."));
+    }
+
+    #[test]
+    fn hypotheses_are_told_apart_and_truncation_is_explicit() {
+        let tested = |n: u64| HypothesisTestInfo {
+            verdict: "refuted".to_owned(),
+            applicable: 77,
+            held: 73,
+            counterexamples_total: n,
+            counterexamples: (0..n.min(5))
+                .map(|i| format!("s:c0001:ab [{i}, 1)"))
+                .collect(),
+        };
+        let data = ReportData {
+            engine_version: "0.1.0".to_owned(),
+            run: Some(RunInfo {
+                id: "run-0002".to_owned(),
+                ..RunInfo::default()
+            }),
+            interpretation_hypotheses: vec![HypothesisInfo {
+                id: "H1".to_owned(),
+                statement: "описание".to_owned(),
+                result: Some(tested(4)),
+                ..HypothesisInfo::default()
+            }],
+            hypotheses: vec![HypothesisInfo {
+                id: "H1".to_owned(),
+                statement: "исследование".to_owned(),
+                result: Some(tested(2)),
+                ..HypothesisInfo::default()
+            }],
+            ..ReportData::default()
+        };
+        let md = markdown(&data);
+        assert!(md.contains("Описание, H1"), "{md}");
+        assert!(md.contains("Исследование, H1"), "{md}");
+        assert!(
+            md.contains("Показаны 3 из 4 контрпримеров; все — в прогоне run-0002"),
+            "{md}"
+        );
+        assert!(
+            !md.contains("Показаны 2 из 2"),
+            "все показаны — без пометки"
+        );
+        assert!(
+            md.contains("версии 0.1.0"),
+            "зависимости воспроизведения названы"
+        );
     }
 }
