@@ -74,12 +74,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .setup({
             let stop = stop.clone();
             move |app| {
-                // Папки «Документы» может не быть (минимальный Linux): тогда — домашний каталог.
-                let base = app
-                    .path()
-                    .document_dir()
-                    .or_else(|_| app.path().home_dir())?;
-                let workspace = base.join("protoledger");
+                // ~/protoledger на любой ОС: «Документы» бывают перенаправлены в облачную папку,
+                // а на минимальном Linux их нет.
+                let workspace = app.path().home_dir()?.join("protoledger");
                 std::fs::create_dir_all(&workspace)?;
                 let port = match claim_workspace(&workspace, port)? {
                     Engine::Running(other) => other,

@@ -31,9 +31,9 @@ enum Command {
         /// Порт прослушивания
         #[arg(long, default_value_t = 8080)]
         port: u16,
-        /// Каталог, где лежат проекты
-        #[arg(long, default_value = ".")]
-        workspace: PathBuf,
+        /// Каталог, где лежат проекты; по умолчанию ~/protoledger
+        #[arg(long)]
+        workspace: Option<PathBuf>,
         /// Режим разработки: токен из PROTOLEDGER_DEV_TOKEN, origin фронта http://localhost:3000
         #[cfg(feature = "dev-tools")]
         #[arg(long)]
@@ -62,6 +62,17 @@ enum Command {
     Bench(bench::BenchArgs),
 }
 
+/// Папка проектов по умолчанию — `~/protoledger` на любой ОС, как у настольного приложения:
+/// «Документы» бывают перенаправлены в облачную папку. Создаётся при первом запуске.
+fn default_workspace() -> Result<PathBuf, String> {
+    let home = std::env::home_dir()
+        .filter(|h| h.is_absolute())
+        .ok_or("Домашний каталог не определён: укажите папку проектов через --workspace.")?;
+    let dir = home.join("protoledger");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt().with_target(false).init();
@@ -85,6 +96,16 @@ async fn main() -> ExitCode {
                 }
             } else {
                 None
+            };
+            let workspace = match workspace {
+                Some(dir) => dir,
+                None => match default_workspace() {
+                    Ok(dir) => dir,
+                    Err(message) => {
+                        eprintln!("{message}");
+                        return ExitCode::from(2);
+                    }
+                },
             };
             let config = ServerConfig {
                 addr: SocketAddr::new(host, port),
