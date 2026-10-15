@@ -248,17 +248,6 @@ pub fn next_steps(
             ));
         }
     }
-    if state.hypotheses_without_test > 0 {
-        steps.push(step(
-            "add_tests",
-            Screen::Hypotheses,
-            "Добавьте проверки к предположениям",
-            format!(
-                "Предположений без проверки: {} из {}. Такое предположение нечем подтвердить на записях.",
-                state.hypotheses_without_test, state.hypotheses
-            ),
-        ));
-    }
     if state.unknown_fields > 0 {
         steps.push(step(
             "unknown_fields",
