@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.45
+  version: 0.1.46
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -206,6 +206,7 @@ paths:
                 rev: 2
                 digest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
                 yaml: "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 } }\n"
+                structure: { format: protoledger/interpretation@1, framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 } }, messages: [] }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -291,6 +292,7 @@ paths:
                 rev: 2
                 digest: 7d2c1e9b0a4f3d6c8b5a1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706
                 yaml: "format: protoledger/interpretation@1\nframing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 } }\n"
+                structure: { format: protoledger/interpretation@1, framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 } }, messages: [] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2375,6 +2377,7 @@ paths:
               schema: { $ref: '#/components/schemas/Draft' }
               example:
                 yaml: "format: protoledger/interpretation@1\nframing: {\"kind\":\"length_prefixed\",\"length\":{\"at\":4,\"type\":\"u16le\",\"adjust\":7},\"status\":\"hypothesis\"}\nmessages:\n  - id: message\n    fields:\n      - { name: length, at: 4, type: u16le, status: hypothesis, hypothesis: H1 }\nhypotheses:\n  - { id: H1, statement: \"length — длина\" }\n"
+                structure: { format: protoledger/interpretation@1, framing: { kind: length_prefixed, length: { at: 4, type: u16le, adjust: 7 }, status: hypothesis }, messages: [{ id: message, fields: [{ name: length, at: 4, type: u16le, status: hypothesis, hypothesis: H1 }] }], hypotheses: [{ id: H1, statement: 'length — длина' }] }
                 steps:
                   - { title: Границы сообщений, detail: 'Поле длины u16le по смещению 4: размер сообщения = значение + 7. Сообщений: 32, контрпримеров нет.' }
                   - { title: Контрольная сумма, detail: 'сумма байтов по модулю 256: поле u8 по смещению end-1, сошлась в 32 из 32 сообщений.' }
@@ -2775,11 +2778,15 @@ components:
 
     InterpretationDoc:
       type: object
-      required: [rev, digest, yaml]
+      required: [rev, digest, yaml, structure]
       properties:
         rev: { type: integer, minimum: 1 }
         digest: { $ref: '#/components/schemas/Sha256' }
         yaml: { type: string, description: "Текст интерпретации, формат protoledger/interpretation@1" }
+        structure:
+          type: object
+          additionalProperties: true
+          description: То же описание разобранным (format, scope, framing, messages, hypotheses, checks); интерфейс показывает и правит его без YAML
 
     InterpretationRevision:
       type: object
@@ -2798,10 +2805,14 @@ components:
 
     SaveInterpretationRequest:
       type: object
-      required: [yaml]
       additionalProperties: false
+      description: Ровно одно из `yaml` и `structure`
       properties:
         yaml: { type: string, maxLength: 4194304 }
+        structure:
+          type: object
+          additionalProperties: true
+          description: Описание структурой, как `structure` в ответе GET; сохраняется как YAML
         baseRev:
           type: integer
           minimum: 0
@@ -4083,9 +4094,10 @@ components:
 
     Draft:
       type: object
-      required: [yaml, steps, summary, incomplete]
+      required: [yaml, structure, steps, summary, incomplete]
       properties:
         yaml: { type: string, description: 'Текст интерпретации' }
+        structure: { type: object, additionalProperties: true, description: 'То же описание структурой' }
         steps:
           type: array
           items:

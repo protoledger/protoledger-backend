@@ -694,7 +694,7 @@ async fn draft_describes_the_stand_protocol_and_survives_a_run() {
     for expected in [
         r#""length":{"at":4,"type":"u16le","adjust":7}"#,
         r#""sync":"5ac3""#,
-        r#"when: "dst_port == 4710 && b2 == 0x02""#,
+        r#"when: "dst_port == 4710 && command == 0x02""#,
         "name: counter, at: 3, type: u8",
         r#"test: "value == action.params.value""#,
         "name: checksum, at: end-1, type: u8",
