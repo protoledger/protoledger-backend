@@ -101,7 +101,7 @@ async fn current(State(state): State<AppState>) -> Result<Json<Doc>, ApiError> {
     read.map(Json).ok_or_else(|| {
         ApiError::new(
             ProblemKind::NotFound,
-            "Интерпретация ещё не сохранена: передайте её через PUT /api/interpretation.",
+            "Описание протокола ещё не сохранено: начните с экрана «Границы» или вставьте описание на экране «Интерпретация».",
         )
     })
 }
