@@ -251,7 +251,7 @@ async fn run_test(
     let result = blocking(move || {
         let hypothesis = pl_app::research_get::<Hypothesis>(&state.session, &id)?;
         let expr = hypothesis.test.clone().ok_or_else(|| {
-            pl_core::Problem::new(ProblemKind::Conflict, format!("У гипотезы {id} нет теста: добавьте выражение в поле test."))
+            pl_core::Problem::new(ProblemKind::Conflict, format!("У предположения {id} нет проверки."))
         })?;
         let interpretation = pl_app::current_interpretation(&state.session).ok_or_else(|| {
             pl_core::Problem::new(ProblemKind::Conflict, "Описания протокола ещё нет: тест проверяет поля сообщений, поэтому сначала составьте описание на экране «Протокол».")

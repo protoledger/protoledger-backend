@@ -371,7 +371,7 @@ fn validate_hypothesis(
         Expr::parse(test).map_err(|e| {
             Problem::new(
                 ProblemKind::Unprocessable,
-                format!("Тест гипотезы не разобран: {e}."),
+                format!("Проверка предположения не разобрана: {e}."),
             )
         })?;
     }

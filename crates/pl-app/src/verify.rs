@@ -34,10 +34,12 @@ fn blocking_failed() -> Problem {
 
 fn verify_problem(e: pl_verify::VerifyError) -> Problem {
     match e {
-        pl_verify::VerifyError::Cancelled => Problem::new(ProblemKind::Conflict, "Прогон отменён."),
+        pl_verify::VerifyError::Cancelled => {
+            Problem::new(ProblemKind::Conflict, "Проверка отменена.")
+        }
         pl_verify::VerifyError::TooManyMessages => Problem::new(
             ProblemKind::LimitExceeded,
-            "В прогоне слишком много сообщений: сузьте корпус фильтрами.",
+            "Слишком много сообщений для одной проверки: выберите меньше записей.",
         ),
         other => Problem::new(ProblemKind::Unprocessable, other.to_string()),
     }

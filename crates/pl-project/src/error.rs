@@ -96,7 +96,7 @@ impl From<ProjectError> for Problem {
             ),
             ProjectError::UnknownRevision(rev) => Problem::new(
                 ProblemKind::NotFound,
-                format!("Ревизии интерпретации {rev} в проекте нет."),
+                format!("Версии описания {rev} в проекте нет."),
             ),
             ProjectError::UnknownRun(id) => Problem::new(
                 ProblemKind::NotFound,

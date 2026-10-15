@@ -104,7 +104,7 @@ fn read_run(state: &AppState, id: &str) -> Result<(Run, Vec<StaleReason>), ApiEr
     let run: Run = serde_json::from_str(&text).map_err(|_| {
         ApiError::new(
             ProblemKind::Unprocessable,
-            format!("Файл прогона {id} повреждён."),
+            format!("Файл проверки {id} повреждён."),
         )
     })?;
     let stale = pl_app::current_signature(&state.session, &state.sources)

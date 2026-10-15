@@ -202,7 +202,7 @@ async fn stale_base_rev_is_409_and_not_saved() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
-    assert!(conflict["detail"].as_str().unwrap().contains("ревизия 2"));
+    assert!(conflict["detail"].as_str().unwrap().contains("версия 2"));
     let (_, list) = call(&state, Method::GET, "/api/interpretation/revisions", None).await;
     assert_eq!(list["items"].as_array().unwrap().len(), 2);
 

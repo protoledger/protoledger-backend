@@ -187,20 +187,20 @@ fn category_title(code: &str) -> &str {
 
 fn status_title(code: &str) -> &str {
     match code {
-        "proposed" => "предложена",
-        "supported" => "поддержана на примерах (не доказана)",
-        "refuted" => "опровергнута",
-        "superseded" => "заменена другой",
+        "proposed" => "не оценено",
+        "supported" => "совпало на примерах (не доказано)",
+        "refuted" => "не сошлось",
+        "superseded" => "заменено другим",
         other => other,
     }
 }
 
 fn stale_title(code: &str) -> &str {
     match code {
-        "interpretation" => "интерпретацию изменили после прогона",
+        "interpretation" => "описание протокола изменили после проверки",
         "settings" => "изменены настройки сборки потоков",
-        "sources" => "записи корпуса пропали из проекта",
-        "action_logs" => "журналы действий изменились после прогона",
+        "sources" => "проверенные записи пропали из проекта",
+        "action_logs" => "журналы действий изменились после проверки",
         other => other,
     }
 }
@@ -216,7 +216,7 @@ fn counterexample_lines(lines: &mut Vec<String>, r: &HypothesisTestInfo, all_in:
         .iter()
         .take(SHOWN_HYPOTHESIS_COUNTEREXAMPLES)
     {
-        lines.push(format!("Контрпример: {c}"));
+        lines.push(format!("Расхождение: {c}"));
     }
     let shown = r
         .counterexamples
@@ -224,7 +224,7 @@ fn counterexample_lines(lines: &mut Vec<String>, r: &HypothesisTestInfo, all_in:
         .min(SHOWN_HYPOTHESIS_COUNTEREXAMPLES) as u64;
     if r.counterexamples_total > shown {
         lines.push(format!(
-            "Показаны {shown} из {} контрпримеров{all_in}.",
+            "Показаны {shown} из {} расхождений{all_in}.",
             r.counterexamples_total
         ));
     }
@@ -232,18 +232,18 @@ fn counterexample_lines(lines: &mut Vec<String>, r: &HypothesisTestInfo, all_in:
 
 fn hypothesis_result(h: &HypothesisInfo) -> String {
     match &h.result {
-        None if h.test.is_some() => "тест не запускался".to_owned(),
-        None => "теста нет".to_owned(),
+        None if h.test.is_some() => "ещё не проверялось".to_owned(),
+        None => "проверки нет".to_owned(),
         Some(r) => match r.verdict.as_str() {
             "refuted" => format!(
-                "опровергнута тестом: контрпримеров {} из {} применимых",
+                "не сошлось: расхождений {} из {} подходящих сообщений",
                 r.counterexamples_total, r.applicable
             ),
             "no_counterexample" => format!(
-                "выполнилась на {} из {} применимых примеров, контрпримеров нет; это не доказательство вне этих примеров",
+                "совпало в {} из {} подходящих сообщений, расхождений нет; за пределами этих примеров не доказано",
                 r.held, r.applicable
             ),
-            _ => "применимых примеров не нашлось: не проверена".to_owned(),
+            _ => "подходящих сообщений не нашлось: не проверено".to_owned(),
         },
     }
 }
@@ -362,7 +362,7 @@ fn build(d: &ReportData) -> Vec<Block> {
     match &d.interpretation {
         Some(i) => {
             out.push(Para(format!(
-                "Интерпретация: ревизия {}, digest {}. Область: направление {}, условие {}. Фрейминг: {}.",
+                "Описание протокола: версия {}, отпечаток {}. Область: направление {}, условие {}. Границы сообщений: {}.",
                 i.rev,
                 i.digest,
                 i.direction,
@@ -376,17 +376,17 @@ fn build(d: &ReportData) -> Vec<Block> {
                 )));
             }
         }
-        None => out.push(Para("Интерпретация не сохранена.".to_owned())),
+        None => out.push(Para("Описание протокола не составлено.".to_owned())),
     }
 
     out.push(Heading(2, "Результат проверки".to_owned()));
     match &d.run {
         None => out.push(Para(
-            "Прогонов проверки нет: интерпретация не применялась к корпусу.".to_owned(),
+            "Проверок не было: описание ещё не применялось к записям.".to_owned(),
         )),
         Some(r) => {
             out.push(Para(format!(
-                "Прогон {} (ревизия {}, фильтры корпуса: {}). Потоков: {}, вне области применимости: {}. Сообщений: {}.",
+                "Проверка {} (версия описания {}, отбор записей: {}). Потоков: {}, вне описания: {}. Сообщений: {}.",
                 r.id,
                 r.revision.map_or_else(|| "—".to_owned(), |v| v.to_string()),
                 r.corpus,
@@ -396,7 +396,7 @@ fn build(d: &ReportData) -> Vec<Block> {
             )));
             if !r.stale_reasons.is_empty() {
                 out.push(Para(format!(
-                    "Внимание: прогон устарел — {}. Результат ниже относится к прежним условиям.",
+                    "Внимание: проверка устарела — {}. Результат ниже относится к прежним условиям.",
                     r.stale_reasons
                         .iter()
                         .map(|s| stale_title(s))
@@ -438,15 +438,15 @@ fn build(d: &ReportData) -> Vec<Block> {
                 ));
             }
             out.push(Para(
-                "Совпадение описания с сообщениями корпуса не доказывает, что оно верно для других данных: оно показывает лишь, что на этих примерах противоречий не найдено."
+                "Совпадение описания с сообщениями этих записей не доказывает, что оно верно для других данных: оно показывает лишь, что на этих примерах противоречий не найдено."
                     .to_owned(),
             ));
-            out.push(Heading(3, "Контрпримеры".to_owned()));
+            out.push(Heading(3, "Расхождения".to_owned()));
             if r.counterexamples.is_empty() {
-                out.push(Para("Контрпримеров на корпусе не найдено.".to_owned()));
+                out.push(Para("Расхождений на записях не найдено.".to_owned()));
             } else {
                 out.push(Para(format!(
-                    "Всего контрпримеров: {}; показаны первые {}.",
+                    "Всего расхождений: {}; показаны первые {}.",
                     r.counterexamples_total,
                     r.counterexamples.len().min(SHOWN_COUNTEREXAMPLES)
                 )));
@@ -481,22 +481,22 @@ fn build(d: &ReportData) -> Vec<Block> {
         }
     }
 
-    out.push(Heading(2, "Гипотезы".to_owned()));
+    out.push(Heading(2, "Предположения".to_owned()));
     if d.hypotheses.is_empty() && d.interpretation_hypotheses.is_empty() {
-        out.push(Para("Гипотез нет.".to_owned()));
+        out.push(Para("Предположений нет.".to_owned()));
     }
     if !d.interpretation_hypotheses.is_empty() {
         out.push(Para(match &d.run {
             Some(r) => format!(
-                "Гипотезы описания протокола и итог их тестов в прогоне {} на журналах действий проекта:",
+                "Предположения описания протокола и итог их проверки ({}) на журналах действий проекта:",
                 r.id
             ),
-            None => "Гипотезы описания протокола (прогона ещё не было, тесты не запускались):"
+            None => "Предположения описания протокола (проверки ещё не было):"
                 .to_owned(),
         }));
         for h in &d.interpretation_hypotheses {
             // Номера гипотез описания и исследования независимы: источник — в заголовке.
-            out.push(Heading(3, format!("Описание, {}. {}", h.id, h.statement)));
+            out.push(Heading(3, format!("{}. {}", h.id, h.statement)));
             let mut lines = vec![
                 format!("Статус: {}.", status_title(&h.status)),
                 format!("Проверка: {}.", hypothesis_result(h)),
@@ -508,19 +508,19 @@ fn build(d: &ReportData) -> Vec<Block> {
                 let all_in = d
                     .run
                     .as_ref()
-                    .map_or_else(String::new, |run| format!("; все — в прогоне {}", run.id));
+                    .map_or_else(String::new, |run| format!("; все — в проверке {}", run.id));
                 counterexample_lines(&mut lines, r, &all_in);
             }
             out.push(List(lines));
         }
         if !d.hypotheses.is_empty() {
-            out.push(Para("Гипотезы исследования:".to_owned()));
+            out.push(Para("Предположения исследователя:".to_owned()));
         }
     }
     for h in &d.hypotheses {
         out.push(Heading(
             3,
-            format!("Исследование, {}. {}", h.id, h.statement),
+            format!("{} (исследователь). {}", h.id, h.statement),
         ));
         let mut lines = vec![
             format!("Статус: {}.", status_title(&h.status)),
@@ -543,20 +543,20 @@ fn build(d: &ReportData) -> Vec<Block> {
             lines.push("Оснований (наблюдений) не указано.".to_owned());
         }
         if let Some(by) = &h.superseded_by {
-            lines.push(format!("Заменена гипотезой {by}."));
+            lines.push(format!("Заменено предположением {by}."));
         }
         if let Some(note) = &h.note {
             lines.push(format!("Заметка: {note}"));
         }
         if let Some(r) = &h.result {
-            counterexample_lines(&mut lines, r, "; все — на экране «Гипотезы»");
+            counterexample_lines(&mut lines, r, "; все — на экране «Проверка»");
         }
         out.push(List(lines));
     }
 
-    out.push(Heading(2, "Наблюдения".to_owned()));
+    out.push(Heading(2, "Заметки исследователя".to_owned()));
     if d.observations.is_empty() {
-        out.push(Para("Наблюдений нет.".to_owned()));
+        out.push(Para("Заметок нет.".to_owned()));
     } else {
         out.push(Table(
             vec![
@@ -623,7 +623,7 @@ fn build(d: &ReportData) -> Vec<Block> {
 
     out.push(Heading(2, "Как воспроизвести".to_owned()));
     out.push(Para(format!(
-        "Нужен protoledger версии {}: статический бинарник для Linux, Windows или macOS либо установщик настольного приложения со страницы Releases репозитория github.com/protoledger/protoledger, или сборка из этого репозитория командой docker compose up --build. Сеть и другие зависимости не нужны.",
+        "Нужен protoledger версии {}: статический бинарник для Linux, Windows или macOS либо установщик настольного приложения со страницы Releases репозитория github.com/protoledger/protoledger, или сборка из исходников командой docker compose up --build. Сеть и другие зависимости не нужны.",
         d.engine_version
     )));
     out.push(Para("Проект переносится копированием папки. Результаты перепроверяются командой (код возврата 0 — совпало, 1 — отличия):".to_owned()));
@@ -812,8 +812,8 @@ mod tests {
     #[test]
     fn empty_project_reports_absence_honestly() {
         let md = markdown(&ReportData::default());
-        assert!(md.contains("Прогонов проверки нет"));
-        assert!(md.contains("Гипотез нет."));
+        assert!(md.contains("Проверок не было"));
+        assert!(md.contains("Предположений нет."));
         assert!(md.contains("Открытых вопросов нет."));
     }
 
@@ -836,8 +836,8 @@ mod tests {
             ..ReportData::default()
         };
         let md = markdown(&data);
-        assert!(md.contains("не доказана"));
-        assert!(md.contains("выполнилась на 9 из 9"));
+        assert!(md.contains("не доказано"));
+        assert!(md.contains("совпало в 9 из 9"));
     }
 
     #[test]
@@ -864,11 +864,11 @@ mod tests {
             ..ReportData::default()
         };
         let md = markdown(&data);
-        assert!(md.contains("в прогоне run-0002"), "{md}");
+        assert!(md.contains("в проверке run-0002"), "{md}");
         assert!(md.contains("H6. порог"));
-        assert!(md.contains("опровергнута тестом: контрпримеров 2 из 6"));
+        assert!(md.contains("не сошлось: расхождений 2 из 6"));
         assert!(md.contains("threshold = 65286"));
-        assert!(!md.contains("Гипотез нет."));
+        assert!(!md.contains("Предположений нет."));
     }
 
     #[test]
@@ -903,10 +903,10 @@ mod tests {
             ..ReportData::default()
         };
         let md = markdown(&data);
-        assert!(md.contains("Описание, H1"), "{md}");
-        assert!(md.contains("Исследование, H1"), "{md}");
+        assert!(md.contains("### H1. "), "{md}");
+        assert!(md.contains("H1 (исследователь)"), "{md}");
         assert!(
-            md.contains("Показаны 3 из 4 контрпримеров; все — в прогоне run-0002"),
+            md.contains("Показаны 3 из 4 расхождений; все — в проверке run-0002"),
             "{md}"
         );
         assert!(
