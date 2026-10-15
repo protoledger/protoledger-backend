@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/sources/{sha256}/diagnostics", get(diagnostics))
         .route("/connections", get(list_connections))
+        .route("/connections/{id}", get(connection_by_id))
         .route("/streams/{stream}/bytes", get(stream_bytes))
         .route("/streams/{stream}/explain", get(explain))
         .route("/frames/{source}/{frame_no}", get(frame))
@@ -414,6 +415,32 @@ async fn list_connections(
         }
     }
     Ok(Json(paginate(all, limit, offset)))
+}
+
+/// Соединение по идентификатору из якоря (`<8 hex>:cNNNN`): переход к байтам без перебора списка.
+async fn connection_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ConnectionDto>, ApiError> {
+    state
+        .sources
+        .list()
+        .iter()
+        .find_map(|s| {
+            s.connections
+                .iter()
+                .find(|c| c.id(&s.sha256) == id)
+                .map(|c| connection_dto(s, c))
+        })
+        .map(Json)
+        .ok_or_else(|| {
+            ApiError::new(
+                ProblemKind::NotFound,
+                format!(
+                    "Соединения {id} нет: запись удалена из проекта или идентификатор неверен."
+                ),
+            )
+        })
 }
 
 /// `<8 hex>:cNNNN:ab|ba` → запись, соединение, направление (0 — a→b).

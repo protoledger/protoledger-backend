@@ -363,3 +363,18 @@ async fn relative_import_path_is_resolved_from_workspace() {
     let (_, list) = get(&state, "/api/sources").await;
     assert_eq!(list["items"][0]["name"], "normal.pcapng", "{list}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn connection_is_found_by_its_anchor_id() {
+    let state = project_state("by-id");
+    import(&state, "normal.pcapng").await;
+    let (_, list) = get(&state, "/api/connections").await;
+    let first = &list["items"][0];
+    let id = first["id"].as_str().unwrap();
+    let (status, one) = get(&state, &format!("/api/connections/{id}")).await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert_eq!(&one, first, "то же, что в списке");
+    let (status, missing) = get(&state, "/api/connections/00000000:c9999").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(missing["detail"].as_str().unwrap().contains("c9999"));
+}
