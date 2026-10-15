@@ -213,7 +213,7 @@ pub fn guess_mapping(bytes: &[u8]) -> Result<Guess, LogError> {
                 TimeFormat::Rfc3339 => time_col.share(is_rfc3339),
                 f => time_col.share(|v| epoch_format(v) == Some(f)),
             }),
-            format_name(time_format)
+            time_format.title()
         ),
     );
 
@@ -396,16 +396,6 @@ pub fn guess_mapping(bytes: &[u8]) -> Result<Guess, LogError> {
         mapping,
         reasons,
     })
-}
-
-fn format_name(f: TimeFormat) -> &'static str {
-    match f {
-        TimeFormat::Rfc3339 => "RFC 3339",
-        TimeFormat::UnixSeconds => "Unix, секунды",
-        TimeFormat::UnixMillis => "Unix, миллисекунды",
-        TimeFormat::UnixMicros => "Unix, микросекунды",
-        TimeFormat::UnixNanos => "Unix, наносекунды",
-    }
 }
 
 fn pairs_name(f: PairsFormat) -> &'static str {
