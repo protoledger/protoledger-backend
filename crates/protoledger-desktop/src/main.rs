@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
+use tauri::webview::DownloadEvent;
 use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::Notify;
 
@@ -115,7 +116,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .inner_size(1440.0, 900.0)
                     .min_inner_size(1024.0, 640.0)
                     // Окно показывает только встроенный движок: внешние адреса не открываются.
-                    .on_navigation(move |url| same_origin(url, &origin))
+                    .on_navigation({
+                        let origin = origin.clone();
+                        move |url| same_origin(url, &origin)
+                    })
+                    // Отчёт и YAML интерфейс отдаёт файлом из памяти страницы (blob:). Без обработчика
+                    // WebView отменяет любую загрузку; разрешаем только такие файлы — в папку «Загрузки».
+                    .on_download(move |_, event| match event {
+                        DownloadEvent::Requested { url, .. } => page_file(&url, &origin),
+                        DownloadEvent::Finished { success, .. } => {
+                            tracing::info!(success, "загрузка файла из окна завершена");
+                            true
+                        }
+                        _ => false,
+                    })
                     .build()?;
                 Ok(())
             }
@@ -147,6 +161,11 @@ fn same_origin(url: &Url, origin: &Url) -> bool {
     url.scheme() == origin.scheme() && url.host() == origin.host() && url.port() == origin.port()
 }
 
+/// Файл, созданный самой страницей встроенного движка: `blob:http://127.0.0.1:<порт>/<id>`.
+fn page_file(url: &Url, origin: &Url) -> bool {
+    url.scheme() == "blob" && Url::parse(url.path()).is_ok_and(|inner| same_origin(&inner, origin))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +180,19 @@ mod tests {
         assert!(!ok("https://127.0.0.1:4100/"));
         assert!(!ok("https://example.com/"));
         assert!(!ok("file:///C:/Windows/win.ini"));
+    }
+
+    #[test]
+    fn downloads_only_page_files() {
+        let origin: Url = "http://127.0.0.1:4100/".parse().unwrap();
+        let ok = |s: &str| page_file(&s.parse().unwrap(), &origin);
+        assert!(ok(
+            "blob:http://127.0.0.1:4100/5f1c2d3e-0000-4000-8000-000000000000"
+        ));
+        assert!(!ok("blob:http://127.0.0.1:4101/5f1c2d3e"));
+        assert!(!ok("blob:https://example.com/5f1c2d3e"));
+        assert!(!ok("http://127.0.0.1:4100/api/reports"));
+        assert!(!ok("https://example.com/file.exe"));
+        assert!(!ok("data:text/html,hi"));
     }
 }
