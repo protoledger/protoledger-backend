@@ -160,6 +160,93 @@ async fn revisions_are_saved_validated_and_listed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn stale_base_rev_is_409_and_not_saved() {
+    let state = project_state("base-rev");
+    let put = |yaml: String, base: Option<u32>| {
+        let mut body = json!({ "yaml": yaml });
+        if let Some(b) = base {
+            body["baseRev"] = json!(b);
+        }
+        body
+    };
+    // Первая ревизия от пустого проекта: baseRev = 0.
+    let (status, first) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(answer_key(), Some(0))),
+    )
+    .await;
+    assert_eq!(
+        (status, first["rev"].as_u64()),
+        (StatusCode::OK, Some(1)),
+        "{first}"
+    );
+
+    // Две «вкладки» от ревизии 1: первая сохраняет, вторая получает 409, ревизия 3 не появляется.
+    let a = answer_key().replace("adjust: 7", "adjust: 8");
+    let b = answer_key().replace("adjust: 7", "adjust: 9");
+    let (status, saved) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(a.clone(), Some(1))),
+    )
+    .await;
+    assert_eq!((status, saved["rev"].as_u64()), (StatusCode::OK, Some(2)));
+    let (status, conflict) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(b, Some(1))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+    assert!(conflict["detail"].as_str().unwrap().contains("ревизия 2"));
+    let (_, list) = call(&state, Method::GET, "/api/interpretation/revisions", None).await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 2);
+
+    // Тот же смысл от устаревшей ревизии — не конфликт; без baseRev — как раньше.
+    let (status, same) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(a, Some(1))),
+    )
+    .await;
+    assert_eq!(
+        (status, same["created"].as_bool()),
+        (StatusCode::OK, Some(false))
+    );
+    let c = answer_key().replace("adjust: 7", "adjust: 10");
+    let (status, free) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(c, None)),
+    )
+    .await;
+    assert_eq!((status, free["rev"].as_u64()), (StatusCode::OK, Some(3)));
+
+    // Ревизии новее последней нет: во второй вкладке открыт другой проект.
+    let d = answer_key().replace("adjust: 7", "adjust: 11");
+    let (status, other) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(d, Some(7))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert!(
+        other["detail"].as_str().unwrap().contains("другой проект"),
+        "{other}"
+    );
+    let (_, list) = call(&state, Method::GET, "/api/interpretation/revisions", None).await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn invalid_interpretation_is_422_and_not_saved() {
     let state = project_state("invalid");
     for bad in [

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.44
+  version: 0.1.45
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -217,7 +217,11 @@ paths:
       description: |
         Текст проверяется по схеме `protoledger/interpretation@1`: ошибка — `422` с описанием места и причины,
         ревизия не создаётся. Если каноническая форма (digest) не отличается от последней ревизии, новая ревизия
-        не создаётся (`created: false`). Старые ревизии не изменяются.
+        не создаётся (`created: false`). Старые ревизии не изменяются. `baseRev` — ревизия, от которой сделана
+        правка (`0` — интерпретации ещё не было): если после неё сохранена другая ревизия с другим смыслом, —
+        `409`, ничего не сохраняется (правка из второй вкладки или от устаревшего текста не затирает чужую);
+        `baseRev` больше последней ревизии — тоже `409`: правку делали в другом проекте.
+        Без `baseRev` — сохранение как раньше.
       requestBody:
         required: true
         content:
@@ -234,7 +238,16 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/NoProject' }
+        '409':
+          description: Проект не открыт или правка сделана от устаревшей ревизии (`baseRev`)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              example:
+                type: urn:protoledger:problem:conflict
+                title: Конфликт состояния
+                status: 409
+                detail: 'Описание изменилось: правка сделана от ревизии 3, а после неё сохранена ревизия 4. Откройте ревизию 4 и перенесите правку.'
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '422': { $ref: '#/components/responses/Unprocessable' }
@@ -2789,6 +2802,10 @@ components:
       additionalProperties: false
       properties:
         yaml: { type: string, maxLength: 4194304 }
+        baseRev:
+          type: integer
+          minimum: 0
+          description: Ревизия, от которой сделана правка; 0 — интерпретации ещё не было. Устарела — 409
 
     SaveInterpretationResult:
       type: object
