@@ -125,12 +125,19 @@ async fn save(
             let latest = last.map_or(0, |r| r.rev);
             let same = last.is_some_and(|r| r.digest == digest);
             if base != latest && !same {
-                return Err(ApiError::new(
-                    ProblemKind::Conflict,
-                    format!(
+                // Ревизии новее последней в проекте нет: правку делали в другом проекте.
+                let detail = match (base > latest, latest) {
+                    (true, 0) => format!(
+                        "Правка сделана от ревизии {base}, а в открытом проекте описания ещё нет: похоже, открыт другой проект. Обновите страницу."
+                    ),
+                    (true, _) => format!(
+                        "Правка сделана от ревизии {base}, а последняя ревизия открытого проекта — {latest}: похоже, открыт другой проект. Обновите страницу."
+                    ),
+                    (false, _) => format!(
                         "Описание изменилось: правка сделана от ревизии {base}, а после неё сохранена ревизия {latest}. Откройте ревизию {latest} и перенесите правку."
                     ),
-                ));
+                };
+                return Err(ApiError::new(ProblemKind::Conflict, detail));
             }
         }
         let (record, created) = project

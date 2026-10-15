@@ -227,6 +227,23 @@ async fn stale_base_rev_is_409_and_not_saved() {
     )
     .await;
     assert_eq!((status, free["rev"].as_u64()), (StatusCode::OK, Some(3)));
+
+    // Ревизии новее последней нет: во второй вкладке открыт другой проект.
+    let d = answer_key().replace("adjust: 7", "adjust: 11");
+    let (status, other) = call(
+        &state,
+        Method::PUT,
+        "/api/interpretation",
+        Some(put(d, Some(7))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert!(
+        other["detail"].as_str().unwrap().contains("другой проект"),
+        "{other}"
+    );
+    let (_, list) = call(&state, Method::GET, "/api/interpretation/revisions", None).await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]
