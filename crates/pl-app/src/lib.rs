@@ -57,7 +57,7 @@ pub use hypothesis::{
 };
 pub use interp::{StreamApplied, apply_to_source, stream_input};
 pub use jobs::{
-    Job, JobContext, JobKind, JobProgress, JobRegistry, JobState, MAX_CONCURRENT_JOBS,
+    Exclusive, Job, JobContext, JobKind, JobProgress, JobRegistry, JobState, MAX_CONCURRENT_JOBS,
     ProgressStage, ProgressUnit,
 };
 pub use next_step::{NextStep, NextSteps, ProjectState, Screen, next_steps};
@@ -68,7 +68,7 @@ pub use research::{
     delete_observation, delete_question, get as research_get, load as research_load,
     resolve_stream, update_hypothesis, update_observation, update_question,
 };
-pub use session::{OpenMode, ProjectInfo, Session, SettingsPatch};
+pub use session::{OpenMode, ProjectInfo, SETTINGS_BUSY, SWITCH_BUSY, Session, SettingsPatch};
 pub use sources::{
     SourceData, SourceStore, analyze, analyze_with, import_path, load_project_sources, policy_from,
     read_capture_file, reload_sources,

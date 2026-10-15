@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use pl_project::Project;
 
-use crate::{JobContext, JobKind, JobRegistry, ProgressStage, ProgressUnit, Session};
+use crate::{Exclusive, JobContext, JobKind, JobRegistry, ProgressStage, ProgressUnit, Session};
 
 /// Разобранная запись: файл целиком в памяти, индекс кадров и соединения.
 #[derive(Debug)]
@@ -289,7 +289,7 @@ pub fn import_path(
 /// После открытия проекта заново разбирает его записи из копий в `sources/`.
 /// Записи появляются в списке по мере готовности; повреждённые и пропавшие пропускаются.
 pub fn reload_sources(
-    jobs: &JobRegistry,
+    switch: &Exclusive,
     store: &SourceStore,
     session: &Session,
 ) -> Result<Option<String>, Problem> {
@@ -311,7 +311,7 @@ pub fn reload_sources(
         return Ok(None);
     }
     let store = store.clone();
-    jobs.spawn(JobKind::Import, move |ctx| async move {
+    switch.spawn(JobKind::Import, move |ctx| async move {
         let work = tokio::task::spawn_blocking(move || {
             for (source, copy, policy) in plan {
                 if ctx.is_cancelled() {
