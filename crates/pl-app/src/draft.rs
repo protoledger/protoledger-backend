@@ -230,7 +230,7 @@ fn render(
     checks: &[(String, String)],
 ) -> String {
     let mut y = String::from(
-        "# Черновик описания, собранный по данным. Каждое поле — гипотеза с основанием:\n# проверьте её прогоном и уточните.\nformat: protoledger/interpretation@1\n",
+        "# Черновик описания, собранный по данным. Каждое поле — предположение с основанием:\n# проверьте его на записях и уточните.\nformat: protoledger/interpretation@1\n",
     );
     y.push_str(&format!(
         "framing: {}\n",
@@ -332,7 +332,7 @@ pub fn draft_interpretation(
     let Some(length) = hints.length.first() else {
         return Err(Problem::new(
             ProblemKind::Unprocessable,
-            "Границы сообщений по этим потокам не найдены: поля длины с достаточным числом подтверждений нет. Задайте фрейминг вручную.",
+            "Границы сообщений по этим потокам не найдены: поля длины с достаточным числом подтверждений нет. Укажите границы на экране «Границы».",
         ));
     };
     let mut framing: Framing = serde_json::to_value(&length.framing)

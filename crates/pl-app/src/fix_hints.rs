@@ -154,19 +154,19 @@ pub fn hypothesis_fix_hints(
         .ok_or_else(|| {
             Problem::new(
                 ProblemKind::NotFound,
-                format!("В описании нет гипотезы {hypothesis}."),
+                format!("В описании нет предположения {hypothesis}."),
             )
         })?;
     let test = def.test.clone().ok_or_else(|| {
         Problem::new(
             ProblemKind::Unprocessable,
-            format!("У гипотезы {hypothesis} нет теста: исправлять нечего."),
+            format!("У предположения {hypothesis} нет проверки: исправлять нечего."),
         )
     })?;
     let expr = Expr::parse(&test).map_err(|e| {
         Problem::new(
             ProblemKind::Unprocessable,
-            format!("Тест гипотезы не разобран: {e}."),
+            format!("Проверка предположения не разобрана: {e}."),
         )
     })?;
     let before = test_hypothesis(sources, interpretation, logs, &test, options)?;

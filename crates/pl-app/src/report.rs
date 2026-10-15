@@ -167,7 +167,7 @@ pub fn collect(
     let run = match run_text {
         Some(text) => Some(
             serde_json::from_str::<Run>(&text)
-                .map_err(|_| Problem::new(ProblemKind::Conflict, "Файл прогона повреждён."))?,
+                .map_err(|_| Problem::new(ProblemKind::Conflict, "Файл проверки повреждён."))?,
         ),
         None => None,
     };

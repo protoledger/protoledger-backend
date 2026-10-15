@@ -583,7 +583,7 @@ async fn exchanges(
         let Some(it) = pl_app::current_interpretation(&state.session) else {
             return Err(pl_core::Problem::new(
                 ProblemKind::Conflict,
-                "Нужна сохранённая интерпретация: по ней поток делится на сообщения.",
+                "Нужно описание протокола: по нему поток делится на сообщения.",
             ));
         };
         let started = std::time::Instant::now();

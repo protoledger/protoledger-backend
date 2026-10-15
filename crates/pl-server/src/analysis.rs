@@ -234,7 +234,7 @@ async fn suggestions(
         let Some(it) = pl_app::current_interpretation(&state.session) else {
             return Err(pl_core::Problem::new(
                 ProblemKind::Conflict,
-                "Нужна сохранённая интерпретация с типами сообщений: связи ищутся по каждому типу.",
+                "Нужно описание протокола с типами сообщений: связи ищутся по каждому типу.",
             ));
         };
         let started = Instant::now();

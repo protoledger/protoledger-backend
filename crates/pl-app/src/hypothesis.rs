@@ -405,7 +405,7 @@ pub fn test_hypothesis(
     let expr = Expr::parse(expr_text).map_err(|e| {
         Problem::new(
             ProblemKind::Unprocessable,
-            format!("Тест гипотезы не разобран: {e}."),
+            format!("Проверка предположения не разобрана: {e}."),
         )
     })?;
     let names = expr.names();

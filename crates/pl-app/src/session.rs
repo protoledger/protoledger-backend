@@ -90,7 +90,7 @@ impl Session {
     pub fn no_project() -> Problem {
         Problem::new(
             ProblemKind::NoProject,
-            "Сначала создайте или откройте проект (POST /api/project).",
+            "Сначала откройте записи или проект.",
         )
     }
 

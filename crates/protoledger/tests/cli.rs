@@ -402,10 +402,10 @@ fn report_describes_the_project_in_both_formats() {
         "main.pcapng",
         "## Результат проверки",
         "совпало",
-        "## Гипотезы",
-        "выполнилась на",
-        "это не доказательство",
-        "## Наблюдения",
+        "## Предположения",
+        "совпало в",
+        "не доказано",
+        "## Заметки исследователя",
         "## Открытые вопросы",
         "Что означает режим 3?",
         "protoledger verify",
@@ -460,7 +460,7 @@ fn report_flags_a_stale_run_and_rejects_bad_input() {
     let out = run(&["report", root.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).contains("прогон устарел"),
+        text(&out.stdout).contains("проверка устарела"),
         "{}",
         text(&out.stdout)
     );
