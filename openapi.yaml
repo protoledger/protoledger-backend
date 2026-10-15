@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: protoledger API
-  version: 0.1.42
+  version: 0.1.43
   description: |
     Локальный HTTP API движка protoledger (контракт v0, фаза Ф1).
     Слушает только 127.0.0.1. Каждый запрос к `/api` проверяется: `Host` → 403,
@@ -4635,11 +4635,12 @@ components:
 
     ConnectionFlag:
       type: string
-      enum: [retransmissions, gaps, ambiguous, no_syn, bad_checksum, truncated, reused_ports]
+      enum: [retransmissions, gaps, ambiguous, no_syn, bad_checksum, truncated, reused_ports, out_of_window]
       description: |
         Признаки для значков в списке: повторы сегментов, дыры, неоднозначные перекрытия,
         нет SYN (роли неизвестны), неверные контрольные суммы, усечённые кадры,
-        порты переиспользованы раньше (соединение начато заново).
+        порты переиспользованы раньше (соединение начато заново), данные до начала потока по seq
+        (`out_of_window`: в поток не вошли, кадры перечислены).
 
     DirectionKind:
       type: string

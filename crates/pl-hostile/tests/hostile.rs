@@ -251,3 +251,36 @@ fn mutated_real_captures_never_panic() {
         );
     }
 }
+
+#[test]
+fn data_far_after_reset_is_a_new_connection_without_syn() {
+    use pl_capture::tcp_flags::{ACK, PSH, RST, SYN};
+    // Клиент закрыл соединение RST, а SYN нового на тех же портах в запись не попал.
+    let frames = [
+        pl_hostile::tcp_frame(40000, 1000, SYN, b""),
+        pl_hostile::tcp_frame(40000, 1001, PSH | ACK, b"first"),
+        pl_hostile::tcp_frame(40000, 1006, RST, b""),
+        pl_hostile::tcp_frame(40000, 900_000_000, PSH | ACK, b"again"),
+    ];
+    let mut file = pl_hostile::pcap_header(65535, 1);
+    for (i, f) in frames.iter().enumerate() {
+        file.extend(pl_hostile::pcap_record(
+            1_790_812_800 + i as u32,
+            f.len() as u32,
+            f.len() as u32,
+            f,
+        ));
+    }
+    let idx = index(&file, Limits::default(), &|| false, &mut |_| {}).unwrap();
+    let conns = reassemble(&idx, &file, Policy::default(), &|| false).unwrap();
+    assert_eq!(
+        conns.len(),
+        2,
+        "данные после RST далеко по seq — отдельное соединение"
+    );
+    let second = &conns[1];
+    assert!(second.flags.contains(&pl_reassembly::Flag::NoSyn));
+    assert!(second.flags.contains(&pl_reassembly::Flag::ReusedPorts));
+    assert!(!second.roles_known);
+    assert_eq!(second.streams.iter().map(|s| s.length).max(), Some(5));
+}
