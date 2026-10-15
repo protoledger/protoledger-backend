@@ -838,7 +838,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pl-actions"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "pl-analysis"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "pl-app"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-actions",
  "pl-analysis",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "pl-capture"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pcap-parser",
  "pl-synth",
@@ -887,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "pl-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "pl-hostile"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "pl-actions",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "pl-interp"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde-saphyr",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "pl-project"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-actions",
  "pl-core",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "pl-reassembly"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-capture",
  "serde_json",
@@ -943,14 +943,14 @@ dependencies = [
 
 [[package]]
 name = "pl-report"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pl-server"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "pl-stand"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "etherparse",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "pl-synth"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "etherparse",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "pl-verify"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-interp",
  "serde",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "protoledger"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",

@@ -2492,7 +2492,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pl-actions"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2501,14 +2501,14 @@ dependencies = [
 
 [[package]]
 name = "pl-analysis"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pl-app"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-actions",
  "pl-analysis",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "pl-capture"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pcap-parser",
  "thiserror 2.0.21",
@@ -2538,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "pl-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "pl-interp"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde-saphyr",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "pl-project"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-actions",
  "pl-core",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "pl-reassembly"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-capture",
  "thiserror 2.0.21",
@@ -2578,14 +2578,14 @@ dependencies = [
 
 [[package]]
 name = "pl-report"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pl-server"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "pl-verify"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-interp",
  "serde",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "protoledger-desktop"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "pl-server",
  "tauri",
