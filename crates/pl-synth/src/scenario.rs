@@ -459,8 +459,15 @@ fn mixed(ctx: &mut Ctx) -> Vec<Conn> {
     vec![a, b]
 }
 
+/// Наибольшее прикладное сообщение профиля: ТЗ задаёт ответы до 64 КиБ (заголовок 4 байта + тело).
+pub const PROFILE_MAX_MESSAGE: usize = 64 * 1024;
+/// Нагрузка одного кадра, как при MSS 1460 за вычетом опций.
+const PROFILE_MSS: usize = 1_400;
+
 /// Запись контрольного профиля для замеров: `connections` одновременных соединений, около `frames` кадров;
-/// размер файла — около `bytes` (но не больше, чем влезает в кадры по 1400 байт нагрузки) (на заголовки кадров и блоки pcapng закладывается по 90 байт на кадр). Соединения чередуются по обменам, как в живом захвате.
+/// размер файла — около `bytes` (на заголовки кадров и блоки pcapng закладывается по 90 байт на кадр).
+/// Соединения чередуются по обменам, как в живом захвате. Четверть нагрузки — крупные ответы
+/// от 16 до 64 КиБ, каждый разрезан на кадры по MSS; остальные ответы — до одного кадра.
 pub fn profile(connections: usize, frames: usize, bytes: usize, seed: u64) -> Capture {
     let connections = connections.clamp(1, 20_000);
     let mut ctx = Ctx {
@@ -471,13 +478,39 @@ pub fn profile(connections: usize, frames: usize, bytes: usize, seed: u64) -> Ca
         offload: Vec::new(),
         offloading: None,
     };
-    // По 6 кадров на рукопожатие и закрытие, остальное — обмены по два кадра.
-    let exchanges = (frames / connections).saturating_sub(6).div_ceil(2).max(1);
     let request_avg = 80usize;
     let payload = bytes.saturating_sub(frames * 90);
-    let response_avg = (payload / connections / exchanges)
+    // По 6 кадров на рукопожатие и закрытие, остальное — обмены по два кадра.
+    let per_connection = (frames / connections).saturating_sub(6);
+    let large_frames = PROFILE_MAX_MESSAGE.div_ceil(PROFILE_MSS) + 1;
+    let large_count = if per_connection >= large_frames + 2 {
+        (payload / 4 / PROFILE_MAX_MESSAGE).min(connections)
+    } else {
+        0
+    };
+    // Крупный ответ — у равномерно разбросанных соединений, по одному на соединение.
+    // (обычных обменов, крупный ответ: (раунд, длина сообщения)).
+    let mut plans: Vec<(usize, Option<(usize, usize)>)> = (0..connections)
+        .map(|i| {
+            let large = (i * large_count) / connections != ((i + 1) * large_count) / connections;
+            if large {
+                let len =
+                    16 * 1024 + ctx.rng.range(0, (PROFILE_MAX_MESSAGE - 16 * 1024) as u64) as usize;
+                let normal = per_connection
+                    .saturating_sub(len.div_ceil(PROFILE_MSS) + 1)
+                    .div_ceil(2);
+                // Крупный обмен — в середине соединения, чтобы вокруг него шли обычные.
+                (normal, Some((normal / 2, len)))
+            } else {
+                (per_connection.div_ceil(2).max(1), None)
+            }
+        })
+        .collect();
+    let large_bytes: usize = plans.iter().filter_map(|p| p.1).map(|l| l.1).sum();
+    let exchanges: usize = plans.iter().map(|p| p.0).sum::<usize>().max(1);
+    let response_avg = (payload.saturating_sub(large_bytes) / exchanges)
         .saturating_sub(request_avg + 8)
-        .clamp(8, 1_400);
+        .clamp(8, PROFILE_MSS);
     let mut conns: Vec<Conn> = (0..connections)
         .map(|i| {
             let client = Host::new((i / 200) as u8 % 200 + 20, (i % 200) as u8 + 10);
@@ -487,16 +520,42 @@ pub fn profile(connections: usize, frames: usize, bytes: usize, seed: u64) -> Ca
     for c in &mut conns {
         ctx.handshake(c);
     }
-    for round in 0..exchanges {
-        for c in &mut conns {
-            let n = (request_avg / 2 + ctx.rng.range(0, request_avg as u64) as usize).min(1_400);
+    let rounds = plans
+        .iter()
+        .map(|p| p.0 + usize::from(p.1.is_some()))
+        .max()
+        .unwrap_or(0);
+    for round in 0..rounds {
+        for (c, plan) in conns.iter_mut().zip(plans.iter_mut()) {
+            let kind = (round % 100) as u8;
+            if let Some((_, len)) = plan.1.filter(|l| l.0 == round) {
+                let body = ctx.rng.bytes(request_avg);
+                c.write(Dir::C2s, 1 + kind, &body);
+                let s = c.send_all(Dir::C2s);
+                ctx.emit(c, &s);
+                let body = ctx.rng.bytes(len - 4);
+                c.write(Dir::S2c, 0x81 + kind, &body);
+                for _ in 0..len.div_ceil(PROFILE_MSS) {
+                    let s = c.send(Dir::S2c, PROFILE_MSS);
+                    ctx.emit(c, &s);
+                }
+                plan.1 = None;
+                continue;
+            }
+            if plan.0 == 0 {
+                continue;
+            }
+            plan.0 -= 1;
+            let n =
+                (request_avg / 2 + ctx.rng.range(0, request_avg as u64) as usize).min(PROFILE_MSS);
             let body = ctx.rng.bytes(n);
-            c.write(Dir::C2s, 1 + (round % 100) as u8, &body);
+            c.write(Dir::C2s, 1 + kind, &body);
             let s = c.send_all(Dir::C2s);
             ctx.emit(c, &s);
-            let n = (response_avg / 2 + ctx.rng.range(0, response_avg as u64) as usize).min(1_400);
+            let n = (response_avg / 2 + ctx.rng.range(0, response_avg as u64) as usize)
+                .min(PROFILE_MSS);
             let body = ctx.rng.bytes(n);
-            c.write(Dir::S2c, 0x81 + (round % 100) as u8, &body);
+            c.write(Dir::S2c, 0x81 + kind, &body);
             let s = c.send_all(Dir::S2c);
             ctx.emit(c, &s);
         }
