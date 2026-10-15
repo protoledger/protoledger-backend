@@ -121,7 +121,13 @@ pub fn next_steps(
         if let Ok(run) = serde_json::from_str::<Run>(&text) {
             state.last_run_stale = crate::current_signature(session, sources)
                 .is_some_and(|c| !pl_verify::stale_reasons(&run, &c).is_empty());
-            state.counterexamples = run.summary.counterexamples;
+            // Нарушения правил, а не неполные сообщения из записей с дефектами захвата.
+            state.counterexamples = run
+                .summary
+                .counts
+                .get(&pl_interp::Category::Violated)
+                .copied()
+                .unwrap_or(0);
             for h in &run.hypotheses {
                 match h.verdict {
                     HypothesisVerdict::Refuted => state.refuted.push(h.id.clone()),
