@@ -75,8 +75,11 @@ struct SaveResult {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SaveRequest {
     yaml: String,
+    /// Ревизия, от которой сделана правка (0 — интерпретации ещё не было).
+    base_rev: Option<u32>,
 }
 
 async fn current(State(state): State<AppState>) -> Result<Json<Doc>, ApiError> {
@@ -115,6 +118,21 @@ async fn save(
         let project = guard
             .as_mut()
             .ok_or_else(|| ApiError(Session::no_project()))?;
+        // Правка от устаревшей ревизии молча затёрла бы чужую (другая вкладка, «Применить кандидата»).
+        // Тот же смысл, что у последней ревизии, — не конфликт: новой ревизии всё равно не будет.
+        if let Some(base) = request.base_rev {
+            let last = project.interpretation_revisions().last();
+            let latest = last.map_or(0, |r| r.rev);
+            let same = last.is_some_and(|r| r.digest == digest);
+            if base != latest && !same {
+                return Err(ApiError::new(
+                    ProblemKind::Conflict,
+                    format!(
+                        "Описание изменилось: правка сделана от ревизии {base}, а после неё сохранена ревизия {latest}. Откройте ревизию {latest} и перенесите правку."
+                    ),
+                ));
+            }
+        }
         let (record, created) = project
             .save_interpretation(&request.yaml, &digest)
             .map_err(|e| ApiError(e.into()))?;
