@@ -300,18 +300,28 @@ pub fn hypothesis_fix_hints(
                 At::Abs(n) => Some(*n),
                 At::Text(_) => None,
             };
-            let what = match (kind, new_at, from_at) {
-                (FixKind::Sign, ..) => format!("{field}: {from} → {to} (знак)"),
-                (FixKind::ByteOrder, ..) => format!("{field}: {from} → {to} (порядок байтов)"),
-                (_, Some(b), Some(a)) if a != b => {
-                    format!("{field}: {from} по смещению {a} → {to} по смещению {b} (ширина)")
-                }
-                _ => format!("{field}: {from} → {to} (ширина)"),
+            // Словами, как сказал бы инженер; точные типы — в полях правки.
+            let signed = to.starts_with('i');
+            let order = if to.ends_with("le") {
+                "младший байт первым"
+            } else {
+                "старший байт первым"
             };
+            let width = crate::draft::type_size(&to).unwrap_or(0);
+            let what = match (kind, new_at, from_at) {
+                (FixKind::Sign, ..) if signed => format!("{field}: читать как число со знаком"),
+                (FixKind::Sign, ..) => format!("{field}: читать как число без знака"),
+                (FixKind::ByteOrder, ..) => format!("{field}: другой порядок байтов — {order}"),
+                (_, Some(b), Some(a)) if a != b => {
+                    format!("{field}: поле шире — {width} байта с байта {b}")
+                }
+                _ => format!("{field}: другая ширина — {width} байта"),
+            };
+            let _ = &from;
             out.fixes.push(Fix {
                 kind,
                 summary: format!(
-                    "{what}: контрпримеров {} вместо {}, тест выполняется на {} из {}",
+                    "{what} — расхождений {} вместо {}, совпадает в {} из {}",
                     after.counterexamples_total,
                     before.counterexamples_total,
                     after.held,
@@ -347,7 +357,7 @@ pub fn hypothesis_fix_hints(
             out.fixes.push(Fix {
                 kind: FixKind::Scale,
                 summary: format!(
-                    "тест «{candidate}» — значение из журнала с {digits} знаками после запятой: контрпримеров {} вместо {}, выполняется на {} из {}",
+                    "значение из журнала с {digits} знаками после запятой ({candidate}) — расхождений {} вместо {}, совпадает в {} из {}",
                     after.counterexamples_total,
                     before.counterexamples_total,
                     after.held,

@@ -54,6 +54,16 @@ struct Doc {
     rev: u32,
     digest: String,
     yaml: String,
+    /// То же описание разобранным: интерфейс показывает и правит его без текста YAML.
+    structure: serde_json::Value,
+}
+
+/// Разобранное описание как JSON; текст в проекте уже прошёл проверку при сохранении.
+fn structure_of(yaml: &str) -> serde_json::Value {
+    Interpretation::parse(yaml)
+        .ok()
+        .and_then(|i| serde_json::to_value(i).ok())
+        .unwrap_or(serde_json::Value::Null)
 }
 
 #[derive(Serialize)]
@@ -77,7 +87,12 @@ struct SaveResult {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveRequest {
-    yaml: String,
+    /// Текст описания; вместо него можно передать `structure`.
+    #[serde(default)]
+    yaml: Option<String>,
+    /// Описание структурой (как в ответе GET): сохраняется как YAML.
+    #[serde(default)]
+    structure: Option<serde_json::Value>,
     /// Ревизия, от которой сделана правка (0 — интерпретации ещё не было).
     base_rev: Option<u32>,
 }
@@ -92,6 +107,7 @@ async fn current(State(state): State<AppState>) -> Result<Json<Doc>, ApiError> {
             .map(|(r, yaml)| Doc {
                 rev: r.rev,
                 digest: r.digest,
+                structure: structure_of(&yaml),
                 yaml,
             }))
     })
@@ -101,7 +117,7 @@ async fn current(State(state): State<AppState>) -> Result<Json<Doc>, ApiError> {
     read.map(Json).ok_or_else(|| {
         ApiError::new(
             ProblemKind::NotFound,
-            "Описание протокола ещё не сохранено: начните с экрана «Границы» или вставьте описание на экране «Интерпретация».",
+            "Описание протокола ещё не составлено: на экране «Протокол» нажмите «Составить описание».",
         )
     })
 }
@@ -112,7 +128,25 @@ async fn save(
 ) -> Result<Json<SaveResult>, ApiError> {
     let saved = tokio::task::spawn_blocking(move || -> Result<SaveResult, ApiError> {
         // Сначала проверка: невалидное описание ревизией не становится.
-        let parsed = Interpretation::parse(&request.yaml).map_err(schema_problem)?;
+        let text = match (request.yaml, request.structure) {
+            (Some(yaml), None) => yaml,
+            (None, Some(structure)) => {
+                let parsed: Interpretation = serde_json::from_value(structure).map_err(|e| {
+                    ApiError::new(
+                        ProblemKind::Unprocessable,
+                        format!("Описание не прошло проверку: {e}."),
+                    )
+                })?;
+                parsed.to_yaml().map_err(schema_problem)?
+            }
+            _ => {
+                return Err(ApiError::new(
+                    ProblemKind::BadRequest,
+                    "Передайте описание одним способом: текстом yaml или структурой structure.",
+                ));
+            }
+        };
+        let parsed = Interpretation::parse(&text).map_err(schema_problem)?;
         let digest = parsed.digest();
         let mut guard = state.session.write();
         let project = guard
@@ -141,7 +175,7 @@ async fn save(
             }
         }
         let (record, created) = project
-            .save_interpretation(&request.yaml, &digest)
+            .save_interpretation(&text, &digest)
             .map_err(|e| ApiError(e.into()))?;
         Ok(SaveResult {
             rev: record.rev,
@@ -186,6 +220,7 @@ async fn revision(
         Ok(Doc {
             rev: r.rev,
             digest: r.digest,
+            structure: structure_of(&yaml),
             yaml,
         })
     })

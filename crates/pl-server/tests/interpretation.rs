@@ -616,7 +616,7 @@ async fn fix_hints_propose_the_edit_that_removes_counterexamples() {
         best["summary"]
             .as_str()
             .unwrap()
-            .contains("u32be → i32be (знак)")
+            .contains("value: читать как число со знаком")
     );
     assert!(
         best["messages"]

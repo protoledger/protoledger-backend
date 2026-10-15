@@ -121,7 +121,13 @@ pub fn next_steps(
         if let Ok(run) = serde_json::from_str::<Run>(&text) {
             state.last_run_stale = crate::current_signature(session, sources)
                 .is_some_and(|c| !pl_verify::stale_reasons(&run, &c).is_empty());
-            state.counterexamples = run.summary.counterexamples;
+            // Нарушения правил, а не неполные сообщения из записей с дефектами захвата.
+            state.counterexamples = run
+                .summary
+                .counts
+                .get(&pl_interp::Category::Violated)
+                .copied()
+                .unwrap_or(0);
             for h in &run.hypotheses {
                 match h.verdict {
                     HypothesisVerdict::Refuted => state.refuted.push(h.id.clone()),
@@ -137,8 +143,8 @@ pub fn next_steps(
         steps.push(step(
             "import_capture",
             Screen::Sources,
-            "Импортируйте запись трафика",
-            "В проекте нет ни одной записи: исследовать пока нечего.".to_owned(),
+            "Добавьте записи трафика",
+            "В проекте нет записей: разбирать пока нечего.".to_owned(),
         ));
         return Ok(NextSteps { steps, state });
     }
@@ -146,8 +152,8 @@ pub fn next_steps(
         steps.push(step(
             "import_journal",
             Screen::Actions,
-            "Импортируйте журнал действий",
-            "Без журнала не найти обмен по действию и не проверить гипотезы о смысле полей."
+            "Добавьте журнал действий",
+            "Без журнала не связать байты с действиями оператора и не проверить, что означают поля."
                 .to_owned(),
         ));
     }
@@ -159,9 +165,9 @@ pub fn next_steps(
             steps.push(step(
                 "fix_journal_clock",
                 Screen::Actions,
-                "Поправьте часы журнала действий",
+                "Поправьте время в журнале действий",
                 format!(
-                    "Журнал {}: {}. Примените к нему поправку часов {} мс.",
+                    "Журнал {}: {}. Сдвиньте время журнала на {} мс.",
                     log.record.name,
                     found.reason,
                     found.current_offset_ms.saturating_add(offset)
@@ -174,9 +180,9 @@ pub fn next_steps(
             0,
             step(
                 "find_framing",
-                Screen::Framing,
-                "Найдите границы сообщений",
-                "Описания протокола ещё нет. Подсказка границ покажет поле длины или сигнатуру; черновик описания соберёт остальное из подсказок.".to_owned(),
+                Screen::Interpretation,
+                "Составьте описание протокола",
+                "Описания ещё нет. На экране «Протокол» нажмите «Составить описание»: границы сообщений, команды и поля найдутся по записям.".to_owned(),
             ),
         );
         return Ok(NextSteps { steps, state });
@@ -185,8 +191,8 @@ pub fn next_steps(
         steps.push(step(
             "describe_types",
             Screen::Interpretation,
-            "Опишите типы сообщений",
-            "В описании есть границы, но нет ни одного типа сообщения: поля описывать не к чему."
+            "Опишите сообщения",
+            "Границы сообщений известны, но ни одно сообщение не описано. Составьте описание на экране «Протокол»."
                 .to_owned(),
         ));
     }
@@ -194,16 +200,16 @@ pub fn next_steps(
         steps.push(step(
             "first_run",
             Screen::Verification,
-            "Запустите проверку на записях",
-            "Описание ещё ни разу не проверялось на корпусе.".to_owned(),
+            "Проверьте описание на записях",
+            "Описание ещё ни разу не проверялось на записях.".to_owned(),
         ));
     } else if state.last_run_stale {
         steps.push(step(
             "rerun",
             Screen::Verification,
-            "Перезапустите проверку",
+            "Проверьте описание ещё раз",
             format!(
-                "Прогон {} устарел: после него изменились описание, настройки или записи.",
+                "Проверка {} устарела: после неё изменились описание, настройки или записи.",
                 state.last_run.as_deref().unwrap_or_default()
             ),
         ));
@@ -212,9 +218,9 @@ pub fn next_steps(
             steps.push(step(
                 "fix_refuted",
                 Screen::Hypotheses,
-                "Разберите опровергнутые гипотезы",
+                "Исправьте поля с расхождениями",
                 format!(
-                    "В последнем прогоне опровергнуты: {}. Посмотрите контрпримеры и подсказку исправления.",
+                    "В последней проверке есть расхождения: {}. На экране «Протокол» нажмите «Как исправить» у поля.",
                     list(&state.refuted)
                 ),
             ));
@@ -223,9 +229,9 @@ pub fn next_steps(
             steps.push(step(
                 "counterexamples",
                 Screen::Verification,
-                "Разберите контрпримеры правил",
+                "Разберите нарушения",
                 format!(
-                    "В последнем прогоне контрпримеров: {}. Либо правило неверно, либо в записи дефект захвата.",
+                    "В последней проверке нарушений: {}. Либо описание неверно, либо в записи дефект захвата.",
                     state.counterexamples
                 ),
             ));
@@ -234,42 +240,28 @@ pub fn next_steps(
             steps.push(step(
                 "untested",
                 Screen::Hypotheses,
-                "Найдите данные для непроверенных гипотез",
+                "Нужны примеры для проверки",
                 format!(
-                    "Тесты гипотез {} не нашли ни одного применимого сообщения: нужна запись с таким обменом или журнал действий.",
+                    "Для предположений {} в записях не нашлось подходящих сообщений: нужна запись с таким обменом или журнал действий.",
                     list(&state.untested)
                 ),
             ));
         }
     }
-    if state.hypotheses_without_test > 0 {
-        steps.push(step(
-            "add_tests",
-            Screen::Hypotheses,
-            "Добавьте тесты к гипотезам",
-            format!(
-                "Гипотез описания без теста: {} из {}. Без теста гипотеза остаётся утверждением, которое нечем проверить.",
-                state.hypotheses_without_test, state.hypotheses
-            ),
-        ));
-    }
     if state.unknown_fields > 0 {
         steps.push(step(
             "unknown_fields",
             Screen::Interpretation,
-            "Исследуйте неизвестные зоны",
-            format!(
-                "В описании {} полей помечены неизвестными. Карта покрытия покажет, где ещё нет описания.",
-                state.unknown_fields
-            ),
+            "Остались неразобранные байты",
+            format!("Полей с пометкой «не описано»: {}.", state.unknown_fields),
         ));
     }
     if proposed > 0 {
         steps.push(step(
             "review_hypotheses",
             Screen::Hypotheses,
-            "Оцените гипотезы исследователя",
-            format!("Гипотез со статусом «предложена»: {proposed}. Поддержите, опровергните или замените их."),
+            "Оцените свои предположения",
+            format!("Предположений, которые ещё не оценены: {proposed}."),
         ));
     }
     if state.open_questions > 0 {
@@ -285,7 +277,7 @@ pub fn next_steps(
             "report",
             Screen::Report,
             "Сформируйте отчёт",
-            "Прогон актуален, опровергнутых гипотез и контрпримеров нет. Отчёт передаст результат и границы его применимости.".to_owned(),
+            "Последняя проверка актуальна, расхождений нет. Отчёт опишет протокол и границы, в которых результат проверен.".to_owned(),
         ));
     }
     Ok(NextSteps { steps, state })

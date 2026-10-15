@@ -254,7 +254,7 @@ async fn run_test(
             pl_core::Problem::new(ProblemKind::Conflict, format!("У гипотезы {id} нет теста: добавьте выражение в поле test."))
         })?;
         let interpretation = pl_app::current_interpretation(&state.session).ok_or_else(|| {
-            pl_core::Problem::new(ProblemKind::Conflict, "Описания протокола ещё нет: тест проверяет поля сообщений, поэтому сначала сохраните описание на экране «Интерпретация».")
+            pl_core::Problem::new(ProblemKind::Conflict, "Описания протокола ещё нет: тест проверяет поля сообщений, поэтому сначала составьте описание на экране «Протокол».")
         })?;
         let logs = match &request.log_id {
             Some(log) => vec![state.actions.get(log).ok_or_else(|| {

@@ -53,6 +53,8 @@ pub struct DraftSummary {
 pub struct DraftView {
     /// Текст интерпретации; проходит ту же проверку, что и сохранение.
     pub yaml: String,
+    /// То же описание структурой: интерфейс показывает его без текста YAML.
+    pub structure: serde_json::Value,
     pub steps: Vec<DraftStep>,
     pub summary: DraftSummary,
     /// Часть шагов не успела выполниться: черновик беднее, чем мог бы быть.
@@ -74,6 +76,8 @@ struct Field {
 struct Message {
     id: String,
     when: String,
+    /// Что это за сообщение словами («Запрос, команда 0x10»); пусто, если сторона или команда не ясны.
+    title: String,
     count: u64,
     fields: Vec<Field>,
 }
@@ -235,10 +239,12 @@ fn render(
     y.push_str("messages:\n");
     for m in messages {
         y.push_str(&format!("  - id: {}\n", m.id));
-        y.push_str(&format!(
-            "    description: {}\n",
-            quoted(&format!("сообщений в данных: {}", m.count))
-        ));
+        let description = if m.title.is_empty() {
+            format!("сообщений в данных: {}", m.count)
+        } else {
+            format!("{} · сообщений в данных: {}", m.title, m.count)
+        };
+        y.push_str(&format!("    description: {}\n", quoted(&description)));
         if !m.when.is_empty() {
             y.push_str(&format!("    when: {}\n", quoted(&m.when)));
         }
@@ -444,11 +450,65 @@ pub fn draft_interpretation(
         })
         .min()
         .unwrap_or(u64::MAX);
+    // Имена различителей — словами: байт стороны обмена — direction, единственный байт типа — command.
+    let byte_keys: Vec<(usize, u32)> = types
+        .keys
+        .iter()
+        .enumerate()
+        .filter_map(|(i, k)| match k.key {
+            TypeKey::Byte { at } => Some((i, at)),
+            TypeKey::Side => None,
+        })
+        .collect();
+    let is_side = |i: usize| i == 0 && types.keys.get(i).is_some_and(|k| k.score_permille == 0);
+    let command_keys = byte_keys.iter().filter(|(i, _)| !is_side(*i)).count();
+    let key_name = |i: usize, at: u32| -> String {
+        if is_side(i) {
+            "direction".to_owned()
+        } else if command_keys == 1 {
+            "command".to_owned()
+        } else {
+            format!("b{at}")
+        }
+    };
     let mut messages: Vec<Message> = Vec::new();
+    let mut ids: BTreeSet<String> = BTreeSet::new();
     for t in &types.types {
+        let mut when = t.when.clone();
+        for (i, at) in &byte_keys {
+            when = when.replace(&format!("b{at} =="), &format!("{} ==", key_name(*i, *at)));
+        }
+        // Запрос или ответ — по направлению примера: a→b у соединения с рукопожатием — от клиента.
+        let request = t.example.as_ref().map(|e| e.stream.ends_with(":ab"));
+        let command = byte_keys
+            .iter()
+            .filter(|(i, _)| !is_side(*i))
+            .find_map(|(_, at)| {
+                t.key.iter().find_map(|kv| match kv.key {
+                    TypeKey::Byte { at: a } if a == *at => Some(kv.value),
+                    _ => None,
+                })
+            });
+        let mut id = match (request, command) {
+            (Some(true), Some(c)) if command_keys == 1 => format!("request_{c:02x}"),
+            (Some(false), Some(c)) if command_keys == 1 => format!("response_{c:02x}"),
+            _ => t.id.clone(),
+        };
+        if ids.contains(&id) {
+            id = format!("{id}_{}", ids.len());
+        }
+        ids.insert(id.clone());
+        let title = match (request, command) {
+            (Some(true), Some(c)) if command_keys == 1 => format!("Запрос, команда 0x{c:02x}"),
+            (Some(false), Some(c)) if command_keys == 1 => {
+                format!("Ответ на команду 0x{c:02x}")
+            }
+            _ => String::new(),
+        };
         let mut m = Message {
-            id: t.id.clone(),
-            when: t.when.clone(),
+            id,
+            when,
+            title,
             count: t.count,
             fields: Vec::new(),
         };
@@ -457,16 +517,22 @@ pub fn draft_interpretation(
             let TypeKey::Byte { at } = k.key else {
                 continue;
             };
+            let name = key_name(i, at);
             let hypothesis = hyps.id(
                 &format!("b{at}"),
                 || {
-                    if i == 0 && k.score_permille == 0 {
+                    if is_side(i) {
                         format!(
-                            "b{at} — сторона обмена: у запросов одно значение, у ответов другое"
+                            "{name} — направление: у запросов клиента одно значение, у ответов устройства другое"
+                        )
+                    } else if command_keys == 1 {
+                        format!(
+                            "{name} — код команды: значений — {}; от него зависит длина и состав сообщения",
+                            k.values
                         )
                     } else {
                         format!(
-                            "b{at} — тип сообщения: значений — {}, объясняет {} % разнообразия длин",
+                            "{name} — тип сообщения: значений — {}, объясняет {} % разнообразия длин",
                             k.values,
                             k.length_explained_permille / 10
                         )
@@ -475,7 +541,7 @@ pub fn draft_interpretation(
                 None,
             );
             m.add(Field {
-                name: format!("b{at}"),
+                name,
                 at: at.to_string(),
                 ty: "u8".to_owned(),
                 len: None,
@@ -492,6 +558,7 @@ pub fn draft_interpretation(
         let mut m = Message {
             id: "message".to_owned(),
             when: String::new(),
+            title: String::new(),
             count: types.messages,
             fields: Vec::new(),
         };
@@ -712,21 +779,19 @@ pub fn draft_interpretation(
             let hypothesis = hyps.id(
                 &format!("link.{id}.{name}"),
                 || {
+                    // Сколько раз совпало, видно в итогах проверки; здесь — что это за поле.
                     format!(
-                        "{name} — значение «{}» из журнала действий{}: совпало в {} из {} сообщений{}",
-                        v.param,
-                        if digits == 0 {
-                            String::new()
-                        } else {
-                            format!(" с {digits} знаками после запятой")
+                        "{name} — «{}» из журнала действий{}{}",
+                        v.param.trim_start_matches("params.").trim_start_matches("result."),
+                        match digits {
+                            0 => String::new(),
+                            d => format!(", в байтах — значение × {}", 10u64.pow(d)),
                         },
-                        v.matches,
-                        v.samples,
                         if ty == v.ty {
                             String::new()
                         } else {
                             format!(
-                                "; соседние байты всегда нулевые — возможно, поле шире ({} по смещению {})",
+                                "; соседние байты всегда нулевые — возможно, поле шире ({} с байта {})",
                                 v.ty, v.at
                             )
                         }
@@ -873,6 +938,7 @@ pub fn draft_interpretation(
         ),
     );
     Ok(DraftView {
+        structure: serde_json::to_value(&it).unwrap_or(serde_json::Value::Null),
         yaml,
         steps,
         summary,
@@ -943,6 +1009,7 @@ mod tests {
         let message = Message {
             id: "m".to_owned(),
             when: String::new(),
+            title: String::new(),
             count: 1,
             fields: vec![
                 field("flag", 1, "u8", None, Some(0x08)),
