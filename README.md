@@ -7,6 +7,7 @@
 Нужен Rust stable (см. `rust-toolchain.toml`).
 
 ```bash
+# проекты — в ~/protoledger; другая папка — --workspace <каталог>
 cargo run -p protoledger -- serve --port 8080
 # с Swagger UI и dev-режимом для фронта
 PROTOLEDGER_DEV_TOKEN=dev-token-123 cargo run -p protoledger --features dev-tools -- serve --dev

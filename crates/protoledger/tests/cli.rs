@@ -981,3 +981,35 @@ fn apply_guesses_journal_columns_without_a_mapping() {
     assert!(err.contains("колонки журнала угаданы"), "{err}");
     assert!(err.contains("time: «time»"), "{err}");
 }
+
+#[test]
+fn serve_without_a_workspace_uses_protoledger_in_the_home_directory() {
+    let home = temp("home");
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_protoledger"))
+        .args(["serve", "--port", &port.to_string()])
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "сервер не запустился"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        home.join("protoledger").is_dir(),
+        "папка проектов не создана"
+    );
+}
